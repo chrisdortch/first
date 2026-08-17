@@ -2,14 +2,30 @@
   "documentType": "clover-context-gateway-deployment-receipt",
   "schemaVersion": "1.0",
   "gatewayVersion": "0.2.0",
-  "observedAt": "2026-08-17T22:25:10Z",
+  "observedAt": "2026-08-17T22:42:11Z",
   "timezone": "America/Chicago",
   "source": {
     "repository": "chrisdortch/first",
     "pullRequest": 5,
-    "branch": "platform/clover-context-gateway-v0.2.0-preview-20260817",
-    "candidateCommit": "eb5d1270e9698cb67c3fdd007387c3c6302294ef",
+    "pullRequestState": "merged",
+    "canonicalBranch": "main",
+    "canonicalCommit": "e97191234904efaa7b4ada24331007bac112f053",
     "applicationRoot": "apps/clover-context-gateway"
+  },
+  "validation": {
+    "sourceArtifactId": 9294476497,
+    "sourceArtifactSha256": "1da1eb9e3643825d8a236eb973d478cf6409f6091e516fed5b94c3327b6ef904",
+    "dualRuntimeCommit": "d04dcf2cdb5b34455ab0e63b87c18f14cc57aa98",
+    "dualRuntimeWorkflowRunId": 32076713871,
+    "node22Conclusion": "success",
+    "node22ArtifactId": 9303689990,
+    "node22ArtifactSha256": "7ce878e6698848bcd4e0afca81e001b3dfc4faf3147b01e26b9b7db06114ee65",
+    "node24Conclusion": "success",
+    "node24ArtifactId": 9303687011,
+    "node24ArtifactSha256": "917ef77836fcbc1b51a529645e838d02da61d253189cedb9a8780e5a846712d2",
+    "deterministicTestsPassedPerRuntime": 9,
+    "httpSmokePassed": true,
+    "mcpSmokePassed": true
   },
   "vercel": {
     "teamId": "team_kx19aCrSTnej6wpz0fLgmYDY",
@@ -17,22 +33,33 @@
     "projectName": "clover-context-gateway-preview",
     "customDomainAdded": false,
     "existingProjectReused": false,
-    "readyPreview": {
-      "deploymentId": "dpl_8NFprUjZQbWX87bDfzxTtj4yr7kz",
-      "url": "https://clover-context-gateway-preview-pep108ni4-chris-dortchs-projects.vercel.app",
+    "canonicalReadyPreview": {
+      "deploymentId": "dpl_ErcfTuFmSHaa99ozqsazgubMEV6c",
+      "url": "https://clover-context-gateway-preview-aj7435hwm-chris-dortchs-projects.vercel.app",
+      "sourceCommit": "e97191234904efaa7b4ada24331007bac112f053",
       "state": "READY",
       "target": null,
       "aliases": [],
       "region": "iad1",
-      "runtime": "nodejs",
+      "runtime": "nodejs24.x",
       "access": "vercel-authentication-protected"
     },
-    "priorReadyPreview": {
-      "deploymentId": "dpl_ARbjYJWqTA85HaxkVT3GModonbMz",
-      "state": "READY",
-      "target": null,
-      "aliases": []
-    },
+    "priorReadyPreviews": [
+      {
+        "deploymentId": "dpl_8NFprUjZQbWX87bDfzxTtj4yr7kz",
+        "sourceCommit": "eb5d1270e9698cb67c3fdd007387c3c6302294ef",
+        "state": "READY",
+        "target": null,
+        "aliases": []
+      },
+      {
+        "deploymentId": "dpl_ARbjYJWqTA85HaxkVT3GModonbMz",
+        "sourceCommit": "eb5d1270e9698cb67c3fdd007387c3c6302294ef",
+        "state": "READY",
+        "target": null,
+        "aliases": []
+      }
+    ],
     "failedConfigurationProbe": {
       "deploymentId": "dpl_FXGiMByWfcyHQdEuhLx87mb31ArH",
       "state": "ERROR",
@@ -44,7 +71,7 @@
     }
   },
   "sourceIntegrity": {
-    "method": "Build fetched each application file from the exact Git commit and verified its Git blob SHA before syntax validation and packaging.",
+    "method": "The Vercel build fetched each application file from the exact canonical Git commit and verified its Git blob SHA before syntax validation and packaging.",
     "filesVerified": 9,
     "syntaxChecksPassed": true,
     "buildConclusion": "success"
@@ -60,16 +87,16 @@
       "conclusion": "failed-at-access-boundary",
       "observedHttpStatus": 302
     },
-    "interpretation": "The generated share URL is not a machine-usable automation bypass. A remote ChatGPT MCP connection requires public HTTPS for this read-only pilot, supported OAuth, or a separately generated Vercel automation bypass secret."
+    "interpretation": "The generated share URL is not a machine-usable automation bypass. A remote ChatGPT MCP connection requires public HTTPS for this read-only pilot, supported OAuth, or a separately generated Vercel automation-bypass secret."
   },
   "remoteFunctionalTestState": {
-    "buildAndLocalProtocolTests": "passed",
+    "buildAndLocalProtocolTests": "passed-on-node22-and-node24",
     "protectedPreviewExternalGetPostMcpAndVisualTests": "blocked-before-application-by-vercel-authentication",
     "runtimeApplicationErrorsObserved": 0,
     "runtimeRequestsObserved": 0
   },
   "authority": {
-    "mergeApproved": false,
+    "canonicalSourceMergeCompleted": true,
     "productionDeploymentApproved": false,
     "productionAliasAssigned": false,
     "domainOrDnsChangeApproved": false,
