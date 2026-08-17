@@ -4,6 +4,13 @@ import { commandPrompt, prepareCommand } from "../lib/command-router.js";
 
 const projects = [
   {
+    projectId: "cloverapps-ai",
+    title: "CloverApps.ai",
+    publicUrl: "https://cloverapps.ai",
+    priority: "P0",
+    completionEstimate: 68,
+  },
+  {
     projectId: "songandstage",
     title: "SongAndStage.com",
     repository: null,
@@ -37,6 +44,7 @@ test("prepares an evolve command for a named project", () => {
   assert.equal(packet.authority.productionDeploymentApproved, false);
   assert.ok(packet.freshness.requiredSources.includes("runtime_errors"));
   assert.match(commandPrompt(packet), /Command ID:/);
+  assert.doesNotMatch(commandPrompt(packet), /Use CloverApps to Use CloverApps to/);
 });
 
 test("recognizes a new seed without requiring an existing project", () => {

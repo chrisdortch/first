@@ -99,6 +99,12 @@ function detectIntent(request) {
   return scored[0].score > 0 ? scored[0].intent : INTENTS.find((intent) => intent.id === "evolve_project");
 }
 
+function instructionBody(request) {
+  const original = String(request || "").trim();
+  const stripped = original.replace(/^\s*(?:please\s+)?use\s+clover\s*apps(?:\.ai)?\s+to\s+/i, "").trim();
+  return stripped || original;
+}
+
 function projectTokens(project) {
   return [project.projectId, project.title, project.repository, project.publicUrl]
     .filter(Boolean)
@@ -183,12 +189,13 @@ function executionSteps(intentId, project) {
 export function prepareCommand({ request, projects, status, pointer }) {
   const originalRequest = String(request || "").trim();
   if (!originalRequest) throw new Error("A command request is required.");
-  const intent = detectIntent(originalRequest);
-  const resolution = resolveProject(originalRequest, projects || []);
+  const requestBody = instructionBody(originalRequest);
+  const intent = detectIntent(requestBody);
+  const resolution = resolveProject(requestBody, projects || []);
   const project = resolution.project;
   const requiresProjectResolution = intent.requiresProject && !project;
   const requiredSources = LIVE_SOURCE_REQUIREMENTS[intent.id] || [];
-  const sourceFingerprint = `${pointer?.currentVersion || "unknown"}:${status?.asOf || "unknown"}:${project?.projectId || "portfolio"}:${normalize(originalRequest)}`;
+  const sourceFingerprint = `${pointer?.currentVersion || "unknown"}:${status?.asOf || "unknown"}:${project?.projectId || "portfolio"}:${normalize(requestBody)}`;
   const commandId = `clover-${crypto.createHash("sha256").update(sourceFingerprint).digest("hex").slice(0, 16)}`;
 
   return {
@@ -196,7 +203,8 @@ export function prepareCommand({ request, projects, status, pointer }) {
     commandId,
     createdAt: new Date().toISOString(),
     originalRequest,
-    normalizedRequest: normalize(originalRequest),
+    requestBody,
+    normalizedRequest: normalize(requestBody),
     intent: {
       id: intent.id,
       requiresProject: intent.requiresProject,
@@ -251,7 +259,7 @@ export function prepareCommand({ request, projects, status, pointer }) {
 export function commandPrompt(packet) {
   const project = packet.project?.title || "the portfolio or a new seed";
   return [
-    `Use CloverApps to ${packet.originalRequest}`,
+    `Use CloverApps to ${packet.requestBody || instructionBody(packet.originalRequest)}`,
     "Read the current Clover Master Plan, status, project registry, Build Protocol, and Data Change Protocol through the Clover context app.",
     `Target: ${project}. Command ID: ${packet.commandId}.`,
     "Refresh the required live sources before changing anything. Treat unavailable facts as unknown.",
