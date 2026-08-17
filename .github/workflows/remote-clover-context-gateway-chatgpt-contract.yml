@@ -1,0 +1,110 @@
+name: Verify Clover ChatGPT app contract
+
+on:
+  push:
+    branches:
+      - test/clover-context-gateway-remote-smoke-20260817
+    paths:
+      - '.github/workflows/remote-clover-context-gateway-chatgpt-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MCP_URL: https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/mcp
+
+jobs:
+  verify-chatgpt-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Install exact gateway dependencies
+        working-directory: apps/clover-context-gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Scan remote tools and widget resource
+        working-directory: apps/clover-context-gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .chatgpt-contract-smoke.mjs <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+          const client = new Client({ name: 'clover-chatgpt-contract-smoke', version: '1.0.0' });
+          const endpoint = new URL(process.env.MCP_URL);
+          const expectedTools = ['fetch', 'prepare_clover_command', 'render_clover_command_center', 'search'];
+          try {
+            await client.connect(new StreamableHTTPClientTransport(endpoint));
+            const listed = await client.listTools();
+            const tools = listed.tools.map(tool => tool.name).sort();
+            assert.deepEqual(tools, expectedTools);
+            for (const tool of listed.tools) {
+              assert.equal(tool.annotations?.readOnlyHint, true);
+              assert.equal(tool.annotations?.destructiveHint, false);
+            }
+
+            const rendered = await client.callTool({
+              name: 'render_clover_command_center',
+              arguments: { request: 'Use CloverApps to evolve RollinD through a preview only' }
+            });
+            assert.equal(rendered.isError, undefined);
+            assert.equal(rendered.structuredContent.packet.project.projectId, 'rollindd');
+            assert.equal(rendered.structuredContent.packet.authority.productionDeploymentApproved, false);
+            assert.equal(rendered._meta?.ui?.resourceUri, 'ui://clover/command-center.html');
+
+            const resources = await client.listResources();
+            const resource = resources.resources.find(item => item.uri === 'ui://clover/command-center.html');
+            assert.ok(resource, JSON.stringify(resources));
+            const read = await client.readResource({ uri: 'ui://clover/command-center.html' });
+            assert.equal(read.contents.length, 1);
+            assert.equal(read.contents[0].uri, 'ui://clover/command-center.html');
+            assert.match(read.contents[0].mimeType || '', /text\/html|mcp-app/);
+            assert.match(read.contents[0].text || '', /Clover Command Center/);
+            assert.match(read.contents[0].text || '', /window\.openai/);
+
+            const result = {
+              status: 'passed',
+              endpoint: endpoint.toString(),
+              tools,
+              allReadOnly: true,
+              renderToolTarget: rendered.structuredContent.packet.project.projectId,
+              resourceUri: resource.uri,
+              resourceMimeType: read.contents[0].mimeType,
+              widgetContainsOpenAiBridge: true,
+              widgetContainsCommandCenter: true
+            };
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/chatgpt-contract.json`, JSON.stringify(result, null, 2));
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/widget.html`, read.contents[0].text || '');
+            console.log(JSON.stringify(result));
+          } finally {
+            await client.close();
+          }
+          NODE
+          node .chatgpt-contract-smoke.mjs
+          rm -f .chatgpt-contract-smoke.mjs
+
+      - name: Upload ChatGPT contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-context-gateway-chatgpt-contract-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/chatgpt-contract.json
+            ${{ runner.temp }}/widget.html
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
