@@ -1,0 +1,104 @@
+name: Verify final canonical Clover MCP deployment
+
+on:
+  push:
+    branches:
+      - test/clover-context-gateway-remote-smoke-20260817
+    paths:
+      - '.github/workflows/verify-final-canonical-clover-mcp.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/verify-final-canonical-clover-mcp.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_URL: https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app
+  DEPLOYMENT_ID: dpl_7nhkHzYK5tRJjKNRZCiqmjvJFwTn
+  SOURCE_COMMIT: e6d12dbf2be407c32b1dc5be3e07dfd011e37779
+
+jobs:
+  verify-final:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Install exact dependencies
+        working-directory: apps/clover-context-gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify final merged deployment and observe former timeout window
+        working-directory: apps/clover-context-gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=$(curl --fail --silent "$BASE_URL/")
+          node -e 'const x=JSON.parse(process.argv[1]);if(x.service!=="clover-context-gateway"||x.contextSource?.commit!==process.env.SOURCE_COMMIT||x.authority?.writeToolsEnabled!==false)process.exit(1)' "$root"
+
+          for method in GET DELETE; do
+            status=$(curl --silent --output "$RUNNER_TEMP/${method,,}.json" --write-out '%{http_code}' \
+              -X "$method" -H 'accept: text/event-stream' "$BASE_URL/mcp")
+            test "$status" = '405'
+            node -e 'const fs=require("node:fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(x.jsonrpc!=="2.0"||x.id!==null||!x.error?.message.includes("Use POST"))process.exit(1)' "$RUNNER_TEMP/${method,,}.json"
+          done
+
+          CLOVER_MCP_URL="$BASE_URL/mcp" npm run smoke:mcp | tee "$RUNNER_TEMP/mcp-smoke.json"
+          for index in $(seq 1 5); do
+            test "$(curl --silent --output /dev/null --write-out '%{http_code}' -H 'accept: text/event-stream' "$BASE_URL/mcp")" = '405'
+          done
+
+          sleep 35
+          curl --fail --silent "$BASE_URL/" > "$RUNNER_TEMP/root-after-window.json"
+          node -e 'const fs=require("node:fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(x.contextSource?.commit!==process.env.SOURCE_COMMIT)process.exit(1)' "$RUNNER_TEMP/root-after-window.json"
+
+          node <<'NODE' > "$RUNNER_TEMP/final-canonical-receipt.json"
+          const fs = require('node:fs');
+          console.log(JSON.stringify({
+            documentType: 'clover-mcp-final-canonical-verification',
+            schemaVersion: '1.0',
+            generatedAt: new Date().toISOString(),
+            sourceCommit: process.env.SOURCE_COMMIT,
+            deploymentId: process.env.DEPLOYMENT_ID,
+            baseUrl: process.env.BASE_URL,
+            status: 'passed',
+            getAndDelete405: true,
+            postMcpSmokePassed: true,
+            observationWindowSeconds: 35,
+            authority: {
+              productionDeploymentApproved: false,
+              productionDataAccessApproved: false,
+              domainOrDnsChangeApproved: false,
+              secretChangeApproved: false,
+              purchaseApproved: false,
+              externalMessageApproved: false
+            }
+          }, null, 2));
+          NODE
+
+      - name: Upload final canonical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-mcp-final-canonical-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/get.json
+            ${{ runner.temp }}/delete.json
+            ${{ runner.temp }}/mcp-smoke.json
+            ${{ runner.temp }}/root-after-window.json
+            ${{ runner.temp }}/final-canonical-receipt.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
