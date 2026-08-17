@@ -6,9 +6,10 @@
   "version": "0.2.0",
   "currentDocument": "portfolio/context/versions/0.2.0/CONTROL_PLANE.md",
   "releaseStatus": "portfolio/context/versions/0.2.0/RELEASE_STATUS.md",
-  "deploymentReceipt": "portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json",
-  "status": "canonical-source-protected-preview-ready-remote-connection-blocked",
-  "completionEstimate": 80,
+  "deploymentReceipt": "portfolio/context/evidence/0.2.0/public-remote-verification-2026-08-17.json",
+  "priorDeploymentReceipt": "portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json",
+  "status": "canonical-public-preview-verified-chatgpt-connection-pending",
+  "completionEstimate": 90,
   "completionEstimateAsOf": "2026-08-17",
   "completionConfidence": "high",
   "completionBasis": {
@@ -17,14 +18,12 @@
     "deterministicHttpAndMcpValidation": 15,
     "isolatedPreviewDeployment": 15,
     "receiptsVaultAndProgressTracking": 10,
-    "remoteMachineReachability": 0,
+    "publicRemoteHttpMcpAndVisualVerification": 10,
     "chatgptCustomAppConnection": 0,
     "cloverAppsSiteInterface": 0
   },
   "remainingCompletionGates": [
-    "Make only the isolated read-only preview remotely reachable through public HTTPS, supported OAuth, or a true automation-bypass secret.",
-    "Pass external GET, POST, MCP, desktop, and mobile tests against the reachable deployment.",
-    "Connect and test the four-tool read-only custom app in ChatGPT Developer Mode.",
+    "Connect and test the exact four-tool read-only custom app in ChatGPT web Developer Mode.",
     "Add the command interface to the official CloverApps Site through a saved review version before publication."
   ],
   "appDirectory": "apps/clover-context-gateway",
@@ -36,17 +35,14 @@
   "liveAdapterRegistry": "portfolio/context/LIVE_ADAPTER_REGISTRY.json",
   "userCommandContract": "portfolio/context/USER_COMMAND_CONTRACT.md",
   "sourceValidation": {
-    "canonicalMergeCommit": "e97191234904efaa7b4ada24331007bac112f053",
+    "canonicalGatewayMergeCommit": "e97191234904efaa7b4ada24331007bac112f053",
+    "publicHygieneMergeCommit": "3e65599458b6a90141b7c47084180750810e95e1",
+    "publicHygieneCandidateCommit": "ccedb33ca5a206b6e4139aab4904befcb817b06b",
+    "publicHygieneValidationWorkflowRunId": 32079417086,
+    "node22Conclusion": "success",
+    "node24Conclusion": "success",
     "sourceArtifactId": 9294476497,
     "sourceArtifactSha256": "1da1eb9e3643825d8a236eb973d478cf6409f6091e516fed5b94c3327b6ef904",
-    "dualRuntimeValidationCommit": "d04dcf2cdb5b34455ab0e63b87c18f14cc57aa98",
-    "dualRuntimeWorkflowRunId": 32076713871,
-    "node22Conclusion": "success",
-    "node22ArtifactId": 9303689990,
-    "node22ArtifactSha256": "7ce878e6698848bcd4e0afca81e001b3dfc4faf3147b01e26b9b7db06114ee65",
-    "node24Conclusion": "success",
-    "node24ArtifactId": 9303687011,
-    "node24ArtifactSha256": "917ef77836fcbc1b51a529645e838d02da61d253189cedb9a8780e5a846712d2",
     "deterministicTestsPassedPerRuntime": 9,
     "mcpSmokePassed": true
   },
@@ -54,20 +50,38 @@
   "writeToolsEnabled": false,
   "privateContextEnabled": false,
   "deployment": {
-    "state": "ready-protected-preview",
+    "state": "ready-public-verified-preview",
     "provider": "vercel",
     "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
     "projectName": "clover-context-gateway-preview",
-    "deploymentId": "dpl_ErcfTuFmSHaa99ozqsazgubMEV6c",
-    "sourceCommit": "e97191234904efaa7b4ada24331007bac112f053",
+    "deploymentId": "dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP",
+    "deployedApplicationCommit": "ccedb33ca5a206b6e4139aab4904befcb817b06b",
+    "canonicalSourceCommit": "3e65599458b6a90141b7c47084180750810e95e1",
+    "contextCommitObservedAfterMerge": "3e65599458b6a90141b7c47084180750810e95e1",
     "target": null,
     "productionAliasAssigned": false,
     "customDomainAdded": false,
-    "access": "vercel-authentication-protected",
-    "mcpUrl": "https://clover-context-gateway-preview-aj7435hwm-chris-dortchs-projects.vercel.app/mcp",
-    "commandCenterUrl": "https://clover-context-gateway-preview-aj7435hwm-chris-dortchs-projects.vercel.app/command-center",
+    "access": "public-https-read-only-pilot",
+    "mcpUrl": "https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/mcp",
+    "commandCenterUrl": "https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/command-center",
     "chatgptAppConnected": false,
-    "remoteConnectionBlocker": "Vercel Authentication requires a browser login. Generated share links were not machine-usable by an unauthenticated MCP client."
+    "remoteConnectionBlocker": null,
+    "remoteVerification": {
+      "workflowRunId": 32079674011,
+      "conclusion": "success",
+      "artifactId": 9304671380,
+      "artifactSha256": "c4ff9f430990859d9fe5981736ee1c17717d5dde175df802b72326462fc45503",
+      "vaultFileId": "1USpot-UvGOONCAmF2ZeOluwUxCsK2iJU",
+      "httpPassed": true,
+      "mcpPassed": true,
+      "desktopPassed": true,
+      "mobilePassed": true,
+      "consoleErrors": 0,
+      "pageErrors": 0,
+      "failedRequests": 0,
+      "badResponses": 0,
+      "horizontalOverflowPixels": 0
+    }
   },
   "readFirst": [
     "AI_START_HERE.md",
@@ -76,6 +90,6 @@
     "portfolio/registry/projects.json",
     "portfolio/context/versions/0.2.0/CONTROL_PLANE.md",
     "portfolio/context/LIVE_ADAPTER_REGISTRY.json",
-    "portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json"
+    "portfolio/context/evidence/0.2.0/public-remote-verification-2026-08-17.json"
   ]
 }
