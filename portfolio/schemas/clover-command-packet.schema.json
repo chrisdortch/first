@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cloverapps.ai/schemas/clover-command-packet-1.0.json",
-  "title": "Clover Command Packet 1.0",
+  "$id": "https://cloverapps.ai/schemas/clover-command-packet-1.1.json",
+  "title": "Clover Command Packet 1.1",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -9,40 +9,99 @@
     "commandId",
     "createdAt",
     "originalRequest",
+    "requestBody",
     "intent",
+    "resolution",
     "state",
     "canonicalContext",
+    "contextBudget",
     "freshness",
     "cost",
     "executionPlan",
+    "ownerActionCards",
     "authority",
     "stopConditions"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0" },
+    "schemaVersion": { "const": "1.1" },
     "commandId": { "type": "string", "pattern": "^clover-[0-9a-f]{16}$" },
     "createdAt": { "type": "string", "format": "date-time" },
     "originalRequest": { "type": "string", "minLength": 1 },
+    "requestBody": { "type": "string", "minLength": 1 },
+    "normalizedRequest": { "type": "string" },
     "intent": {
       "type": "object",
       "required": ["id", "requiresProject"],
       "properties": {
-        "id": { "type": "string" },
+        "id": {
+          "enum": [
+            "launch_project",
+            "evolve_project",
+            "diagnose_project",
+            "inspect_status",
+            "backup_project",
+            "restore_test",
+            "review_preview",
+            "release_candidate",
+            "update_openai_site",
+            "research"
+          ]
+        },
         "requiresProject": { "type": "boolean" }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "required": ["state", "confidence", "candidates"],
+      "properties": {
+        "state": { "enum": ["resolved", "ambiguous", "unresolved"] },
+        "confidence": { "type": "string" },
+        "candidates": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
       }
     },
     "project": { "type": ["object", "null"] },
     "state": { "enum": ["needs-project-resolution", "refresh-required-before-execution"] },
-    "canonicalContext": { "type": "object" },
-    "freshness": {
+    "canonicalContext": {
       "type": "object",
-      "required": ["policy", "requiredSources", "rule"],
+      "required": ["sourceRepository", "sourceRef", "sourceCommit"],
       "properties": {
-        "requiredSources": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        "sourceCommit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" }
       }
     },
-    "cost": { "type": "object" },
+    "contextBudget": {
+      "type": "object",
+      "required": ["strategy", "firstPassItems", "instruction"],
+      "properties": {
+        "strategy": { "const": "pointer-first-target-only" },
+        "firstPassItems": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "required": ["policy", "requiredSources", "sourcePlan", "rule"],
+      "properties": {
+        "requiredSources": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "sourcePlan": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["sourceId", "connector", "action", "freshness"],
+            "properties": {
+              "sourceId": { "type": "string" },
+              "connector": { "type": "string" },
+              "action": { "type": "string" },
+              "freshness": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "required": ["defaultLane", "additionalPurchaseExpected", "purchaseTrigger", "explanation"]
+    },
     "executionPlan": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "ownerActionCards": { "type": "array", "items": { "type": "object" } },
     "authority": {
       "type": "object",
       "required": [

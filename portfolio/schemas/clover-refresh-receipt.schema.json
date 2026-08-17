@@ -4,7 +4,7 @@
   "title": "Clover Context Refresh Receipt 1.0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "commandId", "refreshedAt", "sources", "overallState"],
+  "required": ["schemaVersion", "commandId", "refreshedAt", "sources", "overallState", "authority"],
   "properties": {
     "schemaVersion": { "const": "1.0" },
     "commandId": { "type": "string" },
@@ -15,14 +15,22 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sourceId", "state", "observedAt", "evidence"],
+        "required": ["sourceId", "connector", "state", "observedAt", "evidence"],
         "properties": {
           "sourceId": { "type": "string" },
+          "connector": { "type": "string" },
           "state": { "enum": ["current", "stale", "unknown", "contradictory", "not-applicable"] },
           "observedAt": { "type": ["string", "null"] },
           "evidence": { "type": ["string", "null"] },
           "details": { "type": ["object", "null"] }
         }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": ["productionMutationAuthorized"],
+      "properties": {
+        "productionMutationAuthorized": { "const": false }
       }
     }
   }

@@ -13,39 +13,37 @@ The canonical repository records:
 - historical decisions and receipts;
 - dated completion estimates.
 
-Canonical context may remain useful for a long period, but it is not proof that a production deployment, branch, log, error, traffic count, database, Site version, or backup is current.
+Canonical context is not proof that a production deployment, branch, log, error, traffic count, database, Site version, or backup is current.
 
 ## Live context
 
-Before a task that can change a project, the execution thread must refresh the sources that materially affect correctness. Examples:
+Before a task that can change a project, the execution thread refreshes sources that materially affect correctness. Examples:
 
-- GitHub default branch, candidate branches, commits, PRs, Actions, issues;
-- Vercel production and preview deployments, build logs, runtime error clusters, comments;
-- OpenAI Site identity and saved/deployed version when the official editor is available;
+- GitHub default branch, candidates, commits, PRs, Actions, issues;
+- Vercel production/preview deployments, build logs, runtime errors, and supported observability;
+- OpenAI Site identity and saved/deployed version in the official editor;
 - database engine, schema, backup, restore, and data-access boundary;
 - Drive or other source documents needed for the exact task;
-- analytics or traffic only from a supported, verified provider.
+- traffic only from a supported, verified analytics provider.
 
 ## Freshness states
 
 - `current` — read during the current task or represented by a still-valid exact receipt.
 - `stale` — previously verified, but outside the task-specific freshness window.
-- `unknown` — not available or not yet resolved.
-- `contradictory` — sources disagree.
+- `unknown` — unavailable or unresolved.
+- `contradictory` — authoritative sources disagree.
 - `not-applicable` — the source does not affect this task.
 
 Unknown and contradictory are valid states. Clover must not replace them with guesses.
 
 ## Default windows
 
-These are defaults, not universal guarantees:
-
 | Source | Default freshness |
 |---|---:|
 | production branch and deployment identity | current task |
 | open PRs, build logs, runtime errors | current task |
-| traffic and analytics | 24 hours unless the user asks for real time |
-| project vision and goals | current canonical version |
+| traffic and analytics | 24 hours unless real time is requested |
+| project vision and goals | current canonical version plus exact approved sources needed for the task |
 | backup status | 7 days for low-risk projects; current task before destructive work |
 | database recovery point | current task before migration or restore |
 | OpenAI Site version | current task before a Site save or deploy |

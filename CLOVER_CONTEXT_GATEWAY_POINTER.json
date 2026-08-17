@@ -2,30 +2,30 @@
   "documentType": "clover-context-gateway-pointer",
   "schemaVersion": "1.0",
   "repository": "chrisdortch/first",
-  "currentVersion": "0.1.0",
-  "applicationDirectory": "apps/clover-context-gateway",
-  "controlPlaneDocument": "portfolio/context/versions/0.1.0/CONTROL_PLANE.md",
-  "ownerSetupDocument": "apps/clover-context-gateway/docs/OWNER_SETUP_V0.1.0.md",
-  "mcpPath": "/mcp",
-  "commandCenterPath": "/command-center",
-  "mode": "read-only-context-and-command-routing",
-  "canonicalSource": {
-    "masterPlan": "CLOVER_MASTER_PLAN_POINTER.json",
-    "status": "portfolio/status/current.json",
-    "projectRegistry": "portfolio/registry/projects.json",
-    "buildProtocol": "CLOVER_BUILD_PROTOCOL_POINTER.json",
-    "dataChangeProtocol": "CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json"
+  "version": "0.2.0",
+  "status": "source-validated-preview-deployment-pending",
+  "appDirectory": "apps/clover-context-gateway",
+  "controlPlane": "portfolio/context/control-plane.json",
+  "architecture": "portfolio/context/CONTROL_PLANE_ARCHITECTURE.md",
+  "commandGrammar": "portfolio/context/COMMAND_GRAMMAR.md",
+  "freshnessPolicy": "portfolio/context/FRESHNESS_POLICY.md",
+  "costPolicy": "portfolio/context/COST_POLICY.md",
+  "liveAdapterRegistry": "portfolio/context/LIVE_ADAPTER_REGISTRY.json",
+  "userCommandContract": "portfolio/context/USER_COMMAND_CONTRACT.md",
+  "standingProductionAuthority": false,
+  "writeToolsEnabled": false,
+  "privateContextEnabled": false,
+  "deployment": {
+    "state": "not-deployed",
+    "mcpUrl": null,
+    "commandCenterUrl": null,
+    "chatgptAppConnected": false
   },
-  "freshnessPolicy": "canonical-files-first-then-live-readback-before-mutation",
-  "defaultAuthority": {
-    "previewOnly": true,
-    "mergeApproved": false,
-    "productionDeploymentApproved": false,
-    "productionDataAccessApproved": false,
-    "domainOrDnsChangeApproved": false,
-    "secretChangeApproved": false,
-    "purchaseApproved": false,
-    "externalMessageApproved": false
-  },
-  "standingProductionAuthority": false
+  "readFirst": [
+    "AI_START_HERE.md",
+    "CLOVER_MASTER_PLAN_POINTER.json",
+    "portfolio/status/current.json",
+    "portfolio/registry/projects.json",
+    "portfolio/context/CONTROL_PLANE_ARCHITECTURE.md"
+  ]
 }

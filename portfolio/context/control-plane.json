@@ -1,8 +1,8 @@
 {
   "documentType": "clover-context-control-plane",
   "schemaVersion": "1.0",
-  "version": "0.1.0",
-  "status": "scaffold-validated-not-deployed",
+  "version": "0.2.0",
+  "status": "source-validated-preview-deployment-pending",
   "canonicalRepository": "chrisdortch/first",
   "appDirectory": "apps/clover-context-gateway",
   "triggerPhrases": [
@@ -11,12 +11,30 @@
     "Evolve this project",
     "Show current Clover status"
   ],
+  "runtimeSequence": [
+    "load-master-pointer",
+    "resolve-intent-and-project",
+    "fetch-target-only-canonical-context",
+    "refresh-required-live-adapters",
+    "select-cost-lane",
+    "prepare-safe-command-packet",
+    "execute-supported-preview-work",
+    "return-evidence-receipt",
+    "update-status-only-from-evidence"
+  ],
   "tools": [
     { "name": "search", "mode": "read-only", "standard": true },
     { "name": "fetch", "mode": "read-only", "standard": true },
     { "name": "prepare_clover_command", "mode": "read-only", "standard": false },
     { "name": "render_clover_command_center", "mode": "read-only", "standard": false }
   ],
+  "contextBudget": {
+    "strategy": "pointer-first-target-only",
+    "fullPortfolioByDefault": false,
+    "fullLogsByDefault": false,
+    "fullScreenshotsByDefault": false,
+    "expandOnlyForConcreteFailureOrAmbiguity": true
+  },
   "costLanes": [
     "deterministic-no-openai-inference",
     "ordinary-chat-pro",

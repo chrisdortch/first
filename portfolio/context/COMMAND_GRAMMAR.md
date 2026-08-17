@@ -1,4 +1,4 @@
-# Clover Command Grammar 1.0
+# Clover Command Grammar 1.1
 
 The preferred natural-language entry point is:
 
@@ -6,7 +6,7 @@ The preferred natural-language entry point is:
 Use CloverApps to <desired outcome>.
 ```
 
-The user may also say:
+The owner may also say:
 
 - `Plant a new seed for <idea>.`
 - `Evolve <project> toward <goal>.`
@@ -21,32 +21,37 @@ The user may also say:
 
 | Intent | Default result |
 |---|---|
-| `launch_project` | Versioned seed packet, related-project check, isolated project identity, research plan |
+| `launch_project` | Versioned seed packet, adjacent-project check, isolated identity, research plan |
 | `evolve_project` | Freshness check, smallest high-value change, isolated branch, tests, preview, receipt |
-| `diagnose_project` | Current logs/errors, reproduction, verified root cause, bounded repair candidate |
+| `diagnose_project` | Current logs/errors, reproduction, verified cause, bounded repair candidate |
 | `inspect_status` | Mission, program-area, and project status with dates and confidence |
 | `backup_project` | Inventory, gap report, independent archive, checksums, restore plan |
 | `restore_test` | Clean isolated restore and verification receipt |
-| `review_preview` | Deterministic checks first, bounded visual review only where useful |
+| `review_preview` | Deterministic checks first; bounded visual review only where useful |
 | `release_candidate` | Exact candidate, owner release card, rollback anchor; no automatic release |
 | `update_openai_site` | Approved source candidate plus official Sites save/deploy gate |
 | `research` | Current evidence, portfolio fit, risks, opportunities, and next packet |
+
+## Project resolution
+
+The trigger phrase itself is not a project name. Clover removes `Use CloverApps to` before project resolution. It uses canonical aliases and project IDs, and it fails closed when multiple projects are plausible or the request is generic.
 
 ## Command packet rule
 
 A spoken or typed instruction is not sent directly to an executor. Clover first creates a command packet containing:
 
 - exact intent;
-- resolved project identity or a visible unresolved state;
-- canonical plan and status references;
-- required live sources;
+- resolved project identity or visible unresolved/ambiguous state;
+- canonical plan/status/source identity;
+- a target-only context budget;
+- required live sources and native connectors;
 - freshness requirements;
-- cost lane;
+- cost lane and any exact paid escalation trigger;
 - execution steps;
 - stop conditions;
-- owner-only actions;
+- owner-only action cards;
 - receipt requirements.
 
 ## Authority
 
-The phrase `Use CloverApps to…` authorizes preparation and ordinary reversible work that the user expressly requested. It does not create standing authority to merge, deploy production, access production data, change domains, change secrets, purchase services, send messages, sign agreements, or publish private information.
+The phrase authorizes preparation and ordinary reversible work explicitly requested by the owner. It does not create standing authority to merge, deploy production, access production data, change domains, change secrets, purchase services, send messages, sign agreements, or publish private information.

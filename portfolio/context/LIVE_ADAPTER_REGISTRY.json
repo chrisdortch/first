@@ -1,0 +1,74 @@
+{
+  "documentType": "clover-live-adapter-registry",
+  "schemaVersion": "1.0",
+  "updatedAt": "2026-08-17",
+  "principle": "Store how to refresh a fact and its last exact receipt; do not copy all live or private data into the public control plane.",
+  "adapters": [
+    {
+      "adapterId": "canonical-context",
+      "source": "chrisdortch/first",
+      "connector": "clover-context-gateway",
+      "covers": ["master-plan", "project-registry", "goals", "priorities", "completion-estimates", "protocols", "public-receipts"],
+      "defaultFreshness": "current canonical version",
+      "privateDataAllowed": false
+    },
+    {
+      "adapterId": "github",
+      "source": "connected GitHub account",
+      "connector": "GitHub",
+      "covers": ["repositories", "branches", "commits", "pull-requests", "issues", "actions", "build-artifacts"],
+      "defaultFreshness": "current task before mutation",
+      "privateDataAllowed": "only through authenticated native connector; never copied into public registry"
+    },
+    {
+      "adapterId": "vercel",
+      "source": "connected Vercel team",
+      "connector": "Vercel",
+      "covers": ["projects", "deployments", "build-logs", "runtime-logs", "runtime-errors", "toolbar-feedback", "supported-observability"],
+      "defaultFreshness": "current task; traffic/analytics within 24 hours unless real time requested",
+      "privateDataAllowed": "only minimized operational evidence"
+    },
+    {
+      "adapterId": "drive-and-vault",
+      "source": "approved Google Drive folders and Clover Vault",
+      "connector": "Google Drive",
+      "covers": ["project-documents", "backup-manifests", "restore-receipts", "approved-source-files"],
+      "defaultFreshness": "task-specific; backup status within 7 days for low-risk projects and current before destructive work",
+      "privateDataAllowed": "authenticated private lane only"
+    },
+    {
+      "adapterId": "openai-sites",
+      "source": "official OpenAI Sites editor",
+      "connector": "OpenAI Sites authenticated UI",
+      "covers": ["site-identity", "saved-version", "deployed-version", "audience", "site-storage-bindings"],
+      "defaultFreshness": "current task before save or deploy",
+      "privateDataAllowed": false,
+      "specialGate": "official authenticated Site workflow; no undocumented API or cookie bypass"
+    },
+    {
+      "adapterId": "database-and-storage",
+      "source": "project-specific database or object-storage provider",
+      "connector": "provider plus Clover Data Change Protocol",
+      "covers": ["engine", "schema", "backup", "restore", "migration", "reconciliation"],
+      "defaultFreshness": "current task before any data change",
+      "privateDataAllowed": "authenticated private lane only; production access requires exact owner authority"
+    },
+    {
+      "adapterId": "analytics",
+      "source": "project-specific verified analytics provider",
+      "connector": "supported provider connector or API",
+      "covers": ["traffic", "conversion", "usage", "performance"],
+      "defaultFreshness": "24 hours unless real time is requested",
+      "privateDataAllowed": "aggregate/minimized only",
+      "unknownRule": "If no verified provider is connected, report traffic as unknown."
+    },
+    {
+      "adapterId": "web-research",
+      "source": "current primary and authoritative external sources",
+      "connector": "web",
+      "covers": ["market", "laws", "standards", "prices", "competitors", "current-external-facts"],
+      "defaultFreshness": "current task",
+      "privateDataAllowed": false
+    }
+  ]
+}

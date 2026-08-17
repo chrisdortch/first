@@ -46,14 +46,26 @@ First present a compact contact sheet, receipt, changed route, and relevant diff
 
 Use only when the required capability is unavailable in ordinary Chat, such as:
 
-- local terminal or development environment access not exposed here;
+- local terminal/development access not exposed in the current conversation;
 - full authenticated browser/computer control;
 - official OpenAI Site save or deployment;
 - complex multi-file execution better suited to Codex;
-- final deployment connection or custom app setup that cannot be completed with current tools.
+- final hosted deployment or custom-app connection unavailable through current tools.
 
-A purchase request must identify the exact task, repository, baseline, expected artifact, stop condition, and estimated reason for the escalation. Do not ask the user to buy generic credits.
+A purchase request must identify the exact task, repository, baseline, expected artifact, stop condition, and reason for escalation. Do not ask the owner to buy generic credits.
 
 ## Lane 4 — optional API-billed voice or agents
 
-Reliable cross-browser realtime transcription and an independent always-on AI interface may use the OpenAI API and incur API charges. The first interface should use ChatGPT Voice, device dictation, or the browser Speech Recognition API where acceptable. API voice is an optional reliability upgrade, not a prerequisite.
+Reliable cross-browser realtime transcription and an independent always-on AI interface may use the OpenAI API and incur API charges. The first interface uses ChatGPT Voice, device dictation, or browser Speech Recognition where acceptable. API voice is an optional reliability upgrade, not a prerequisite.
+
+## Context budget
+
+Every model turn starts pointer-first and target-only:
+
+1. master pointer and current status;
+2. one target project record or new-seed context;
+3. only the protocol sections needed for the intent;
+4. compact live-source receipts;
+5. detailed logs, traces, images, and source only after a concrete failure or ambiguity.
+
+This is the principal token-saving mechanism.

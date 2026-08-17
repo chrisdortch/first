@@ -5,31 +5,39 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Clover Command Center</title>
   <style>
-    :root { color-scheme: light dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: linear-gradient(145deg, #07150f, #0f2c20 58%, #163d2c); color: #f3fff8; }
-    main { width: min(960px, 100%); margin: 0 auto; padding: 24px; }
-    .shell { border: 1px solid rgba(255,255,255,.16); border-radius: 24px; background: rgba(5,19,13,.82); box-shadow: 0 24px 80px rgba(0,0,0,.35); overflow: hidden; }
-    header { padding: 24px 24px 16px; border-bottom: 1px solid rgba(255,255,255,.12); }
-    h1 { margin: 0; font-size: clamp(1.5rem,4vw,2.4rem); letter-spacing: -.03em; }
-    header p { margin: 8px 0 0; color: #b7d8c6; line-height: 1.5; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #1e6245 0, transparent 35%), linear-gradient(145deg, #06120d, #0c281c 58%, #123a29); color: #f3fff8; }
+    main { width: min(1040px, 100%); margin: 0 auto; padding: 24px; }
+    .shell { border: 1px solid rgba(255,255,255,.16); border-radius: 24px; background: rgba(4,17,11,.86); box-shadow: 0 24px 80px rgba(0,0,0,.38); overflow: hidden; }
+    header { padding: 26px 26px 18px; border-bottom: 1px solid rgba(255,255,255,.12); }
+    h1 { margin: 0; font-size: clamp(1.55rem,4vw,2.5rem); letter-spacing: -.035em; }
+    h2 { font-size: 1.1rem; }
+    header p { margin: 8px 0 0; color: #b9dcca; line-height: 1.5; }
     .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-    .pill { padding: 6px 10px; border: 1px solid rgba(151,244,193,.28); border-radius: 999px; color: #c9f8dd; background: rgba(35,112,72,.22); font-size: .82rem; }
-    section { padding: 22px 24px; }
-    label { display: block; margin-bottom: 8px; font-weight: 700; }
-    textarea { width: 100%; min-height: 150px; resize: vertical; border: 1px solid rgba(255,255,255,.18); border-radius: 16px; padding: 16px; font: inherit; color: inherit; background: rgba(255,255,255,.06); outline: none; }
+    .pill { padding: 6px 10px; border: 1px solid rgba(151,244,193,.28); border-radius: 999px; color: #cef9e0; background: rgba(35,112,72,.22); font-size: .82rem; }
+    section { padding: 22px 26px; }
+    label { display: block; margin-bottom: 8px; font-weight: 750; }
+    textarea { width: 100%; min-height: 160px; resize: vertical; border: 1px solid rgba(255,255,255,.18); border-radius: 16px; padding: 16px; font: inherit; color: inherit; background: rgba(255,255,255,.06); outline: none; }
     textarea:focus { border-color: #75e8a8; box-shadow: 0 0 0 3px rgba(117,232,168,.15); }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
+    .example { min-height: 34px; font-size: .78rem; font-weight: 650; }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
     button { min-height: 44px; border: 0; border-radius: 999px; padding: 0 16px; font: inherit; font-weight: 750; cursor: pointer; }
     .primary { background: #88efb4; color: #062013; }
-    .secondary { background: rgba(255,255,255,.1); color: #f4fff8; border: 1px solid rgba(255,255,255,.16); }
+    .secondary, .example { background: rgba(255,255,255,.1); color: #f4fff8; border: 1px solid rgba(255,255,255,.16); }
     button:disabled { opacity: .45; cursor: not-allowed; }
     .transcript { min-height: 28px; margin-top: 12px; color: #b9e5cc; font-size: .92rem; }
     .result { display: none; margin-top: 20px; border-top: 1px solid rgba(255,255,255,.12); padding-top: 20px; }
     .result.visible { display: block; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #03100a; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 14px; max-height: 360px; overflow: auto; color: #dffbea; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 12px; margin: 14px 0; }
+    .card { border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 14px; background: rgba(255,255,255,.045); }
+    .card strong { display: block; margin-bottom: 5px; }
+    .card p { margin: 0; color: #c5dbcf; line-height: 1.45; font-size: .9rem; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #020d08; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 14px; max-height: 360px; overflow: auto; color: #dffbea; }
     .warning { color: #ffdca0; }
-    .muted { color: #9bb9a8; font-size: .88rem; line-height: 1.45; }
+    .muted { color: #9dbbaa; font-size: .88rem; line-height: 1.5; }
+    details summary { cursor: pointer; font-weight: 700; }
     @media (max-width: 600px) { main { padding: 0; } .shell { border-radius: 0; min-height: 100vh; } header, section { padding-inline: 18px; } }
   </style>
 </head>
@@ -38,23 +46,33 @@
   <div class="shell">
     <header>
       <h1>Clover Command Center</h1>
-      <p>Speak or type one instruction. Clover binds it to the current plan, project record, freshness rules, cost lane, and owner-controlled safety boundary.</p>
-      <div class="status" id="statusPills"><span class="pill">Read-only context</span><span class="pill">Preview-first</span><span class="pill">No production authority</span></div>
+      <p>Speak or type one instruction. Clover binds it to the current master plan, exact project record, live-source refresh map, cost lane, and owner-controlled safety boundary.</p>
+      <div class="status" id="statusPills">
+        <span class="pill">Read-only context</span>
+        <span class="pill">Preview-first</span>
+        <span class="pill">No production authority</span>
+      </div>
     </header>
     <section>
       <label for="request">What should CloverApps help you do?</label>
-      <textarea id="request" placeholder="Use CloverApps to evolve SongAndStage into the strongest show-night experience, using the latest project context, and build a preview only."></textarea>
+      <textarea id="request" placeholder="Use CloverApps to evolve SongAndStage toward the strongest show-night experience, refresh the latest project state, and build a preview only."></textarea>
+      <div class="examples" aria-label="Example instructions">
+        <button class="example" data-example="Use CloverApps to show my current portfolio status.">Show status</button>
+        <button class="example" data-example="Use CloverApps to evolve RollinD through a preview only.">Evolve a project</button>
+        <button class="example" data-example="Use CloverApps to plant a new seed for a communication app.">Plant a seed</button>
+      </div>
       <div class="actions">
         <button class="primary" id="prepare">Prepare command</button>
         <button class="secondary" id="mic">Start live transcription</button>
-        <button class="secondary" id="copy" disabled>Copy prompt</button>
-        <button class="secondary" id="send" disabled>Send to ChatGPT</button>
+        <button class="secondary" id="copy" disabled>Copy bounded prompt</button>
+        <button class="secondary" id="send" disabled>Continue in ChatGPT</button>
       </div>
       <div class="transcript" id="transcript" aria-live="polite"></div>
-      <p class="muted">Live transcription uses the browser's speech-recognition capability when available. It does not call the OpenAI API from this page. Browser support and processing location vary; device dictation remains the fallback.</p>
+      <p class="muted">Browser speech recognition is used only when available. This page does not call the OpenAI API for transcription. Browser support and processing location vary; device dictation or ChatGPT Voice remains the fallback.</p>
       <div class="result" id="result">
-        <h2>Bounded command</h2>
+        <h2>Bounded Clover command</h2>
         <p id="summary"></p>
+        <div class="grid" id="cards"></div>
         <pre id="prompt"></pre>
         <details>
           <summary>Machine-readable packet</summary>
@@ -75,6 +93,8 @@
   const promptEl = document.getElementById('prompt');
   const packetEl = document.getElementById('packet');
   const summaryEl = document.getElementById('summary');
+  const cardsEl = document.getElementById('cards');
+  const pillsEl = document.getElementById('statusPills');
   let currentPrompt = '';
   let recognition;
   let listening = false;
@@ -83,15 +103,52 @@
     return window.openai?.toolOutput || null;
   }
 
+  function addCard(title, text) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    const strong = document.createElement('strong');
+    strong.textContent = title;
+    const paragraph = document.createElement('p');
+    paragraph.textContent = text;
+    card.append(strong, paragraph);
+    cardsEl.append(card);
+  }
+
   function render(data) {
     const packet = data?.packet || null;
+    const status = data?.status || null;
+    const source = data?.source || packet?.canonicalContext || null;
     currentPrompt = data?.followUpPrompt || '';
+
+    if (status?.overallMissionCompletionEstimate != null && !pillsEl.dataset.statusAdded) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = `Mission ${status.overallMissionCompletionEstimate}% · ${status.asOf || 'dated status'}`;
+      pillsEl.append(pill);
+      pillsEl.dataset.statusAdded = 'true';
+    }
+    if (source?.commit && !pillsEl.dataset.sourceAdded) {
+      const pill = document.createElement('span');
+      pill.className = 'pill';
+      pill.textContent = `Context ${String(source.commit).slice(0, 8)}`;
+      pillsEl.append(pill);
+      pillsEl.dataset.sourceAdded = 'true';
+    }
     if (!packet && !currentPrompt) return;
+
     promptEl.textContent = currentPrompt;
     packetEl.textContent = JSON.stringify(packet, null, 2);
     summaryEl.textContent = packet
-      ? `${packet.intent.id} · ${packet.project?.title || 'project resolution needed'} · ${packet.cost.defaultLane}`
+      ? `${packet.intent.id} · ${packet.project?.title || packet.resolution?.state || 'project resolution needed'} · ${packet.cost.defaultLane}`
       : 'Prepared Clover follow-up';
+    cardsEl.replaceChildren();
+    if (packet) {
+      addCard('Project', packet.project?.title || `Resolution ${packet.resolution?.state || 'required'}`);
+      addCard('Live refresh', `${packet.freshness.requiredSources.length} source checks · ${[...new Set(packet.freshness.sourcePlan.map((item) => item.connector))].join(', ')}`);
+      addCard('Cost lane', `${packet.cost.defaultLane}. ${packet.cost.additionalPurchaseExpected ? 'Paid escalation is conditional.' : 'No additional purchase expected.'}`);
+      addCard('Authority', 'Preview-only. No merge, production, data, domain, secret, purchase, or messaging authority.');
+      for (const action of packet.ownerActionCards || []) addCard(action.title, `${action.instruction} Cost: ${action.cost}.`);
+    }
     resultEl.classList.add('visible');
     copyButton.disabled = !currentPrompt;
     sendButton.disabled = !currentPrompt || !window.openai?.sendFollowUpMessage;
@@ -163,11 +220,14 @@
   copyButton.addEventListener('click', async () => {
     await navigator.clipboard.writeText(currentPrompt);
     copyButton.textContent = 'Copied';
-    setTimeout(() => { copyButton.textContent = 'Copy prompt'; }, 1200);
+    setTimeout(() => { copyButton.textContent = 'Copy bounded prompt'; }, 1200);
   });
   sendButton.addEventListener('click', async () => {
     if (!window.openai?.sendFollowUpMessage || !currentPrompt) return;
     await window.openai.sendFollowUpMessage({ prompt: currentPrompt });
+  });
+  document.querySelectorAll('[data-example]').forEach((button) => {
+    button.addEventListener('click', () => { requestEl.value = button.dataset.example || ''; requestEl.focus(); });
   });
 
   setupSpeech();
@@ -175,6 +235,8 @@
   if (initial) {
     if (initial.packet?.originalRequest) requestEl.value = initial.packet.originalRequest;
     render(initial);
+  } else {
+    fetch('/api/context').then((response) => response.ok ? response.json() : null).then((snapshot) => snapshot && render(snapshot)).catch(() => {});
   }
 </script>
 </body>
