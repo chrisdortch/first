@@ -1,0 +1,3 @@
+{"date":"2026-08-16","decision":"Use preview-first, isolated branches, deterministic verification, bounded AI review, and owner-controlled release.","status":"active","authorityEffect":"No standing production authority."}
+{"date":"2026-08-17","decision":"Use chrisdortch/first as the canonical public operating-standards repository until a clearer dedicated repository is available.","status":"active","authorityEffect":"Public process metadata only; no private evidence or secrets."}
+{"date":"2026-08-17","decision":"Adopt a versioned master plan, weighted status, project registry, and append-only history as the source for future progress reporting.","status":"active","authorityEffect":"Percentages inform planning only."}

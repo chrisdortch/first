@@ -1,0 +1,39 @@
+name: Validate Clover master plan
+
+on:
+  push:
+    branches:
+      - main
+      - 'planning/**'
+    paths:
+      - 'AI_START_HERE.md'
+      - 'README.md'
+      - 'CLOVER_MASTER_PLAN_POINTER.json'
+      - 'CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json'
+      - 'portfolio/**'
+      - '.github/workflows/validate-clover-master-plan.yml'
+  pull_request:
+    paths:
+      - 'AI_START_HERE.md'
+      - 'README.md'
+      - 'CLOVER_MASTER_PLAN_POINTER.json'
+      - 'portfolio/**'
+      - '.github/workflows/validate-clover-master-plan.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Validate master plan, percentages, registry, and ledgers
+        run: node portfolio/runtime/validate-master-plan.mjs

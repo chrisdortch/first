@@ -1,0 +1,25 @@
+{
+  "documentType": "clover-master-plan-pointer",
+  "schemaVersion": "1.0",
+  "repository": "chrisdortch/first",
+  "canonicalDirectory": "portfolio",
+  "currentVersion": "1.0.0",
+  "currentDocument": "portfolio/master-plan/versions/1.0.0/MASTER_PLAN.md",
+  "currentStatus": "portfolio/status/current.json",
+  "projectRegistry": "portfolio/registry/projects.json",
+  "progressMethodology": "portfolio/PROGRESS_METHODOLOGY.md",
+  "nextWork": "portfolio/NEXT.md",
+  "aiHandoff": "portfolio/AI_HANDOFF.md",
+  "history": "portfolio/ledger/progress-history.jsonl",
+  "status": "canonical-planning-baseline",
+  "preservedLocalDate": "2026-08-17",
+  "timezone": "America/Chicago",
+  "overallMissionCompletionEstimate": 41,
+  "standingProductionAuthority": false,
+  "readFirst": [
+    "AI_START_HERE.md",
+    "portfolio/status/current.json",
+    "portfolio/master-plan/CURRENT.md",
+    "portfolio/registry/projects.json"
+  ]
+}
