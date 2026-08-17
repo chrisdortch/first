@@ -39,11 +39,23 @@ https://<deployment>/
 https://<deployment>/command-center
 ```
 
-Then test the MCP endpoint with ChatGPT Developer Mode:
+The root response must identify `clover-context-gateway`, version `0.1.1`, and read-only mode. The Command Center must load without credentials.
+
+## Connect from ChatGPT Pro
+
+Use ChatGPT on the web. Custom MCP apps are not currently available in the mobile app.
+
+1. Open **Settings → Apps → Advanced Settings**.
+2. Enable **Developer mode**.
+3. Create a private custom app using:
 
 ```text
 https://<deployment>/mcp
 ```
+
+4. Keep the app private and in developer mode. Do not publish it.
+5. Verify `search` and `fetch` first. ChatGPT Pro currently supports read/fetch MCP use; broader custom MCP capabilities may differ from Business or Enterprise/Edu.
+6. If `prepare_clover_command` or the interactive widget is not exposed on Pro, continue using `search` and `fetch` for canonical context and let the current chat execute the bounded work. Do not purchase credits merely to bypass a plan limitation.
 
 Test prompts:
 
@@ -56,6 +68,10 @@ Use CloverApps to plant a new seed called Test Seed and stop before repository c
 
 Every resulting command packet must leave all irreversible authority fields false.
 
+## Cost boundary
+
+No OpenAI API key or separate token purchase is required for the first preview and read-only ChatGPT Pro test. Vercel and GitHub may consume their ordinary included hosting and CI allowances.
+
 ## Failure handling
 
-If the deployment fails, preserve the exact build log and deployment ID. Do not add credentials, alter existing Vercel projects, change domains, or weaken validation. Repair only this isolated gateway candidate.
+If the deployment fails, preserve the exact build log and deployment ID. Do not add credentials, alter existing Vercel projects, change domains, weaken validation, or buy credits. Repair only this isolated gateway candidate.
