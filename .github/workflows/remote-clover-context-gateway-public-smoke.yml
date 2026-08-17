@@ -222,7 +222,8 @@ jobs:
               await page.locator('#result.visible').waitFor({ timeout: 15000 });
               assert.match(await page.locator('#summary').innerText(), /evolve_project/i);
               assert.match(await page.locator('#prompt').innerText(), /Target: RollinD/i);
-              const packet = JSON.parse(await page.locator('#packet').innerText());
+              const packetText = await page.locator('#packet').textContent();
+              const packet = JSON.parse(packetText || '');
               assert.equal(packet.schemaVersion, '1.1');
               assert.equal(packet.project.projectId, 'rollindd');
               assert.equal(packet.authority.productionDeploymentApproved, false);
