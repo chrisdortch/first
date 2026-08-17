@@ -1,0 +1,166 @@
+name: Verify serverless-safe Clover MCP preview
+
+on:
+  push:
+    branches:
+      - test/clover-context-gateway-remote-smoke-20260817
+    paths:
+      - '.github/workflows/verify-clover-mcp-serverless-preview.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/verify-clover-mcp-serverless-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_URL: https://clover-context-gateway-preview-gh6mwesoy-chris-dortchs-projects.vercel.app
+  DEPLOYMENT_ID: dpl_PgndKmNPqkby414r449uwNq5rP9e
+  SOURCE_COMMIT: 0ef991fed90e7bd52c819dbfce53e1032c3e2501
+
+jobs:
+  remote-serverless-verification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact transport candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Install exact MCP dependencies
+        working-directory: apps/clover-context-gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify immediate GET/DELETE 405 and complete POST-only ChatGPT contract
+        working-directory: apps/clover-context-gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .remote-serverless-smoke.mjs <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+          const baseUrl = process.env.BASE_URL;
+          const timings = [];
+
+          async function verifyMethod(method) {
+            const started = performance.now();
+            const response = await fetch(`${baseUrl}/mcp`, {
+              method,
+              headers: { accept: 'text/event-stream' }
+            });
+            const elapsedMs = Math.round(performance.now() - started);
+            const body = await response.json();
+            assert.equal(response.status, 405);
+            assert.equal(response.headers.get('allow'), 'POST, OPTIONS');
+            assert.ok(elapsedMs < 2000, `${method} took ${elapsedMs}ms`);
+            assert.equal(body.jsonrpc, '2.0');
+            assert.equal(body.id, null);
+            assert.match(body.error?.message || '', /Use POST/);
+            timings.push({ method, elapsedMs, status: response.status });
+          }
+
+          await verifyMethod('GET');
+          await verifyMethod('DELETE');
+
+          const client = new Client({ name: 'clover-serverless-remote-smoke', version: '1.0.0' });
+          let contract;
+          try {
+            await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+            const listed = await client.listTools();
+            const tools = listed.tools.map(tool => tool.name).sort();
+            assert.deepEqual(tools, ['fetch', 'prepare_clover_command', 'render_clover_command_center', 'search']);
+            for (const tool of listed.tools) {
+              assert.equal(tool.annotations?.readOnlyHint, true);
+              assert.equal(tool.annotations?.destructiveHint, false);
+            }
+
+            const command = await client.callTool({
+              name: 'prepare_clover_command',
+              arguments: { request: 'Use CloverApps to evolve RollinD through a preview only' }
+            });
+            assert.equal(command.structuredContent.packet.project.projectId, 'rollindd');
+            assert.equal(command.structuredContent.packet.authority.productionDeploymentApproved, false);
+
+            const rendered = await client.callTool({
+              name: 'render_clover_command_center',
+              arguments: { request: 'Use CloverApps to evolve RollinD through a preview only' }
+            });
+            assert.equal(rendered.structuredContent.packet.project.projectId, 'rollindd');
+            assert.equal(rendered._meta?.ui?.resourceUri, 'ui://clover/command-center.html');
+
+            const resources = await client.listResources();
+            assert.ok(resources.resources.some(resource => resource.uri === 'ui://clover/command-center.html'));
+            const widget = await client.readResource({ uri: 'ui://clover/command-center.html' });
+            assert.match(widget.contents[0].mimeType || '', /mcp-app|text\/html/);
+            assert.match(widget.contents[0].text || '', /window\.openai/);
+
+            contract = {
+              tools,
+              allReadOnly: true,
+              target: command.structuredContent.packet.project.projectId,
+              resourceUri: rendered._meta.ui.resourceUri,
+              resourceMimeType: widget.contents[0].mimeType
+            };
+          } finally {
+            await client.close();
+          }
+
+          // Exercise the former timeout path repeatedly, then remain alive beyond
+          // Vercel's 30-second function limit so telemetry can reveal any lingering invocation.
+          for (let index = 0; index < 5; index += 1) await verifyMethod('GET');
+          await new Promise(resolve => setTimeout(resolve, 35000));
+
+          const root = await fetch(`${baseUrl}/`).then(response => response.json());
+          assert.equal(root.service, 'clover-context-gateway');
+          assert.equal(root.authority.writeToolsEnabled, false);
+
+          const receipt = {
+            documentType: 'clover-mcp-serverless-remote-verification',
+            schemaVersion: '1.0',
+            generatedAt: new Date().toISOString(),
+            sourceCommit: process.env.SOURCE_COMMIT,
+            deploymentId: process.env.DEPLOYMENT_ID,
+            baseUrl,
+            status: 'passed',
+            methodTimings: timings,
+            contract,
+            telemetryObservationWindowSeconds: 35,
+            authority: {
+              mergeApproved: false,
+              productionDeploymentApproved: false,
+              productionDataAccessApproved: false,
+              domainOrDnsChangeApproved: false,
+              secretChangeApproved: false,
+              purchaseApproved: false,
+              externalMessageApproved: false
+            }
+          };
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/serverless-remote-receipt.json`, JSON.stringify(receipt, null, 2));
+          console.log(JSON.stringify({ status: 'passed', tools: contract.tools, timings, observationWindowSeconds: 35 }));
+          NODE
+          node .remote-serverless-smoke.mjs
+          rm -f .remote-serverless-smoke.mjs
+
+      - name: Upload serverless remote verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-mcp-serverless-remote-${{ github.sha }}
+          path: ${{ runner.temp }}/serverless-remote-receipt.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
