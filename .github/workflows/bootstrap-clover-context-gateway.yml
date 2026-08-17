@@ -1,5 +1,6 @@
 name: Bootstrap Clover Context Gateway source
 
+# One-time installer; the workflow deletes itself after a successful, checksum-verified installation.
 on:
   push:
     branches:
