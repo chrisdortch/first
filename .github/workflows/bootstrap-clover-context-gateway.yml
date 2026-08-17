@@ -1,0 +1,142 @@
+name: Bootstrap Clover Context Gateway source
+
+on:
+  push:
+    branches:
+      - platform/clover-context-gateway-v0.2.0-20260817
+    paths:
+      - '.clover-bootstrap/**'
+      - '.github/workflows/bootstrap-clover-context-gateway.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  install-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out isolated gateway branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+
+      - name: Verify and extract checksum-bound source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat \
+            .clover-bootstrap/clover-context-gateway-v0.2.part000 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part001 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part002 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem000 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem001 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem002 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem003 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part005 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part006 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part007 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part008 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part009 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part010 \
+            > "$RUNNER_TEMP/clover-context-gateway.b64"
+          base64 --decode "$RUNNER_TEMP/clover-context-gateway.b64" > "$RUNNER_TEMP/clover-context-gateway.tar.gz"
+          echo "a0a7722da102fbb8c4d2f37b20f92e04c2a5a501cfd031fa0db49a50290aab40  $RUNNER_TEMP/clover-context-gateway.tar.gz" | sha256sum --check -
+          tar -xzf "$RUNNER_TEMP/clover-context-gateway.tar.gz" -C .
+          sed -i "s|'platform/clover-context-gateway/\*\*'|'platform/clover-context-gateway-*'|" .github/workflows/validate-clover-context-gateway.yml
+          tar -tzf "$RUNNER_TEMP/clover-context-gateway.tar.gz" > "$RUNNER_TEMP/payload-files.txt"
+
+      - name: Install pinned dependencies and run deterministic tests
+        working-directory: apps/clover-context-gateway
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run validate
+
+      - name: Validate control-plane JSON and non-authority invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/control-plane-validation.json"
+          const fs = require('node:fs');
+          const files = [
+            'CLOVER_CONTEXT_GATEWAY_POINTER.json',
+            'portfolio/context/control-plane.json',
+            'portfolio/context/LIVE_ADAPTER_REGISTRY.json',
+            'portfolio/context/PROJECT_CONTEXT_POINTER.template.json',
+            'portfolio/schemas/clover-command-packet.schema.json',
+            'portfolio/schemas/clover-refresh-receipt.schema.json',
+            'portfolio/schemas/clover-project-context-pointer.schema.json'
+          ];
+          for (const file of files) JSON.parse(fs.readFileSync(file, 'utf8'));
+          const pointer = JSON.parse(fs.readFileSync('CLOVER_CONTEXT_GATEWAY_POINTER.json', 'utf8'));
+          const plane = JSON.parse(fs.readFileSync('portfolio/context/control-plane.json', 'utf8'));
+          if (pointer.writeToolsEnabled !== false || pointer.standingProductionAuthority !== false) process.exit(1);
+          if (plane.authority.writeToolsEnabled !== false || plane.authority.productionDataAccessEnabled !== false) process.exit(1);
+          if (!fs.readFileSync('AGENTS.md', 'utf8').includes('Use CloverApps to')) process.exit(1);
+          console.log(JSON.stringify({ status: 'passed', version: pointer.version, writeToolsEnabled: false, standingProductionAuthority: false }));
+          NODE
+
+      - name: Smoke-test HTTP, search, fetch, command packet, and MCP
+        shell: bash
+        working-directory: apps/clover-context-gateway
+        run: |
+          set -euo pipefail
+          PORT=8787 PUBLIC_BASE_URL=http://127.0.0.1:8787 CONTEXT_SOURCE_MODE=local npm start > "$RUNNER_TEMP/clover-context-gateway.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8787/ > "$RUNNER_TEMP/health.json"; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center'
+          curl --fail --silent 'http://127.0.0.1:8787/api/search?q=RollinD' > "$RUNNER_TEMP/search.json"
+          curl --fail --silent --get --data-urlencode 'id=clover://project/rollindd' http://127.0.0.1:8787/api/fetch > "$RUNNER_TEMP/fetch.json"
+          curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
+            http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
+          node -e 'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(x.packet.schemaVersion!=="1.1"||x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false||!x.packet.freshness.sourcePlan.length) process.exit(1)' "$RUNNER_TEMP/command.json"
+          npm run smoke:mcp > "$RUNNER_TEMP/mcp-smoke.json"
+
+      - name: Commit installed source and remove one-time bootstrap material
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf apps/clover-context-gateway/node_modules
+          rm -rf .clover-bootstrap
+          rm -f .github/workflows/bootstrap-clover-context-gateway.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git status --short | tee "$RUNNER_TEMP/installed-files.txt"
+          git commit -m 'Install Clover Context Gateway v0.2.0 control plane'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Upload bootstrap validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-context-gateway-bootstrap-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/payload-files.txt
+            ${{ runner.temp }}/control-plane-validation.json
+            ${{ runner.temp }}/health.json
+            ${{ runner.temp }}/search.json
+            ${{ runner.temp }}/fetch.json
+            ${{ runner.temp }}/command.json
+            ${{ runner.temp }}/mcp-smoke.json
+            ${{ runner.temp }}/clover-context-gateway.log
+            ${{ runner.temp }}/installed-files.txt
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6
