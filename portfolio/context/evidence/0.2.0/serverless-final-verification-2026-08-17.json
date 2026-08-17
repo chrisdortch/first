@@ -1,0 +1,130 @@
+{
+  "documentType": "clover-mcp-serverless-final-verification",
+  "schemaVersion": "1.0",
+  "gatewayVersion": "0.2.0",
+  "asOf": "2026-08-17",
+  "timezone": "America/Chicago",
+  "problem": {
+    "summary": "The optional standalone MCP GET/SSE stream held Vercel serverless invocations open until the 30-second function limit even though POST MCP requests succeeded.",
+    "deploymentId": "dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP",
+    "runtimeTimeoutCount": 10,
+    "timeoutSeconds": 30,
+    "route": "/api/index"
+  },
+  "standardsBasis": {
+    "repository": "modelcontextprotocol/typescript-sdk",
+    "clientSource": "packages/client/src/client/streamableHttp.ts",
+    "behavior": "The official client treats HTTP 405 on the standalone GET stream as an expected response indicating that the server does not offer the optional SSE stream.",
+    "decision": "Use stateless POST request/response MCP and terminate GET/DELETE immediately with HTTP 405. Do not conceal the issue by merely increasing function duration."
+  },
+  "source": {
+    "repository": "chrisdortch/first",
+    "baseCommit": "ee35635062de7d799e78ac954c5a508a3dbe6292",
+    "candidateCommit": "0ef991fed90e7bd52c819dbfce53e1032c3e2501",
+    "mergeCommit": "e6d12dbf2be407c32b1dc5be3e07dfd011e37779",
+    "changedFiles": [
+      "apps/clover-context-gateway/server.js",
+      "apps/clover-context-gateway/test/serverless-mcp.test.js"
+    ]
+  },
+  "change": {
+    "postMcpEnabled": true,
+    "standaloneGetSseEnabled": false,
+    "getResponseStatus": 405,
+    "deleteResponseStatus": 405,
+    "allowHeader": "POST, OPTIONS",
+    "jsonRpcErrorId": null,
+    "previewOnly": true,
+    "readOnlyToolsOnly": true
+  },
+  "sourceValidation": {
+    "workflowRunId": 32081207406,
+    "node22Conclusion": "success",
+    "node24Conclusion": "success",
+    "deterministicTestsPassedPerRuntime": 11,
+    "getAndDeleteRegressionPassed": true,
+    "postMcpSmokePassed": true,
+    "pointerAndAuthorityValidationPassed": true
+  },
+  "candidatePreview": {
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "deploymentId": "dpl_PgndKmNPqkby414r449uwNq5rP9e",
+    "url": "https://clover-context-gateway-preview-gh6mwesoy-chris-dortchs-projects.vercel.app",
+    "target": null,
+    "productionAliasAssigned": false,
+    "customDomainAdded": false,
+    "sourceIntegrity": "Each deployed source file was fetched from candidate commit 0ef991fed90e7bd52c819dbfce53e1032c3e2501 and verified against its Git blob identity before packaging.",
+    "remoteVerification": {
+      "workflowRunId": 32081400326,
+      "conclusion": "success",
+      "artifactId": 9305236347,
+      "artifactSha256": "2952167d5d613079b4e53e6625e29de7fc70ffbdcc80c7faa80adaec2ab73776",
+      "vaultFileId": "1W53RrPlqrbbdFNUKCeJMht7kdcLvbkOC",
+      "getAndDeleteImmediate405": true,
+      "postMcpContractPassed": true,
+      "exactToolCount": 4,
+      "allToolsReadOnly": true,
+      "widgetResourcePassed": true,
+      "observationWindowSeconds": 35,
+      "postTestRuntimeErrorsObserved": 0
+    }
+  },
+  "finalCanonicalPreview": {
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "projectName": "clover-context-gateway-preview",
+    "deploymentId": "dpl_7nhkHzYK5tRJjKNRZCiqmjvJFwTn",
+    "url": "https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app",
+    "mcpUrl": "https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app/mcp",
+    "commandCenterUrl": "https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app/command-center",
+    "deployedApplicationCommit": "e6d12dbf2be407c32b1dc5be3e07dfd011e37779",
+    "canonicalContextCommitObserved": "e6d12dbf2be407c32b1dc5be3e07dfd011e37779",
+    "state": "READY",
+    "target": null,
+    "productionAliasAssigned": false,
+    "customDomainAdded": false,
+    "access": "public-https-read-only-pilot",
+    "region": "iad1",
+    "runtime": "nodejs24.x",
+    "verification": {
+      "workflowRunId": 32081743038,
+      "conclusion": "success",
+      "artifactId": 9305340249,
+      "artifactSha256": "588ff94a7d36d42edb997998f3e2e9b653c9352073ebc3e696147ac280bf61d2",
+      "vaultFileId": "1apnU79oCGq5ZvmyY3vsWdpXheED8TG8K",
+      "getAndDeleteImmediate405": true,
+      "postMcpSmokePassed": true,
+      "observationWindowSeconds": 35,
+      "postTestRuntimeErrorsObserved": 0
+    }
+  },
+  "toolSurface": {
+    "tools": [
+      "fetch",
+      "prepare_clover_command",
+      "render_clover_command_center",
+      "search"
+    ],
+    "allReadOnly": true,
+    "allNonDestructive": true,
+    "customWriteTools": 0,
+    "verifiedTarget": "rollindd",
+    "productionDeploymentApproved": false,
+    "productionDataAccessApproved": false
+  },
+  "completion": {
+    "estimate": 90,
+    "confidence": "high",
+    "percentageChange": 0,
+    "reasonNoIncrease": "The transport defect was removed and confidence strengthened, but the owner-authenticated ChatGPT custom-app connection and official CloverApps Site saved-review integration remain incomplete."
+  },
+  "authority": {
+    "productionDeploymentApproved": false,
+    "productionAliasAssigned": false,
+    "domainOrDnsChangeApproved": false,
+    "productionDataAccessApproved": false,
+    "secretChangeApproved": false,
+    "purchaseApproved": false,
+    "externalMessageApproved": false,
+    "openAiSiteChangeApproved": false
+  }
+}
