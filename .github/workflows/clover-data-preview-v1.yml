@@ -1,0 +1,176 @@
+name: Clover disposable data rehearsal v1
+
+on:
+  workflow_call:
+    inputs:
+      protocol_ref:
+        description: Exact chrisdortch/first commit containing Clover Data Change Protocol 1.0.0
+        required: true
+        type: string
+      policy_path:
+        description: Path to the project-specific data policy
+        required: false
+        default: .clover/data-change-policy.json
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-data-change:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: clover
+          POSTGRES_PASSWORD: clover
+          POSTGRES_DB: clover_data
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clover -d clover_data"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      CI: '1'
+      CLOVER_DATA_MODE: disposable-database-only
+      CLOVER_DATA_ARTIFACT_DIR: ${{ github.workspace }}/.clover-data-evidence
+      CLOVER_DATA_PROTOCOL_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/runtime/v1.0.0
+      CLOVER_DATA_SCHEMA_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/schemas
+      CLOVER_BUILD_RUNTIME_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-build-protocol/runtime/v1.1.0
+      CLOVER_POLICY_PATH: ${{ inputs.policy_path }}
+      CLOVER_PROTOCOL_REF: ${{ inputs.protocol_ref }}
+      CLOVER_TEST_DATABASE_URL: postgresql://clover:clover@127.0.0.1:5432/clover_data
+
+    steps:
+      - name: Check out exact candidate commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out exact Clover protocol commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: chrisdortch/first
+          ref: ${{ inputs.protocol_ref }}
+          path: _clover_protocol
+          persist-credentials: false
+
+      - name: Verify exact protocol checkout
+        shell: bash
+        run: test "$(git -C _clover_protocol rev-parse HEAD)" = "${{ inputs.protocol_ref }}"
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+
+      - name: Install pinned schema validator
+        id: tooling
+        continue-on-error: true
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+
+      - name: Validate project data policy before project commands
+        id: policy_schema
+        if: steps.tooling.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_BUILD_RUNTIME_ROOT/validate-json.mjs" "$CLOVER_DATA_SCHEMA_ROOT/data-change-policy.schema.json" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/policy-schema.json"
+
+      - name: Verify source and authority boundaries
+        id: boundary
+        if: steps.policy_schema.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/verify-data-boundaries.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/boundary.json"
+
+      - name: Install project dependencies
+        id: install
+        if: steps.boundary.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/run-project-command.mjs" "$CLOVER_POLICY_PATH" install "$CLOVER_DATA_ARTIFACT_DIR/commands"
+
+      - name: Run project verification contract
+        id: verify
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/run-project-command.mjs" "$CLOVER_POLICY_PATH" verify "$CLOVER_DATA_ARTIFACT_DIR/commands"
+
+      - name: Install PostgreSQL client
+        id: postgres_client
+        if: steps.verify.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Confirm disposable PostgreSQL service
+        id: postgres_ready
+        if: steps.postgres_client.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U clover -d clover_data; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Run forward, idempotency, reconciliation, and rollback rehearsal
+        id: rehearsal
+        if: steps.postgres_ready.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/data-rehearsal.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/database"
+
+      - name: Assemble final data-change receipt
+        id: receipt
+        if: always()
+        continue-on-error: true
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/assemble-data-receipt.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR"
+
+      - name: Validate final receipt schema
+        id: receipt_schema
+        if: always() && steps.tooling.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_BUILD_RUNTIME_ROOT/validate-json.mjs" "$CLOVER_DATA_SCHEMA_ROOT/data-change-receipt.schema.json" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt-schema.json"
+
+      - name: Publish compact summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json" ]; then
+            echo "## Clover Data Change Protocol 1.0" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Status: **$(jq -r .status "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json")**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Database: **disposable PostgreSQL with synthetic data only**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Production data access: **none**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Production migration: **not authorized**" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "- Candidate: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Clover did not produce a data-change receipt." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload bounded data evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clover-data-v1-${{ github.sha }}
+          path: ${{ github.workspace }}/.clover-data-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6
+
+      - name: Enforce final gate
+        if: always()
+        shell: bash
+        run: |
+          test -f "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json"
+          test "$(jq -r .status "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json")" = "passed"
+          test "${{ steps.receipt_schema.outcome }}" = "success"

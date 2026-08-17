@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-data-protocol-pointer-1.0.0.json",
+  "title": "Clover Data Change Protocol Pointer",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "repository",
+    "currentVersion",
+    "currentDocument",
+    "standingProductionAuthority",
+    "ownerApprovalRequiredForProductionDataAccess",
+    "defaultAutomationMode"
+  ],
+  "properties": {
+    "documentType": {
+      "const": "clover-data-change-protocol-pointer"
+    },
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "repository": {
+      "const": "chrisdortch/first"
+    },
+    "currentVersion": {
+      "const": "1.0.0"
+    },
+    "currentDocument": {
+      "type": "string"
+    },
+    "standingProductionAuthority": {
+      "const": false
+    },
+    "ownerApprovalRequiredForProductionDataAccess": {
+      "const": true
+    },
+    "defaultAutomationMode": {
+      "const": "disposable-database-only"
+    }
+  }
+}

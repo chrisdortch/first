@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "1.0",
+  "protocolVersion": "1.0.0",
+  "updatedAt": "2026-08-17T04:00:00Z",
+  "projects": [
+    {
+      "projectId": "serenity-shores-boat-rentals",
+      "title": "Serenity Shores Boat Rentals",
+      "repository": "chrisdortch/serenity-shores-boat-rentals",
+      "adoptionStatus": "pilot-pending",
+      "productionBranch": "main",
+      "productionHeadAtVerification": "680039ff44be030010c0e252dca7d68056fe853f",
+      "databaseEngine": "postgresql",
+      "productionDatabaseAccessed": false,
+      "authority": {
+        "productionDatabaseReadApproved": false,
+        "productionDatabaseWriteApproved": false,
+        "productionMigrationApproved": false,
+        "productionRestoreApproved": false
+      }
+    }
+  ]
+}

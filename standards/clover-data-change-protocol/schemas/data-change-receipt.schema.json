@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-data-change-receipt-1.0.0.json",
+  "title": "Clover Data Change Receipt 1.0.0",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "generatedAt",
+    "status",
+    "project",
+    "source",
+    "database",
+    "checks",
+    "safety",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "protocolVersion": {
+      "const": "1.0.0"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "id",
+        "repository"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "baselineCommit",
+        "candidateCommit",
+        "protocolCommit",
+        "changedFiles"
+      ],
+      "properties": {
+        "baselineCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "candidateCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "protocolCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "changedFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": [
+        "mode",
+        "engine",
+        "majorVersion",
+        "hostClass",
+        "databaseName"
+      ],
+      "properties": {
+        "mode": {
+          "const": "disposable-database-only"
+        },
+        "engine": {
+          "const": "postgresql"
+        },
+        "majorVersion": {
+          "const": 16
+        },
+        "hostClass": {
+          "const": "local-ci-service"
+        },
+        "databaseName": {
+          "const": "clover_data"
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "boundary",
+        "policySchema",
+        "install",
+        "projectVerify",
+        "baseline",
+        "forward",
+        "forwardIdempotency",
+        "rollback",
+        "schemaRestored",
+        "reconciliationPreserved"
+      ],
+      "properties": {
+        "boundary": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "policySchema": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "install": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "projectVerify": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "baseline": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "forward": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "forwardIdempotency": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "rollback": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "schemaRestored": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        },
+        "reconciliationPreserved": {
+          "enum": [
+            "passed",
+            "failed"
+          ]
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "required": [
+        "productionDatabaseConnected",
+        "productionDataRead",
+        "productionDataWritten",
+        "productionCredentialsAccepted",
+        "syntheticDataOnly"
+      ],
+      "properties": {
+        "productionDatabaseConnected": {
+          "const": false
+        },
+        "productionDataRead": {
+          "const": false
+        },
+        "productionDataWritten": {
+          "const": false
+        },
+        "productionCredentialsAccepted": {
+          "const": false
+        },
+        "syntheticDataOnly": {
+          "const": true
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "releaseState",
+        "productionEligible",
+        "productionMigrationApproved"
+      ],
+      "properties": {
+        "releaseState": {
+          "const": "not-authorized"
+        },
+        "productionEligible": {
+          "const": false
+        },
+        "productionMigrationApproved": {
+          "const": false
+        }
+      }
+    }
+  }
+}

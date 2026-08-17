@@ -1,0 +1,52 @@
+name: Validate Clover data-change standard
+
+on:
+  push:
+    branches: [main, 'protocol/**']
+    paths:
+      - 'CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json'
+      - 'AI_START_HERE.md'
+      - 'README.md'
+      - '.github/workflows/clover-data-preview-v1.yml'
+      - '.github/workflows/validate-clover-data-standard.yml'
+      - 'standards/clover-data-change-protocol/**'
+  pull_request:
+    paths:
+      - 'CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json'
+      - '.github/workflows/clover-data-preview-v1.yml'
+      - '.github/workflows/validate-clover-data-standard.yml'
+      - 'standards/clover-data-change-protocol/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install pinned schema validator
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+      - name: Validate data protocol pointer
+        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/protocol-pointer.schema.json CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json
+      - name: Validate data project registry
+        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-project-registry.schema.json standards/clover-data-change-protocol/registry/projects.json
+      - name: Validate policy template
+        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.template.json
+      - name: Check runtime syntax
+        run: |
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/verify-data-boundaries.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/run-project-command.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/data-rehearsal.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/assemble-data-receipt.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs
+      - name: Verify protocol invariants
+        run: node standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs

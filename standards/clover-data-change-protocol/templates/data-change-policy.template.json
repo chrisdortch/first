@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "1.0",
+  "protocol": {
+    "version": "1.0.0",
+    "repository": "chrisdortch/first",
+    "commit": "0000000000000000000000000000000000000000"
+  },
+  "project": {
+    "id": "example-project",
+    "title": "Example Project",
+    "repository": "owner/repository",
+    "class": "database-backed",
+    "productionBranch": "main"
+  },
+  "source": {
+    "baselineCommit": "0000000000000000000000000000000000000000",
+    "productionCommitAtEnrollment": "0000000000000000000000000000000000000000"
+  },
+  "execution": {
+    "mode": "disposable-database-only",
+    "allowedBranchPrefixes": [
+      "chatpro/"
+    ],
+    "allowedChangePaths": [
+      ".clover/data-change-policy.json",
+      ".clover/data/**",
+      ".github/workflows/clover-data-preview.yml"
+    ],
+    "sensitivePaths": [
+      "src/**",
+      "api/**",
+      "package.json",
+      "package-lock.json",
+      "vercel.json"
+    ],
+    "forbiddenEnvironmentVariables": [
+      "DATABASE_URL",
+      "POSTGRES_URL",
+      "POSTGRES_PRISMA_URL",
+      "POSTGRES_URL_NON_POOLING",
+      "NEON_DATABASE_URL",
+      "STORAGE_URL"
+    ],
+    "forbiddenCapabilities": [
+      "production-database-read",
+      "production-database-write",
+      "production-migration",
+      "production-backup-or-restore",
+      "merge",
+      "production-deploy-or-promotion",
+      "domain-or-dns-change",
+      "secret-change",
+      "external-message",
+      "purchase"
+    ]
+  },
+  "commands": {
+    "install": "npm ci",
+    "verify": "npm test"
+  },
+  "database": {
+    "engine": "postgresql",
+    "majorVersion": 16,
+    "disposableDatabaseName": "clover_data",
+    "allowedTablePrefixes": [
+      "example_"
+    ],
+    "baselineSqlPath": ".clover/data/baseline.sql",
+    "seedSqlPath": ".clover/data/seed.sql",
+    "forwardSqlPath": ".clover/data/forward.sql",
+    "assertionsSqlPath": ".clover/data/assertions.sql",
+    "reconciliationSqlPath": ".clover/data/reconcile.sql",
+    "rollbackSqlPath": ".clover/data/rollback.sql",
+    "postRollbackAssertionsSqlPath": ".clover/data/post-rollback-assertions.sql",
+    "requireForwardIdempotency": true,
+    "requireRollback": true,
+    "reconciliationMode": "preserve",
+    "allowDropTableInRollback": false
+  },
+  "authority": {
+    "productionDatabaseReadApproved": false,
+    "productionDatabaseWriteApproved": false,
+    "productionMigrationApproved": false,
+    "productionBackupOrRestoreApproved": false,
+    "mergeApproved": false,
+    "productionDeploymentApproved": false,
+    "domainOrDnsChangeApproved": false,
+    "secretChangeApproved": false,
+    "externalMessageApproved": false,
+    "purchaseApproved": false
+  }
+}

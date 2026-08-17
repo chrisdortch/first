@@ -1,0 +1,17 @@
+name: Clover data-change preview
+
+on:
+  push:
+    branches:
+      - 'chatpro/clover-data-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clover-data:
+    uses: chrisdortch/first/.github/workflows/clover-data-preview-v1.yml@PROTOCOL_COMMIT
+    with:
+      protocol_ref: PROTOCOL_COMMIT
+      policy_path: .clover/data-change-policy.json

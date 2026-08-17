@@ -4,13 +4,20 @@ This repository preserves versioned instructions, project registries, AI handoff
 
 Start with [`AI_START_HERE.md`](AI_START_HERE.md).
 
-## Current standard
+## Current standards
 
-The active preserved standard is **Clover Build Protocol 1.1.0**, validated through a third-project portability pilot. It adds a centrally pinned reusable workflow, formal schemas, automated registry validation, compact evidence packets, and a third-project portability pilot while preserving version 1.0.0 unchanged.
+**Clover Build Protocol 1.1.0** governs isolated source changes, deterministic validation, bounded visual review, previews, and owner-controlled release.
 
-- Current pointer: [`CLOVER_BUILD_PROTOCOL_POINTER.json`](CLOVER_BUILD_PROTOCOL_POINTER.json)
-- Current protocol: [`standards/clover-build-protocol/CURRENT.md`](standards/clover-build-protocol/CURRENT.md)
-- Project registry: [`standards/clover-build-protocol/registry/projects.json`](standards/clover-build-protocol/registry/projects.json)
-- Revision queue: GitHub issue #1
+- Pointer: [`CLOVER_BUILD_PROTOCOL_POINTER.json`](CLOVER_BUILD_PROTOCOL_POINTER.json)
+- Protocol: [`standards/clover-build-protocol/CURRENT.md`](standards/clover-build-protocol/CURRENT.md)
+- Registry: [`standards/clover-build-protocol/registry/projects.json`](standards/clover-build-protocol/registry/projects.json)
 
-This repository contains process documentation and public project metadata only. It must not contain secret values, customer records, private legal evidence, private communications, financial records, or production credentials.
+**Clover Data Change Protocol 1.0.0** governs schema and persisted-data changes. Its default automation uses a disposable PostgreSQL service with synthetic records and refuses production database credentials.
+
+- Pointer: [`CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json`](CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json)
+- Protocol: [`standards/clover-data-change-protocol/CURRENT.md`](standards/clover-data-change-protocol/CURRENT.md)
+- Registry: [`standards/clover-data-change-protocol/registry/projects.json`](standards/clover-data-change-protocol/registry/projects.json)
+
+Passing either protocol is evidence, not authority to merge, deploy, migrate production data, change credentials, or communicate externally.
+
+This repository must not contain secret values, customer records, private legal evidence, private communications, financial records, or production credentials.
