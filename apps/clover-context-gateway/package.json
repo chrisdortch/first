@@ -1,17 +1,18 @@
 {
   "name": "clover-context-gateway",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Read-only Clover context and command-packet gateway for ChatGPT, Codex, and CloverApps.",
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check server.js && node --check lib/context-store.js && node --check lib/command-router.js",
+    "start": "node scripts/start.js",
+    "check": "node --check server.js && node --check lib/context-store.js && node --check lib/command-router.js && node --check scripts/start.js && node --check scripts/verify-context-snapshot.mjs",
     "test": "node --test",
-    "validate": "npm run check && npm test"
+    "verify:snapshot": "node scripts/verify-context-snapshot.mjs",
+    "validate": "npm run check && npm test && npm run verify:snapshot"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.0.1",

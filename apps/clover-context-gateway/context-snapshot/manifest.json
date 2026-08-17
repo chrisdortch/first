@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1.0",
+  "sourceRepository": "chrisdortch/first",
+  "sourceCommit": "8e5c8b92ac3968c8a6f009d8faf682b9393595b4",
+  "createdAt": "2026-08-17T16:45:00Z",
+  "files": [
+    { "path": "CLOVER_MASTER_PLAN_POINTER.json", "gitBlobSha": "6e7bfe8ee3c3c7284a57f3f16963bd5598057ed2" },
+    { "path": "portfolio/status/current.json", "gitBlobSha": "e85f12f17a1ae90b2935262222d78972b8490bca" },
+    { "path": "portfolio/master-plan/CURRENT.md", "gitBlobSha": "35104b2263f8ef73227b6d375434f4c0b60e26e1" },
+    { "path": "portfolio/master-plan/versions/1.0.0/MASTER_PLAN.md", "gitBlobSha": "4a3ad9922e895bb2987821cf39e302f0176a9f0f" },
+    { "path": "portfolio/registry/projects.json", "gitBlobSha": "1de175f77cdbb9bd3a2f7afcbdb1c13b66889d0d" },
+    { "path": "portfolio/NEXT.md", "gitBlobSha": "deabc64f11446f7825c62e5049539984998076e5" },
+    { "path": "portfolio/PROGRESS_METHODOLOGY.md", "gitBlobSha": "6e507c1043dc41c35b9902e1b1edad84de833ecf" },
+    { "path": "standards/clover-build-protocol/CURRENT.md", "gitBlobSha": "dc96a6eb0f40a7f41eeb5d05283200887039cd4c" },
+    { "path": "standards/clover-data-change-protocol/CURRENT.md", "gitBlobSha": "fc1c9bb8df14de50190be42a46dea4f8e533aa9b" },
+    { "path": "portfolio/context/COMMAND_GRAMMAR.md", "gitBlobSha": "2f8b88f667028c220131893d0bed926f968578bb" },
+    { "path": "portfolio/context/FRESHNESS_POLICY.md", "gitBlobSha": "3111cfd64a4ebebb55c3f565caf582789324243a" },
+    { "path": "portfolio/context/COST_POLICY.md", "gitBlobSha": "b75979675e82632a0b90cda4e2fdd08de6a01d3b" }
+  ]
+}
