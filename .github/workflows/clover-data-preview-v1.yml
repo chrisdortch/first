@@ -73,7 +73,7 @@ jobs:
       - name: Install pinned schema validator
         id: tooling
         continue-on-error: true
-        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+        run: npm install --prefix _clover_protocol --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
 
       - name: Validate project data policy before project commands
         id: policy_schema
