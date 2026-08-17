@@ -45,20 +45,48 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PORT=8787 PUBLIC_BASE_URL=http://127.0.0.1:8787 npm start > "$RUNNER_TEMP/clover-context-gateway.log" 2>&1 &
+          PORT=8787 npm start > "$RUNNER_TEMP/clover-context-gateway.log" 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 40); do
             if curl --fail --silent http://127.0.0.1:8787/ > "$RUNNER_TEMP/health.json"; then break; fi
             sleep 1
           done
-          curl --fail --silent http://127.0.0.1:8787/ | grep 'clover-context-gateway'
           curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center'
+          curl --fail --silent \
+            -H 'x-forwarded-proto: https' \
+            -H 'x-forwarded-host: clover-preview.example' \
+            http://127.0.0.1:8787/ > "$RUNNER_TEMP/forwarded-health.json"
+          node - <<'NODE' "$RUNNER_TEMP/health.json" "$RUNNER_TEMP/forwarded-health.json"
+          const fs = require('node:fs');
+          const local = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const forwarded = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+          if (local.service !== 'clover-context-gateway') process.exit(11);
+          if (local.version !== '0.1.1') process.exit(12);
+          if (local.mode !== 'read-only') process.exit(13);
+          if (forwarded.mcp !== 'https://clover-preview.example/mcp') process.exit(14);
+          if (forwarded.commandCenter !== 'https://clover-preview.example/command-center') process.exit(15);
+          NODE
           curl --fail --silent \
             -H 'content-type: application/json' \
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
             http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
-          node -e 'const x=require(process.argv[1]); if(x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false) process.exit(1)' "$RUNNER_TEMP/command.json"
+          node - <<'NODE' "$RUNNER_TEMP/command.json"
+          const fs = require('node:fs');
+          const file = process.argv[2];
+          const x = JSON.parse(fs.readFileSync(file, 'utf8'));
+          const diagnostic = {
+            topLevelKeys: Object.keys(x),
+            packetKeys: Object.keys(x.packet || {}),
+            project: x.packet?.project || null,
+            intent: x.packet?.intent || null,
+            authority: x.packet?.authority || null,
+            errors: x.errors || x.error || null
+          };
+          console.log(JSON.stringify(diagnostic));
+          if (x.packet?.project?.projectId !== 'rollindd') process.exit(21);
+          if (x.packet?.authority?.productionDeploymentApproved !== false) process.exit(22);
+          NODE
       - name: Upload smoke-test and lockfile evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -67,6 +95,7 @@ jobs:
           path: |
             apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/health.json
+            ${{ runner.temp }}/forwarded-health.json
             ${{ runner.temp }}/command.json
             ${{ runner.temp }}/clover-context-gateway.log
           if-no-files-found: warn
