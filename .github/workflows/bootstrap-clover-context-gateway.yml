@@ -33,23 +33,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          {
-            head -c 7000 .clover-bootstrap/clover-context-gateway-v0.2.part000
-            cat \
-              .clover-bootstrap/clover-context-gateway-v0.2.part001 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part002 \
-              .clover-bootstrap/clover-context-gateway-v0.2.rem000 \
-              .clover-bootstrap/clover-context-gateway-v0.2.rem001 \
-              .clover-bootstrap/clover-context-gateway-v0.2.rem002 \
-              .clover-bootstrap/clover-context-gateway-v0.2.rem003 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part005 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part006 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part007 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part008 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part009 \
-              .clover-bootstrap/clover-context-gateway-v0.2.part010
-          } > "$RUNNER_TEMP/clover-context-gateway.b64"
-          base64 --decode --ignore-garbage "$RUNNER_TEMP/clover-context-gateway.b64" > "$RUNNER_TEMP/clover-context-gateway.tar.gz"
+          cat \
+            .clover-bootstrap/clover-context-gateway-v0.2.first000 \
+            .clover-bootstrap/clover-context-gateway-v0.2.first001 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part001 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part002 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem000 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem001 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem002 \
+            .clover-bootstrap/clover-context-gateway-v0.2.rem003 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part005 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part006 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part007 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part008 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part009 \
+            .clover-bootstrap/clover-context-gateway-v0.2.part010 \
+            > "$RUNNER_TEMP/clover-context-gateway.b64"
+          base64 --decode "$RUNNER_TEMP/clover-context-gateway.b64" > "$RUNNER_TEMP/clover-context-gateway.tar.gz"
           echo "a0a7722da102fbb8c4d2f37b20f92e04c2a5a501cfd031fa0db49a50290aab40  $RUNNER_TEMP/clover-context-gateway.tar.gz" | sha256sum --check -
           tar -xzf "$RUNNER_TEMP/clover-context-gateway.tar.gz" -C .
           sed -i "s|'platform/clover-context-gateway/\*\*'|'platform/clover-context-gateway-*'|" .github/workflows/validate-clover-context-gateway.yml
