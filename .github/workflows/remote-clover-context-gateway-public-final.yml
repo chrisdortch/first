@@ -1,0 +1,271 @@
+name: Final public Clover Context Gateway verification
+
+on:
+  push:
+    branches:
+      - test/clover-context-gateway-remote-smoke-20260817
+    paths:
+      - '.github/workflows/remote-clover-context-gateway-public-final.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/remote-clover-context-gateway-public-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_URL: https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app
+  EXPECTED_CONTEXT_COMMIT: 7f1642bc7c9f26c5f56e1852515ea228da8cd895
+  EXPECTED_DEPLOYMENT_ID: dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out canonical gateway plus isolated verification
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Install exact dependencies and browser tooling
+        working-directory: apps/clover-context-gateway
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @playwright/test@1.58.2
+          google-chrome --version | tee "$RUNNER_TEMP/chrome-version.txt"
+
+      - name: Verify HTTP, MCP, desktop, and mobile journeys
+        working-directory: apps/clover-context-gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .public-final-smoke.mjs <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+          import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+          import { chromium } from '@playwright/test';
+
+          const baseUrl = process.env.BASE_URL;
+          const expectedCommit = process.env.EXPECTED_CONTEXT_COMMIT;
+          const output = process.env.RUNNER_TEMP;
+
+          async function fetchText(path, options) {
+            const response = await fetch(`${baseUrl}${path}`, options);
+            const text = await response.text();
+            assert.equal(response.status, 200, `${path} returned ${response.status}: ${text.slice(0, 300)}`);
+            return { response, text };
+          }
+
+          async function fetchJson(path, options) {
+            const { response, text } = await fetchText(path, options);
+            return { response, value: JSON.parse(text) };
+          }
+
+          const root = (await fetchJson('/')).value;
+          assert.equal(root.service, 'clover-context-gateway');
+          assert.equal(root.version, '0.2.0');
+          assert.equal(root.mode, 'read-only');
+          assert.equal(root.contextMode, 'github');
+          assert.equal(root.contextSource.commit, expectedCommit);
+          assert.equal(root.authority.writeToolsEnabled, false);
+          assert.equal(root.authority.standingProductionAuthority, false);
+
+          const favicon = await fetchText('/favicon.ico');
+          assert.match(favicon.response.headers.get('content-type') || '', /image\/svg\+xml/);
+          assert.match(favicon.text, /aria-label="Clover"/);
+          const robots = await fetchText('/robots.txt');
+          assert.equal(robots.text, 'User-agent: *\nDisallow: /\n');
+
+          const context = (await fetchJson('/api/context')).value;
+          assert.ok(Array.isArray(context.projects) && context.projects.length >= 20);
+          assert.equal(context.source.commit, expectedCommit);
+          const search = (await fetchJson('/api/search?q=RollinD')).value;
+          assert.ok(search.results.some(item => item.id === 'clover://project/rollindd'));
+          const fetched = (await fetchJson('/api/fetch?id=clover%3A%2F%2Fproject%2Frollindd')).value;
+          assert.equal(fetched.id, 'clover://project/rollindd');
+
+          const command = (await fetchJson('/api/prepare-command', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ request: 'Use CloverApps to evolve RollinD through a preview only' })
+          })).value;
+          assert.equal(command.packet.schemaVersion, '1.1');
+          assert.equal(command.packet.project.projectId, 'rollindd');
+          assert.equal(command.packet.intent.id, 'evolve_project');
+          assert.ok(command.packet.freshness.sourcePlan.length > 0);
+          for (const [key, value] of Object.entries(command.packet.authority)) {
+            assert.equal(value, key === 'previewOnlyByDefault', `Unexpected authority ${key}=${value}`);
+          }
+
+          const ambiguous = (await fetchJson('/api/prepare-command', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ request: 'Use CloverApps to improve the project through a preview only' })
+          })).value;
+          assert.equal(ambiguous.packet.project, null);
+          assert.equal(ambiguous.packet.state, 'needs-project-resolution');
+
+          const client = new Client({ name: 'clover-public-final-smoke', version: '1.0.0' });
+          let mcpResult;
+          try {
+            await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+            const listed = await client.listTools();
+            const names = listed.tools.map(tool => tool.name).sort();
+            assert.deepEqual(names, ['fetch', 'prepare_clover_command', 'render_clover_command_center', 'search']);
+            for (const tool of listed.tools) {
+              assert.equal(tool.annotations?.readOnlyHint, true);
+              assert.equal(tool.annotations?.destructiveHint, false);
+            }
+            const remoteCommand = await client.callTool({
+              name: 'prepare_clover_command',
+              arguments: { request: 'Use CloverApps to evolve RollinD through a preview only' }
+            });
+            assert.equal(remoteCommand.structuredContent.packet.project.projectId, 'rollindd');
+            assert.equal(remoteCommand.structuredContent.packet.authority.productionDeploymentApproved, false);
+            mcpResult = { status: 'passed', tools: names, allReadOnly: true, target: 'rollindd' };
+          } finally {
+            await client.close();
+          }
+
+          const browser = await chromium.launch({ channel: 'chrome', headless: true });
+          const uiResults = [];
+          try {
+            for (const profile of [
+              { id: 'desktop', viewport: { width: 1440, height: 1000 }, mobile: false },
+              { id: 'mobile', viewport: { width: 390, height: 844 }, mobile: true }
+            ]) {
+              const browserContext = await browser.newContext({
+                viewport: profile.viewport,
+                isMobile: profile.mobile,
+                hasTouch: profile.mobile,
+                colorScheme: 'dark',
+                reducedMotion: 'reduce'
+              });
+              const page = await browserContext.newPage();
+              const consoleErrors = [];
+              const pageErrors = [];
+              const failedRequests = [];
+              const badResponses = [];
+              page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+              page.on('pageerror', error => pageErrors.push(error.message));
+              page.on('requestfailed', request => failedRequests.push(`${request.method()} ${request.url()}: ${request.failure()?.errorText || 'failed'}`));
+              page.on('response', response => { if (response.status() >= 400) badResponses.push(`${response.status()} ${response.url()}`); });
+
+              const response = await page.goto(`${baseUrl}/command-center`, { waitUntil: 'networkidle' });
+              assert.equal(response?.status(), 200);
+              await page.getByRole('heading', { name: 'Clover Command Center' }).waitFor();
+              await page.getByRole('button', { name: 'Evolve a project' }).click();
+              await page.getByRole('button', { name: 'Prepare command' }).click();
+              await page.locator('#result.visible').waitFor({ timeout: 15000 });
+              assert.match(await page.locator('#summary').innerText(), /evolve_project/i);
+              assert.match(await page.locator('#prompt').innerText(), /Target: RollinD/i);
+              const packet = JSON.parse((await page.locator('#packet').textContent()) || '');
+              assert.equal(packet.project.projectId, 'rollindd');
+              assert.equal(packet.authority.productionDeploymentApproved, false);
+
+              const metrics = await page.evaluate(() => ({
+                horizontalOverflow: document.documentElement.scrollWidth - window.innerWidth,
+                bodyHeight: document.body.scrollHeight,
+                viewport: { width: window.innerWidth, height: window.innerHeight },
+                actionButtons: [...document.querySelectorAll('.actions button')].map(button => {
+                  const rect = button.getBoundingClientRect();
+                  return { text: button.textContent.trim(), width: rect.width, height: rect.height };
+                }),
+                resultVisible: document.querySelector('#result')?.classList.contains('visible') || false,
+                micLabel: document.querySelector('#mic')?.textContent?.trim() || null
+              }));
+              assert.ok(metrics.horizontalOverflow <= 1, `Horizontal overflow ${metrics.horizontalOverflow}px`);
+              assert.ok(metrics.actionButtons.every(button => button.height >= 44), JSON.stringify(metrics.actionButtons));
+              assert.equal(metrics.resultVisible, true);
+              assert.deepEqual(consoleErrors, []);
+              assert.deepEqual(pageErrors, []);
+              assert.deepEqual(failedRequests, []);
+              assert.deepEqual(badResponses, []);
+
+              const screenshot = `${output}/command-center-${profile.id}.png`;
+              await page.screenshot({ path: screenshot, fullPage: true, animations: 'disabled' });
+              uiResults.push({
+                profile: profile.id,
+                viewport: profile.viewport,
+                target: packet.project.projectId,
+                intent: packet.intent.id,
+                metrics,
+                consoleErrors,
+                pageErrors,
+                failedRequests,
+                badResponses,
+                screenshot
+              });
+              await browserContext.close();
+            }
+          } finally {
+            await browser.close();
+          }
+
+          const receipt = {
+            documentType: 'clover-context-gateway-public-remote-verification',
+            schemaVersion: '1.0',
+            generatedAt: new Date().toISOString(),
+            sourceCandidateCommit: 'ccedb33ca5a206b6e4139aab4904befcb817b06b',
+            canonicalContextCommit: expectedCommit,
+            deploymentId: process.env.EXPECTED_DEPLOYMENT_ID,
+            baseUrl,
+            http: {
+              status: 'passed',
+              projectCount: context.projects.length,
+              favicon: 'passed',
+              robots: 'passed',
+              resolvedTarget: command.packet.project.projectId,
+              ambiguousState: ambiguous.packet.state,
+              liveSourceChecks: command.packet.freshness.sourcePlan.length
+            },
+            mcp: mcpResult,
+            ui: { status: 'passed', results: uiResults },
+            authority: {
+              mergeApproved: false,
+              productionDeploymentApproved: false,
+              productionDataAccessApproved: false,
+              domainOrDnsChangeApproved: false,
+              secretChangeApproved: false,
+              purchaseApproved: false,
+              externalMessageApproved: false
+            }
+          };
+          fs.writeFileSync(`${output}/public-remote-receipt.json`, JSON.stringify(receipt, null, 2));
+          fs.writeFileSync(`${output}/http-verification.json`, JSON.stringify(receipt.http, null, 2));
+          fs.writeFileSync(`${output}/mcp-remote.json`, JSON.stringify(mcpResult, null, 2));
+          fs.writeFileSync(`${output}/ui-remote.json`, JSON.stringify(receipt.ui, null, 2));
+          console.log(JSON.stringify({ status: 'passed', deploymentId: receipt.deploymentId, tools: mcpResult.tools, profiles: uiResults.map(result => result.profile) }));
+          NODE
+          node .public-final-smoke.mjs
+          rm -f .public-final-smoke.mjs
+
+      - name: Upload final remote evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-context-gateway-public-final-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/chrome-version.txt
+            ${{ runner.temp }}/http-verification.json
+            ${{ runner.temp }}/mcp-remote.json
+            ${{ runner.temp }}/ui-remote.json
+            ${{ runner.temp }}/public-remote-receipt.json
+            ${{ runner.temp }}/command-center-desktop.png
+            ${{ runner.temp }}/command-center-mobile.png
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6
