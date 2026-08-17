@@ -54,6 +54,18 @@ jobs:
           echo "a0a7722da102fbb8c4d2f37b20f92e04c2a5a501cfd031fa0db49a50290aab40  $RUNNER_TEMP/clover-context-gateway.tar.gz" | sha256sum --check -
           tar -xzf "$RUNNER_TEMP/clover-context-gateway.tar.gz" -C .
           sed -i "s|'platform/clover-context-gateway/\*\*'|'platform/clover-context-gateway-*'|" .github/workflows/validate-clover-context-gateway.yml
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'apps/clover-context-gateway/server.js';
+          let source = fs.readFileSync(file, 'utf8');
+          for (const name of ['search', 'fetch', 'prepare_clover_command']) {
+            const before = `registerAppTool(\n    server,\n    "${name}",`;
+            const after = `server.registerTool(\n    "${name}",`;
+            if (!source.includes(before)) throw new Error(`Expected UI-helper registration not found for ${name}`);
+            source = source.replace(before, after);
+          }
+          fs.writeFileSync(file, source);
+          NODE
           tar -tzf "$RUNNER_TEMP/clover-context-gateway.tar.gz" > "$RUNNER_TEMP/payload-files.txt"
 
       - name: Install pinned dependencies and run deterministic tests
