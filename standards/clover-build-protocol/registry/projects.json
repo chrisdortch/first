@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "1.0",
+  "protocolVersion": "1.0.0",
+  "updatedAt": "2026-08-17T01:18:38Z",
+  "projects": [
+    {
+      "projectId": "rollindd-platform",
+      "title": "RollinD Platform",
+      "repository": "chrisdortch/rollindd-platform",
+      "adoptionStatus": "pilot-validated-not-merged",
+      "productionBranch": "main",
+      "productionHeadAtVerification": "6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09",
+      "pilotBranch": "chatpro/clover-visual-qa-v1-20260816",
+      "pilotHeadAtVerification": "b6d65d15cc1e5bbb5c02f03fe20852139e945ceb",
+      "workflow": {
+        "name": "Clover preview safety",
+        "runId": 31984461082,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "id": 9273341697,
+        "name": "clover-preview-evidence-b6d65d15cc1e5bbb5c02f03fe20852139e945ceb",
+        "digest": "sha256:906c7931e52c5427748afa56aea06eda841d21422aa06346b1149f4af23ce171",
+        "expiresAt": "2026-09-16T01:17:52Z"
+      },
+      "authority": {
+        "mergeApproved": false,
+        "productionDeploymentApproved": false,
+        "productionDataMutationApproved": false
+      }
+    },
+    {
+      "projectId": "fearless-free-ebook",
+      "title": "Fearless Free Ebook",
+      "repository": "chrisdortch/fearless-free-ebook",
+      "adoptionStatus": "pilot-validated-not-merged",
+      "productionBranch": "main",
+      "productionHeadAtVerification": "6b08a4a12b64acc8719ec16429c310d8f5c2ff8d",
+      "pilotBranch": "chatpro/clover-visual-qa-v1-20260816",
+      "pilotHeadAtVerification": "aa872646b2a76ae81b035f5739fe212d2ae41c25",
+      "workflow": {
+        "name": "Clover preview safety",
+        "runId": 31984495067,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "id": 9273351468,
+        "name": "clover-preview-evidence-aa872646b2a76ae81b035f5739fe212d2ae41c25",
+        "digest": "sha256:eef068be5b7f55ba7e56a5494e86f357340f607f5e5cd8d1d20317da8fa77039",
+        "expiresAt": "2026-09-16T01:18:34Z"
+      },
+      "authority": {
+        "mergeApproved": false,
+        "productionDeploymentApproved": false,
+        "productionDataMutationApproved": false
+      }
+    }
+  ]
+}

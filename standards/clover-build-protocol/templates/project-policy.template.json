@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0",
+  "protocolVersion": "1.0.0",
+  "project": {
+    "id": "replace-me",
+    "title": "Replace Me",
+    "repository": "owner/repository",
+    "productionBranch": "main",
+    "hostingProject": "replace-me",
+    "productionDomains": []
+  },
+  "risk": {
+    "classification": "low|medium|high|critical",
+    "productionData": "describe without secrets",
+    "payments": false,
+    "externalMessaging": false,
+    "authenticatedOwnerFlows": false
+  },
+  "build": {
+    "defaultMode": "preview-only",
+    "allowedBranchPrefixes": [
+      "chatpro/",
+      "codex/",
+      "agent/"
+    ],
+    "commands": {
+      "install": "replace-me",
+      "lint": "replace-me",
+      "typecheck": "replace-me",
+      "build": "replace-me",
+      "test": "replace-me"
+    }
+  },
+  "browser": {
+    "requiredProjects": [
+      "desktop-chromium",
+      "mobile-webkit"
+    ],
+    "safeJourneys": [],
+    "maxInitialReviewScreenshots": 4
+  },
+  "boundaries": {
+    "mergeToProductionAuthorized": false,
+    "productionDeploymentAuthorized": false,
+    "domainOrDnsMutationAuthorized": false,
+    "productionDataMutationAuthorized": false,
+    "secretMutationAuthorized": false,
+    "externalMessagingAuthorized": false,
+    "purchaseAuthorized": false
+  },
+  "evidence": {
+    "required": [
+      "exact candidate commit",
+      "production anchor commit",
+      "changed-file inventory",
+      "deterministic check receipt",
+      "bounded browser evidence",
+      "owner acceptance before release"
+    ]
+  }
+}
