@@ -13,13 +13,13 @@ This candidate is self-contained for a Vercel project whose root directory is `a
 
 ## Recommended no-merge activation path
 
-Use a computer terminal authenticated to the owner's existing GitHub and Vercel accounts. This deploys the exact candidate as a Vercel **preview** without merging it to `main`.
+Use a computer terminal authenticated to the owner's existing GitHub and Vercel accounts. This deploys the exact validated runtime as a Vercel **preview** without merging it to `main`.
 
 ```bash
 git clone https://github.com/chrisdortch/first.git clover-context-gateway-activation
 cd clover-context-gateway-activation
-git checkout 5c4ad251bc7678fe6fe88378c17bb610298b2399
-git rev-parse HEAD
+git checkout archive/clover-context-gateway-v0.1.1-preview-20260817
+test "$(git rev-parse HEAD)" = "0d5141e88c8ddf4f0e15cff3db26c0d55255fa41"
 cd apps/clover-context-gateway
 npm install --ignore-scripts --no-audit --no-fund
 npm run validate
@@ -39,7 +39,7 @@ Production deployment: no
 
 Do **not** use `--prod`. The ordinary `vercel` command creates a preview deployment.
 
-This path avoids an initial deployment from the repository's default branch. It also avoids duplicating the GitHub repository through a Deploy Button.
+The archive branch is pinned to the independently validated runtime commit `0d5141e88c8ddf4f0e15cff3db26c0d55255fa41`. This path avoids an initial deployment from the repository's default branch and avoids duplicating the GitHub repository through a Deploy Button.
 
 ## Dashboard path after a separately approved merge
 
