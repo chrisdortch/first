@@ -33,8 +33,13 @@ permissions:
 
 jobs:
   validate:
+    name: Validate on Node ${{ matrix.node-version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
     env:
       CONTEXT_SOURCE_MODE: local
       PUBLIC_BASE_URL: http://127.0.0.1:8787
@@ -45,10 +50,10 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Use Node.js 22
+      - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: apps/clover-context-gateway/package-lock.json
 
@@ -84,7 +89,7 @@ jobs:
           if (plane.authority.writeToolsEnabled !== false || plane.authority.productionDataAccessEnabled !== false) process.exit(1);
           if (!fs.readFileSync('AGENTS.md', 'utf8').includes('Use CloverApps to')) process.exit(1);
           if (!fs.readFileSync('AI_START_HERE.md', 'utf8').includes('prepare_clover_command')) process.exit(1);
-          console.log(JSON.stringify({ status: 'passed', version: '0.2.0', writeToolsEnabled: false, standingProductionAuthority: false }));
+          console.log(JSON.stringify({ status: 'passed', version: '0.2.0', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
           NODE
 
       - name: Smoke-test HTTP, exact target resolution, and MCP
@@ -113,7 +118,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clover-context-gateway-v0.2-${{ github.sha }}
+          name: clover-context-gateway-v0.2-node-${{ matrix.node-version }}-${{ github.sha }}
           path: |
             apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/control-plane-validation.json
