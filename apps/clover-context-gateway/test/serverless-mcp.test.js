@@ -1,3 +1,4 @@
+// A stateless serverless MCP endpoint must reject optional standalone SSE streams immediately.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
