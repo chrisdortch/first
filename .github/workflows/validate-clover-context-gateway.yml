@@ -59,12 +59,13 @@ jobs:
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
             http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
           node -e 'const x=require(process.argv[1]); if(x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false) process.exit(1)' "$RUNNER_TEMP/command.json"
-      - name: Upload smoke-test evidence
+      - name: Upload smoke-test and lockfile evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: clover-context-gateway-${{ github.sha }}
           path: |
+            apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/health.json
             ${{ runner.temp }}/command.json
             ${{ runner.temp }}/clover-context-gateway.log
