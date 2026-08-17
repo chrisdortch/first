@@ -282,7 +282,23 @@ export async function handler(req, res) {
       }
     }
 
-    if (url.pathname === MCP_PATH && ["GET", "POST", "DELETE"].includes(req.method || "")) {
+    if (url.pathname === MCP_PATH && ["GET", "DELETE"].includes(req.method || "")) {
+      return json(
+        res,
+        405,
+        {
+          jsonrpc: "2.0",
+          error: {
+            code: -32000,
+            message: "Method not allowed. Use POST for this stateless serverless MCP endpoint.",
+          },
+          id: null,
+        },
+        { allow: "POST, OPTIONS" }
+      );
+    }
+
+    if (url.pathname === MCP_PATH && req.method === "POST") {
       res.setHeader("access-control-allow-origin", allowedOrigin);
       res.setHeader("access-control-expose-headers", "Mcp-Session-Id");
       const server = createCloverServer(baseUrl);
