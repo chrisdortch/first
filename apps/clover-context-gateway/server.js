@@ -17,7 +17,6 @@ const appDir = path.dirname(fileURLToPath(import.meta.url));
 const contextRoot = process.env.CONTEXT_ROOT
   ? path.resolve(process.env.CONTEXT_ROOT)
   : path.resolve(appDir, "../..");
-const publicBaseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 8787}`;
 const widgetHtml = readFileSync(path.join(appDir, "public", "command-center.html"), "utf8");
 const WIDGET_URI = "ui://clover/command-center.html";
 const MCP_PATH = "/mcp";
@@ -38,7 +37,19 @@ function textResult(payload) {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
-function createCloverServer() {
+function headerValue(value) {
+  const raw = Array.isArray(value) ? value[0] : String(value || "");
+  return raw.split(",")[0].trim();
+}
+
+function requestBaseUrl(req) {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, "");
+  const protocol = headerValue(req.headers["x-forwarded-proto"]) || (req.socket.encrypted ? "https" : "http");
+  const host = headerValue(req.headers["x-forwarded-host"]) || headerValue(req.headers.host) || `localhost:${process.env.PORT || 8787}`;
+  return `${protocol}://${host}`;
+}
+
+function createCloverServer({ baseUrl = "https://github.com/chrisdortch/first" } = {}) {
   const server = new McpServer({ name: "clover-context-gateway", version: GATEWAY_VERSION });
 
   registerAppResource(
@@ -87,7 +98,7 @@ function createCloverServer() {
     },
     async ({ id }) => {
       const item = store().fetch(id);
-      if (!item) return textResult({ id, title: "Not found", text: "", url: `${publicBaseUrl}/`, metadata: { found: false } });
+      if (!item) return textResult({ id, title: "Not found", text: "", url: `${baseUrl}/`, metadata: { found: false } });
       return textResult(item);
     }
   );
@@ -169,6 +180,7 @@ const port = Number(process.env.PORT || 8787);
 const httpServer = createServer(async (req, res) => {
   if (!req.url) return res.writeHead(400).end("Missing URL");
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const baseUrl = requestBaseUrl(req);
 
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
@@ -185,8 +197,8 @@ const httpServer = createServer(async (req, res) => {
       service: "clover-context-gateway",
       version: GATEWAY_VERSION,
       mode: "read-only",
-      mcp: `${publicBaseUrl}${MCP_PATH}`,
-      commandCenter: `${publicBaseUrl}/command-center`,
+      mcp: `${baseUrl}${MCP_PATH}`,
+      commandCenter: `${baseUrl}/command-center`,
     });
   }
 
@@ -213,7 +225,7 @@ const httpServer = createServer(async (req, res) => {
   if (url.pathname === MCP_PATH && ["GET", "POST", "DELETE"].includes(req.method || "")) {
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader("access-control-expose-headers", "Mcp-Session-Id");
-    const server = createCloverServer();
+    const server = createCloverServer({ baseUrl });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();
