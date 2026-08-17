@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import Ajv from 'ajv';
+import Ajv2020 from 'ajv/dist/2020.js';
 
 const [schemaArg, dataArg, outputArg] = process.argv.slice(2);
 if (!schemaArg || !dataArg) {
@@ -16,7 +16,7 @@ const result = { schemaVersion: '1.1', generatedAt: new Date().toISOString(), sc
 try {
   const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
   const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  const ajv = new Ajv({ allErrors: true, strict: false, validateFormats: false });
+  const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: false });
   const validate = ajv.compile(schema);
   const valid = validate(data);
   result.status = valid ? 'passed' : 'failed';
