@@ -2,10 +2,11 @@
 
 ## Current state
 
-Clover Context Gateway 0.2.0 is canonical, publicly reachable, and remotely verified as a read-only preview.
+Clover Context Gateway 0.2.0 is canonical, publicly reachable, serverless-safe, and remotely verified as a read-only preview.
 
 - Canonical gateway merge: `e97191234904efaa7b4ada24331007bac112f053`
 - Public-resource hygiene merge: `3e65599458b6a90141b7c47084180750810e95e1`
+- Serverless MCP transport merge: `e6d12dbf2be407c32b1dc5be3e07dfd011e37779`
 - Completion estimate: **90%**, high confidence
 - Broad Clover mission estimate: **41%**, unchanged
 
@@ -28,16 +29,17 @@ The instruction:
 
 resolves `rollindd`, not the CloverApps control plane. A request that does not identify a project fails closed with `needs-project-resolution`.
 
-## Canonical isolated Vercel preview
+## Final canonical Vercel preview
 
 A new Vercel project was created for the gateway without reusing or modifying any existing project.
 
 - Project: `clover-context-gateway-preview`
 - Project ID: `prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM`
-- Ready deployment: `dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP`
-- URL: `https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app`
-- MCP: `https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/mcp`
-- Command Center: `https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/command-center`
+- Ready deployment: `dpl_7nhkHzYK5tRJjKNRZCiqmjvJFwTn`
+- URL: `https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app`
+- MCP: `https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app/mcp`
+- Command Center: `https://clover-context-gateway-preview-6p1wy8ncf-chris-dortchs-projects.vercel.app/command-center`
+- Deployed and canonical source: `e6d12dbf2be407c32b1dc5be3e07dfd011e37779`
 - Target: `null` — preview, not production
 - Production alias: none
 - Custom domain: none
@@ -45,7 +47,7 @@ A new Vercel project was created for the gateway without reusing or modifying an
 - Region: `iad1`
 - Runtime: Node 24.x
 
-The build fetched each application file from candidate commit `ccedb33ca5a206b6e4139aab4904befcb817b06b`, verified each Git blob identity, installed the pinned lockfile, and passed source syntax checks before packaging. That candidate was later squash-merged as `3e65599458b6a90141b7c47084180750810e95e1`.
+The build fetched each application file from the exact merged commit, verified each Git blob identity, installed the pinned lockfile, and passed the serverless transport regression tests before packaging.
 
 ## Public-resource correction
 
@@ -59,9 +61,9 @@ A one-file adapter patch now:
 
 Source workflow `32079417086` passed on Node 22 and Node 24 before the corrected preview was accepted.
 
-## Final public remote verification
+## Public HTTP, MCP, and visual verification
 
-Workflow `32079674011` passed against deployment `dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP`.
+Workflow `32079674011` passed against the corrected public gateway.
 
 Verified:
 
@@ -82,7 +84,7 @@ Verified:
 - zero console errors;
 - zero page errors;
 - zero failed requests;
-- zero HTTP 4xx/5xx responses during the tested journeys.
+- zero HTTP 4xx/5xx responses during the tested UI journeys.
 
 Evidence:
 
@@ -92,7 +94,53 @@ Evidence:
 - Durable Clover Vault file: `1USpot-UvGOONCAmF2ZeOluwUxCsK2iJU`
 - Repository receipt: `portfolio/context/evidence/0.2.0/public-remote-verification-2026-08-17.json`
 
-After the hygiene merge, the same deployment reported canonical context commit `3e65599458b6a90141b7c47084180750810e95e1` from `main`.
+## ChatGPT Apps contract verification
+
+Workflow `32080401810` verified the endpoint as a ChatGPT Apps/MCP app rather than merely as a website.
+
+It confirmed:
+
+- the exact four read-only tools;
+- the `render_clover_command_center` tool;
+- resource discovery at `ui://clover/command-center.html`;
+- MIME type `text/html;profile=mcp-app`;
+- retrieval of the widget HTML;
+- the `window.openai` Apps bridge;
+- RollinD target resolution with production authority false.
+
+Evidence:
+
+- GitHub artifact: `9304911072`
+- Artifact SHA-256: `8684d45982f5b90a0d267d80ac79809e743f29a2da888e37704a9ab269e71a3d`
+- Durable Clover Vault file: `1ChwHX0HqykAPzHUVMXx4rsL9v3xsIUsb`
+
+## Serverless MCP transport correction
+
+The final Vercel error sweep exposed ten 30-second function timeouts even though MCP tool calls succeeded. The optional standalone GET/SSE stream remained open by design and outlived Vercel's 30-second serverless function limit.
+
+The official MCP TypeScript client treats HTTP 405 on the standalone GET stream as an expected indication that the server does not offer the optional SSE stream. The gateway therefore now uses stateless POST request/response MCP:
+
+- `POST /mcp` remains fully functional;
+- `GET /mcp` returns an immediate JSON-RPC HTTP 405;
+- `DELETE /mcp` returns an immediate JSON-RPC HTTP 405;
+- `Allow: POST, OPTIONS` is returned;
+- no function-duration increase was used to conceal the defect.
+
+Source validation workflow `32081207406` passed on Node 22 and Node 24. Each runtime passed eleven deterministic tests, POST MCP, GET/DELETE regression checks, command routing, pointer/schema validation, and all authority invariants.
+
+Candidate remote workflow `32081400326` passed the complete MCP/widget contract and remained open for 35 seconds beyond the former timeout threshold. Vercel then reported no runtime errors.
+
+The final merged deployment was independently verified by workflow `32081743038`, again with a 35-second observation window and a clean Vercel runtime-error sweep.
+
+Final transport evidence:
+
+- Candidate artifact: `9305236347`
+- Candidate artifact SHA-256: `2952167d5d613079b4e53e6625e29de7fc70ffbdcc80c7faa80adaec2ab73776`
+- Candidate Vault file: `1W53RrPlqrbbdFNUKCeJMht7kdcLvbkOC`
+- Final canonical artifact: `9305340249`
+- Final canonical artifact SHA-256: `588ff94a7d36d42edb997998f3e2e9b653c9352073ebc3e696147ac280bf61d2`
+- Final canonical Vault file: `1apnU79oCGq5ZvmyY3vsWdpXheED8TG8K`
+- Repository receipt: `portfolio/context/evidence/0.2.0/serverless-final-verification-2026-08-17.json`
 
 ## Historical access-boundary finding
 
@@ -105,7 +153,7 @@ Those failures are preserved in the prior deployment receipt. They demonstrated 
 
 ## Remaining activation gates
 
-1. In ChatGPT on the web, enable Developer Mode and create a custom app using the public MCP URL above.
+1. In ChatGPT on the web, enable Developer Mode and create a custom app using the final public MCP URL above.
 2. Confirm that ChatGPT lists exactly the four read-only tools and no write/modify tool.
 3. Test “Use CloverApps to evolve RollinD through a preview only.” through the connected app.
 4. Add the command interface to a saved review version of the official CloverApps Site through the supported Sites editor; stop before publication until separately approved.
@@ -114,4 +162,4 @@ Those failures are preserved in the prior deployment receipt. They demonstrated 
 
 The gateway remains preview-only and read-only. This work did not promote production, assign a domain, change DNS, access production data, change secrets, purchase anything, send messages, or edit an OpenAI Site.
 
-No additional credit purchase is indicated. The remaining ChatGPT and Sites operations are authenticated account-interface gates, not source, deployment, or model-compute deficiencies.
+No additional credit purchase is indicated. The remaining ChatGPT and Sites operations are authenticated account-interface gates, not source, deployment, transport, or model-compute deficiencies.
