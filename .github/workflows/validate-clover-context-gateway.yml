@@ -58,7 +58,22 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
             http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
-          node -e 'const x=require(process.argv[1]); if(x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false) process.exit(1)' "$RUNNER_TEMP/command.json"
+          node - <<'NODE' "$RUNNER_TEMP/command.json"
+          const fs = require('node:fs');
+          const file = process.argv[2];
+          const x = JSON.parse(fs.readFileSync(file, 'utf8'));
+          const diagnostic = {
+            topLevelKeys: Object.keys(x),
+            packetKeys: Object.keys(x.packet || {}),
+            project: x.packet?.project || null,
+            intent: x.packet?.intent || null,
+            authority: x.packet?.authority || null,
+            errors: x.errors || x.error || null
+          };
+          console.log(JSON.stringify(diagnostic));
+          if (x.packet?.project?.projectId !== 'rollindd') process.exit(11);
+          if (x.packet?.authority?.productionDeploymentApproved !== false) process.exit(12);
+          NODE
       - name: Upload smoke-test and lockfile evidence
         if: always()
         uses: actions/upload-artifact@v4
