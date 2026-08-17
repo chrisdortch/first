@@ -183,7 +183,8 @@ jobs:
           git add -A
           git diff --cached --check
           git status --short | tee "$RUNNER_TEMP/changed-files.txt"
-          test "$(git diff --cached --name-only | sort | tr '\n' ' ')" = "apps/clover-context-gateway/server.js apps/clover-context-gateway/test/serverless-mcp.test.js "
+          expected='.github/workflows/apply-clover-mcp-serverless-post-only.yml apps/clover-context-gateway/server.js apps/clover-context-gateway/test/serverless-mcp.test.js '
+          test "$(git diff --cached --name-only | sort | tr '\n' ' ')" = "$expected"
           git commit -m 'Make Clover MCP transport serverless-safe'
           git push origin "HEAD:platform/clover-context-gateway-v0.2.1-serverless-post-only-20260817"
 
