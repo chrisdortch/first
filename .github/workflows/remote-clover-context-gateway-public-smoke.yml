@@ -130,7 +130,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/remote-mcp-smoke.mjs" <<'NODE'
+          cat > .remote-mcp-smoke.mjs <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -177,14 +177,15 @@ jobs:
             await client.close();
           }
           NODE
-          node "$RUNNER_TEMP/remote-mcp-smoke.mjs"
+          node .remote-mcp-smoke.mjs
+          rm -f .remote-mcp-smoke.mjs
 
       - name: Inspect desktop and mobile command-center journeys
         working-directory: apps/clover-context-gateway
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/remote-ui-smoke.mjs" <<'NODE'
+          cat > .remote-ui-smoke.mjs <<'NODE'
           import assert from 'node:assert/strict';
           import fs from 'node:fs';
           import { chromium } from '@playwright/test';
@@ -267,7 +268,8 @@ jobs:
           fs.writeFileSync(`${process.env.RUNNER_TEMP}/ui-remote.json`, JSON.stringify({ status: 'passed', results }, null, 2));
           console.log(JSON.stringify({ status: 'passed', profiles: results.map(result => result.profile) }));
           NODE
-          node "$RUNNER_TEMP/remote-ui-smoke.mjs"
+          node .remote-ui-smoke.mjs
+          rm -f .remote-ui-smoke.mjs
 
       - name: Write deployment-bound verification receipt
         if: always()
