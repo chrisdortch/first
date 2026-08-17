@@ -11,9 +11,39 @@ This candidate is self-contained for a Vercel project whose root directory is `a
 - No automatic Git deployments (`vercel.json` disables them).
 - No merge, publication, purchase, or external-message authority.
 
-## Import the existing repository
+## Recommended no-merge activation path
 
-In Vercel, create a new project from the existing repository `chrisdortch/first` and use:
+Use a computer terminal authenticated to the owner's existing GitHub and Vercel accounts. This deploys the exact candidate as a Vercel **preview** without merging it to `main`.
+
+```bash
+git clone https://github.com/chrisdortch/first.git clover-context-gateway-activation
+cd clover-context-gateway-activation
+git checkout 5c4ad251bc7678fe6fe88378c17bb610298b2399
+git rev-parse HEAD
+cd apps/clover-context-gateway
+npm install --ignore-scripts --no-audit --no-fund
+npm run validate
+npx vercel@latest --scope chris-dortchs-projects
+```
+
+At the Vercel prompts choose:
+
+```text
+Set up this directory: yes
+Scope: Chris Dortch's projects
+Link to an existing project: no
+New project name: clover-context-gateway
+Modify project settings: no
+Production deployment: no
+```
+
+Do **not** use `--prod`. The ordinary `vercel` command creates a preview deployment.
+
+This path avoids an initial deployment from the repository's default branch. It also avoids duplicating the GitHub repository through a Deploy Button.
+
+## Dashboard path after a separately approved merge
+
+After the exact candidate is separately approved and merged, the project may instead be imported in the Vercel dashboard from `chrisdortch/first` using:
 
 ```text
 Project name: clover-context-gateway
@@ -23,12 +53,12 @@ Install command: npm install --ignore-scripts --no-audit --no-fund
 Build command: npm run validate
 Node.js: 22.x
 Custom domain: none
-Environment variables: none for the first deployment
+Environment variables: none
 ```
 
-The committed context snapshot lets the root directory deploy without reading files outside the project root. GitHub Actions verifies that the snapshot exactly matches the canonical files whenever the repository source is available.
+Do not merge merely to simplify deployment. Merge and deployment remain separate owner decisions.
 
-Create only a review deployment. Do not promote or assign a custom domain.
+The committed context snapshot lets the root directory deploy without reading files outside the project root. GitHub Actions verifies that the snapshot exactly matches the canonical files whenever the repository source is available.
 
 ## Verify the deployment
 
@@ -39,7 +69,7 @@ https://<deployment>/
 https://<deployment>/command-center
 ```
 
-The root response must identify `clover-context-gateway`, version `0.1.1`, and read-only mode. The Command Center must load without credentials.
+The root response must identify `clover-context-gateway`, version `0.1.1`, read-only mode, and the deployment's own HTTPS `/mcp` and `/command-center` URLs. No `localhost` URL may appear.
 
 ## Connect from ChatGPT Pro
 
@@ -74,4 +104,4 @@ No OpenAI API key or separate token purchase is required for the first preview a
 
 ## Failure handling
 
-If the deployment fails, preserve the exact build log and deployment ID. Do not add credentials, alter existing Vercel projects, change domains, weaken validation, or buy credits. Repair only this isolated gateway candidate.
+If the deployment fails, preserve the exact build log and deployment ID. Do not add credentials, alter existing Vercel projects, change domains, weaken validation, merge the candidate merely to bypass the failure, or buy credits. Repair only this isolated gateway candidate.
