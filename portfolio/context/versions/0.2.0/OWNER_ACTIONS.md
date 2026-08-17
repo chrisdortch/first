@@ -1,90 +1,96 @@
 # Clover Context Gateway 0.2.0 — Owner Actions
 
-The source candidate is validated. These remaining actions are intentionally separated because the connected tools cannot safely name and create a brand-new Vercel project with an exact Git repository, root directory, branch, and preview target.
+The source, isolated Vercel project, and protected preview now exist. Additional ChatGPT credits are not the blocker. The remaining gates require the owner's authenticated Vercel and ChatGPT settings screens, which are not exposed to this conversation's connectors.
 
-## Current state
+## Current verified state
 
 - Repository: `chrisdortch/first`
 - Draft PR: `https://github.com/chrisdortch/first/pull/5`
 - Candidate branch: `platform/clover-context-gateway-v0.2.0-preview-20260817`
-- Stable application-source installation commit: `459a6c7c4547b12c4deea4331478ebb78009a066`
+- Current deployment-aware candidate commit: `52cd3c7d6b411bc31986f5efb4ad78c90234b16f`
+- Application source candidate: `eb5d1270e9698cb67c3fdd007387c3c6302294ef`
 - Application root: `apps/clover-context-gateway`
-- Dedicated Vercel project: not created
+- Vercel team: `team_kx19aCrSTnej6wpz0fLgmYDY`
+- Dedicated Vercel project: `clover-context-gateway-preview`
+- Project ID: `prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM`
+- Ready preview deployment: `dpl_8NFprUjZQbWX87bDfzxTtj4yr7kz`
+- Preview URL: `https://clover-context-gateway-preview-pep108ni4-chris-dortchs-projects.vercel.app`
+- Target: preview (`null`), not production
+- Production alias: none
+- Custom domain: none
+- Access state: Vercel Authentication protected
 - ChatGPT custom app: not connected
 - OpenAI Sites integration: not performed
-- Tokens or API transcription required now: no
+- Additional API/transcription tokens required: no
 
-Subsequent commits on PR #5 change validation, pointers, and versioned documentation—not the gateway application root. Before deployment, verify:
+The deployment was created as a brand-new project. No existing Vercel project was reused or changed.
 
-```text
-git diff --exit-code 459a6c7c4547b12c4deea4331478ebb78009a066...<CURRENT_PR_HEAD> -- apps/clover-context-gateway
-```
+## Owner Gate 1 — Make only this read-only pilot remotely reachable
 
-The command must produce no diff.
+In Vercel, open project **`clover-context-gateway-preview`** and its Deployment Protection settings.
 
-Do **not** reuse the existing Vercel project named `nextjs-boilerplate`. Its source identity remains unresolved.
+Choose exactly one:
 
-## Gate 1 — Review source
+### Simplest public/read-only pilot
 
-Review draft PR #5. It is read-only, unmerged, and does not change an application deployment.
+Disable **Vercel Authentication** only for `clover-context-gateway-preview`.
 
-Do not merge merely to test the gateway; the candidate branch can be deployed independently.
+This pilot contains only public repository context and four read-only MCP tools. Do not change protection on any other project. Do not add a custom domain, secret, database, storage resource, or production alias.
 
-## Gate 2 — Create one isolated Vercel preview
+### Authenticated alternative
 
-Preferred zero-agentic-credit path:
+Keep Vercel Authentication and add a supported OAuth layer or a separately generated Vercel automation-bypass secret suitable for non-browser MCP clients.
 
-1. In Vercel, create a **new** project named `clover-context-gateway-preview`.
-2. Select GitHub repository `chrisdortch/first`.
-3. Set Root Directory to `apps/clover-context-gateway`.
-4. Select branch `platform/clover-context-gateway-v0.2.0-preview-20260817` at the current PR head.
-5. Verify the gateway application root has no diff from source installation commit `459a6c7c4547b12c4deea4331478ebb78009a066`.
-6. Create a preview deployment only. Do not use `--prod`, promote the deployment, assign a production alias, or add a custom domain.
-7. During visual review, Vercel Authentication may remain enabled.
-8. Before connecting ChatGPT, choose one supported remote-access path:
-   - **Public read-only pilot:** disable Vercel Authentication for this dedicated high-entropy preview URL after confirming that it exposes only public repository context and exactly four read-only MCP tools; or
-   - **Authenticated pilot:** add a supported OAuth/authentication layer before connection.
-9. Do not assume ChatGPT can pass through Vercel's ordinary browser-login protection.
-10. Do not add secrets for the public read-only pilot; version 0.2.0 uses public canonical context only.
-11. Record the Vercel project ID, deployment ID, exact commit, preview URL, build result, access mode, and protection state in the release receipt.
+Do not use a normal Vercel share link as an MCP credential. Two external tests proved that the generated share link still requires browser/account authentication.
 
-If the Vercel interface cannot guarantee the exact branch/current PR head and preview target before deployment, stop rather than deploying `main` or reusing another project.
+## Owner Gate 2 — Connect the read-only ChatGPT app
 
-## Gate 3 — Connect as a read-only ChatGPT app
-
-After the preview is verified and its MCP endpoint is reachable through public HTTPS or supported OAuth:
+After `/mcp` is reachable through public HTTPS or supported OAuth:
 
 1. Use ChatGPT on the web.
-2. Enable Developer Mode under Settings → Apps → Advanced Settings when available for the account.
-3. Create a custom app using the remote MCP URL:
+2. Open **Settings → Apps → Advanced Settings → Developer Mode**.
+3. Create a custom app with:
 
-   `https://<preview-host>/mcp`
+   `https://clover-context-gateway-preview-pep108ni4-chris-dortchs-projects.vercel.app/mcp`
 
-4. Permit read/fetch behavior only.
-5. Confirm the listed tools are exactly:
+4. Confirm the tool list is exactly:
    - `search`
    - `fetch`
    - `prepare_clover_command`
    - `render_clover_command_center`
-6. Reject the connection if any write/modify tool appears.
-7. Test:
+5. Reject the connection if any write, modify, deploy, send, purchase, data-write, or secret-management tool appears.
+6. Test:
 
    `Use CloverApps to evolve RollinD through a preview only.`
 
-8. Confirm the target is `rollindd`, the live-refresh plan names native connectors, and every irreversible authority flag is false.
+7. Confirm:
+   - target project: `rollindd`;
+   - schema: `1.1`;
+   - a live native-connector refresh plan is present;
+   - merge, production deployment, production data access, domains, secrets, purchases, messages, and publication all remain false.
 
-Custom MCP apps are currently a web experience, not a mobile-app experience. On mobile, use the hosted command center, device dictation, or ordinary ChatGPT Voice and preserve the resulting text as the request.
+## What happens immediately after those two gates
 
-## Gate 4 — Optional OpenAI Sites interface
+The external verification suite can then run:
 
-The live CloverApps OpenAI Site should be updated only after the gateway preview and ChatGPT app connection pass.
+- `/`
+- `/command-center`
+- `/api/context`
+- `/api/search?q=RollinD`
+- `/api/fetch?id=clover://project/rollindd`
+- POST `/api/prepare-command`
+- MCP initialize, tool list, search, fetch, command preparation, and UI-resource read
+- desktop and mobile command-center screenshots
+- console, runtime, network, and horizontal-overflow checks
 
-That step requires the official Sites editor. It should use one exact, saved-version-only instruction and stop before publication.
+The resulting receipt should be added to `portfolio/context/evidence/0.2.0/` and Clover Vault.
 
-## Exact paid agentic prompt, only if manual deployment is undesirable
+## OpenAI Sites gate
 
-Purchase or use agentic credits only for this bounded task:
+Do not update the live CloverApps OpenAI Site until the remote MCP connection passes. The Site update belongs in the official authenticated Sites editor and should create a saved review version before publication.
 
-> Work only in `chrisdortch/first`, PR #5, branch `platform/clover-context-gateway-v0.2.0-preview-20260817`, application root `apps/clover-context-gateway`. Read the current PR head and verify that this application root has no diff from source installation commit `459a6c7c4547b12c4deea4331478ebb78009a066`. Create a brand-new Vercel project named `clover-context-gateway-preview` and one preview deployment from the current PR head. Do not merge, deploy or promote production, reuse an existing Vercel project, add a custom domain, change DNS, add secrets, access production data, send messages, purchase services, or edit an OpenAI Site. First verify the preview with Vercel Authentication enabled. Then, because the gateway exposes only public repository context and exactly four read-only tools, either make only this dedicated high-entropy preview endpoint publicly reachable over HTTPS for the MCP connection or add supported OAuth; do not assume ChatGPT can use Vercel's browser-login page. Verify `/`, `/command-center`, `/api/search?q=RollinD`, `/api/fetch?id=clover://project/rollindd`, `/api/prepare-command`, and `/mcp`. Return the Vercel project ID, deployment ID, exact commit, preview URL, access mode, build/runtime logs, tool list, test results, cost, and rollback/deletion instructions, then stop.
+## Credit policy
 
-Do not buy credits merely for discussion, planning, code review, deterministic tests, or ordinary use of the read-only gateway after it is connected.
+The owner's 500 purchased ChatGPT credits are not required for either settings action. Credits provide model compute for supported agentic tasks; they do not grant this chat access to authenticated Vercel protection settings or ChatGPT Developer Mode.
+
+No further credit purchase or auto top-up is recommended.
