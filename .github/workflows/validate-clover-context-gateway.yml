@@ -1,0 +1,72 @@
+name: Validate Clover Context Gateway
+
+on:
+  push:
+    branches:
+      - main
+      - 'platform/clover-context-gateway/**'
+    paths:
+      - 'apps/clover-context-gateway/**'
+      - 'portfolio/context/**'
+      - 'portfolio/schemas/clover-command-packet.schema.json'
+      - 'portfolio/schemas/clover-refresh-receipt.schema.json'
+      - '.github/workflows/validate-clover-context-gateway.yml'
+  pull_request:
+    paths:
+      - 'apps/clover-context-gateway/**'
+      - 'portfolio/context/**'
+      - 'portfolio/schemas/clover-command-packet.schema.json'
+      - 'portfolio/schemas/clover-refresh-receipt.schema.json'
+      - '.github/workflows/validate-clover-context-gateway.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/clover-context-gateway
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install pinned dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Validate source and deterministic router tests
+        run: npm run validate
+      - name: Smoke-test the HTTP and command APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=8787 PUBLIC_BASE_URL=http://127.0.0.1:8787 npm start > "$RUNNER_TEMP/clover-context-gateway.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8787/ > "$RUNNER_TEMP/health.json"; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8787/ | grep 'clover-context-gateway'
+          curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center'
+          curl --fail --silent \
+            -H 'content-type: application/json' \
+            -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
+            http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
+          node -e 'const x=require(process.argv[1]); if(x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false) process.exit(1)' "$RUNNER_TEMP/command.json"
+      - name: Upload smoke-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-context-gateway-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/health.json
+            ${{ runner.temp }}/command.json
+            ${{ runner.temp }}/clover-context-gateway.log
+          if-no-files-found: warn
+          retention-days: 30

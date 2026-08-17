@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-refresh-receipt-1.0.json",
+  "title": "Clover Context Refresh Receipt 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "refreshedAt", "sources", "overallState"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "commandId": { "type": "string" },
+    "refreshedAt": { "type": "string", "format": "date-time" },
+    "overallState": { "enum": ["current", "stale", "unknown", "contradictory", "blocked"] },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceId", "state", "observedAt", "evidence"],
+        "properties": {
+          "sourceId": { "type": "string" },
+          "state": { "enum": ["current", "stale", "unknown", "contradictory", "not-applicable"] },
+          "observedAt": { "type": ["string", "null"] },
+          "evidence": { "type": ["string", "null"] },
+          "details": { "type": ["object", "null"] }
+        }
+      }
+    }
+  }
+}

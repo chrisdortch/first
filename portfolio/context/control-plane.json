@@ -1,0 +1,33 @@
+{
+  "documentType": "clover-context-control-plane",
+  "schemaVersion": "1.0",
+  "version": "0.1.0",
+  "status": "scaffold-validated-not-deployed",
+  "canonicalRepository": "chrisdortch/first",
+  "appDirectory": "apps/clover-context-gateway",
+  "triggerPhrases": [
+    "Use CloverApps to",
+    "Plant a new seed",
+    "Evolve this project",
+    "Show current Clover status"
+  ],
+  "tools": [
+    { "name": "search", "mode": "read-only", "standard": true },
+    { "name": "fetch", "mode": "read-only", "standard": true },
+    { "name": "prepare_clover_command", "mode": "read-only", "standard": false },
+    { "name": "render_clover_command_center", "mode": "read-only", "standard": false }
+  ],
+  "costLanes": [
+    "deterministic-no-openai-inference",
+    "ordinary-chat-pro",
+    "bounded-vision-or-full-browser",
+    "work-codex-or-sites-gate",
+    "optional-api-billed-voice"
+  ],
+  "authority": {
+    "standingProductionAuthority": false,
+    "writeToolsEnabled": false,
+    "privateContextEnabled": false,
+    "productionDataAccessEnabled": false
+  }
+}
