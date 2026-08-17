@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "1.1",
+  "protocolVersion": "1.1.0",
+  "verifiedAt": "2026-08-17T03:20:01Z",
+  "project": {
+    "id": "serenity-shores-poolside-pulse",
+    "repository": "chrisdortch/serenity-shores-poolside-pulse"
+  },
+  "source": {
+    "productionCommit": "d04e8d767903b0fdb084042bd65301407eb0359c",
+    "candidateCommit": "a062183511acc74d5b228334e14a70b5ef6f4167",
+    "protocolRuntimeCommit": "ec7b7b42aead7ce9178b6be2bec3fa1293b4e9cb",
+    "changedFiles": [
+      ".clover/project-policy.json",
+      ".github/workflows/clover-preview.yml"
+    ]
+  },
+  "github": {
+    "workflowRunId": 31990711953,
+    "conclusion": "success",
+    "artifactId": 9275237650,
+    "artifactDigest": "sha256:dfb50511f1632cd21ba9ad585b5cf6c968f694413a42412ed3ce0a70443102f0",
+    "artifactExpiresAt": "2026-09-16T03:19:59Z"
+  },
+  "vercel": {
+    "productionDeploymentId": "dpl_BdaY7XkhSqP6v6t5QLDVSBe7KAQk",
+    "productionCommit": "d04e8d767903b0fdb084042bd65301407eb0359c",
+    "previewDeploymentId": "dpl_3rtT3u1dV6wQnL3noqk21TdA9kqf",
+    "previewCommit": "a062183511acc74d5b228334e14a70b5ef6f4167",
+    "previewState": "READY",
+    "previewTarget": null
+  },
+  "checks": {
+    "boundary": "passed",
+    "policySchema": "passed",
+    "install": "passed",
+    "projectVerify": "passed",
+    "browser": "passed",
+    "receiptSchema": "passed",
+    "desktopChromium": 2,
+    "mobileWebKit": 2,
+    "browserPassed": 4,
+    "browserFailed": 0,
+    "browserWarnings": 1
+  },
+  "visualReview": {
+    "performed": true,
+    "result": "accepted-as-pilot-evidence-with-non-blocking-finding",
+    "finding": "The mobile Back button measured 56 by 34 CSS pixels. No application change was made because this enrollment was process-only."
+  },
+  "authority": {
+    "releaseState": "not-authorized",
+    "productionEligible": false,
+    "mergeApproved": false,
+    "productionDeploymentApproved": false,
+    "productionDataMutationApproved": false
+  }
+}

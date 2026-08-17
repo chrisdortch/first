@@ -1,6 +1,6 @@
 # Current Clover Build Protocol
 
-The current preserved version is **1.1.0**, with status **portable-pilot-current**.
+The current preserved version is **1.1.0**, with status **portable-pilot-validated**.
 
 Read:
 

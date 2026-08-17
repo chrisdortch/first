@@ -1,7 +1,8 @@
 {
   "schemaVersion": "1.1",
   "protocolVersion": "1.1.0",
-  "updatedAt": "2026-08-17T02:45:36Z",
+  "updatedAt": "2026-08-17T03:20:01Z",
+  "validatedReusableRuntimeCommit": "ec7b7b42aead7ce9178b6be2bec3fa1293b4e9cb",
   "projects": [
     {
       "projectId": "rollindd-platform",
@@ -59,13 +60,38 @@
       "projectId": "serenity-shores-poolside-pulse",
       "title": "Serenity Shores Poolside Pulse",
       "repository": "chrisdortch/serenity-shores-poolside-pulse",
-      "adoptionStatus": "enrollment-pending",
+      "adoptionStatus": "portable-pilot-validated-not-merged",
       "productionBranch": "main",
       "productionHeadAtVerification": "d04e8d767903b0fdb084042bd65301407eb0359c",
+      "pilotBranch": "chatpro/clover-v1.1-poolside-pilot-20260816",
+      "pilotHeadAtVerification": "a062183511acc74d5b228334e14a70b5ef6f4167",
+      "protocolRuntimeCommit": "ec7b7b42aead7ce9178b6be2bec3fa1293b4e9cb",
+      "workflow": {
+        "name": "Clover v1.1 preview validation",
+        "runId": 31990711953,
+        "conclusion": "success"
+      },
+      "artifact": {
+        "id": 9275237650,
+        "name": "clover-v1.1-a062183511acc74d5b228334e14a70b5ef6f4167",
+        "digest": "sha256:dfb50511f1632cd21ba9ad585b5cf6c968f694413a42412ed3ce0a70443102f0",
+        "expiresAt": "2026-09-16T03:19:59Z"
+      },
       "vercel": {
         "projectId": "prj_dyXOTzR6X1Q7JIvf1CoyvLr59LxV",
         "productionDeploymentId": "dpl_BdaY7XkhSqP6v6t5QLDVSBe7KAQk",
-        "productionUrl": "https://serenity-shores-poolside-pulse.vercel.app"
+        "productionUrl": "https://serenity-shores-poolside-pulse.vercel.app",
+        "previewDeploymentId": "dpl_3rtT3u1dV6wQnL3noqk21TdA9kqf",
+        "previewUrl": "https://serenity-shores-poolside-pulse-i58xbxq0x-chris-dortchs-projects.vercel.app",
+        "previewState": "READY",
+        "previewTarget": null
+      },
+      "browser": {
+        "checks": 4,
+        "passed": 4,
+        "failed": 0,
+        "warnings": 1,
+        "finding": "The mobile Back button measured 56 by 34 CSS pixels; this was recorded as a non-blocking touch-target warning and the app was not modified."
       },
       "authority": {
         "mergeApproved": false,

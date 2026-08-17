@@ -6,7 +6,7 @@ Start with [`AI_START_HERE.md`](AI_START_HERE.md).
 
 ## Current standard
 
-The active preserved standard is **Clover Build Protocol 1.1.0**. It adds a centrally pinned reusable workflow, formal schemas, automated registry validation, compact evidence packets, and a third-project portability pilot while preserving version 1.0.0 unchanged.
+The active preserved standard is **Clover Build Protocol 1.1.0**, validated through a third-project portability pilot. It adds a centrally pinned reusable workflow, formal schemas, automated registry validation, compact evidence packets, and a third-project portability pilot while preserving version 1.0.0 unchanged.
 
 - Current pointer: [`CLOVER_BUILD_PROTOCOL_POINTER.json`](CLOVER_BUILD_PROTOCOL_POINTER.json)
 - Current protocol: [`standards/clover-build-protocol/CURRENT.md`](standards/clover-build-protocol/CURRENT.md)

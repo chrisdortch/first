@@ -2,7 +2,7 @@
 
 ## 1.1.0 — 2026-08-16 America/Chicago
 
-Status: `portable-pilot-current`
+Status: `portable-pilot-validated`
 
 Added:
 
