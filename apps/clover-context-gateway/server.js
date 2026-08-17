@@ -21,6 +21,7 @@ const publicBaseUrl = process.env.PUBLIC_BASE_URL || `http://localhost:${process
 const widgetHtml = readFileSync(path.join(appDir, "public", "command-center.html"), "utf8");
 const WIDGET_URI = "ui://clover/command-center.html";
 const MCP_PATH = "/mcp";
+const GATEWAY_VERSION = "0.1.1";
 
 function store() {
   return createContextStore({ root: contextRoot });
@@ -38,7 +39,7 @@ function textResult(payload) {
 }
 
 function createCloverServer() {
-  const server = new McpServer({ name: "clover-context-gateway", version: "0.1.0" });
+  const server = new McpServer({ name: "clover-context-gateway", version: GATEWAY_VERSION });
 
   registerAppResource(
     server,
@@ -182,7 +183,7 @@ const httpServer = createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/") {
     return json(res, 200, {
       service: "clover-context-gateway",
-      version: "0.1.0",
+      version: GATEWAY_VERSION,
       mode: "read-only",
       mcp: `${publicBaseUrl}${MCP_PATH}`,
       commandCenter: `${publicBaseUrl}/command-center`,
