@@ -1,7 +1,7 @@
 {
-  "schemaVersion": "1.0",
-  "protocolVersion": "1.0.0",
-  "updatedAt": "2026-08-17T01:18:38Z",
+  "schemaVersion": "1.1",
+  "protocolVersion": "1.1.0",
+  "updatedAt": "2026-08-17T02:45:36Z",
   "projects": [
     {
       "projectId": "rollindd-platform",
@@ -48,6 +48,24 @@
         "name": "clover-preview-evidence-aa872646b2a76ae81b035f5739fe212d2ae41c25",
         "digest": "sha256:eef068be5b7f55ba7e56a5494e86f357340f607f5e5cd8d1d20317da8fa77039",
         "expiresAt": "2026-09-16T01:18:34Z"
+      },
+      "authority": {
+        "mergeApproved": false,
+        "productionDeploymentApproved": false,
+        "productionDataMutationApproved": false
+      }
+    },
+    {
+      "projectId": "serenity-shores-poolside-pulse",
+      "title": "Serenity Shores Poolside Pulse",
+      "repository": "chrisdortch/serenity-shores-poolside-pulse",
+      "adoptionStatus": "enrollment-pending",
+      "productionBranch": "main",
+      "productionHeadAtVerification": "d04e8d767903b0fdb084042bd65301407eb0359c",
+      "vercel": {
+        "projectId": "prj_dyXOTzR6X1Q7JIvf1CoyvLr59LxV",
+        "productionDeploymentId": "dpl_BdaY7XkhSqP6v6t5QLDVSBe7KAQk",
+        "productionUrl": "https://serenity-shores-poolside-pulse.vercel.app"
       },
       "authority": {
         "mergeApproved": false,

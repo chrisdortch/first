@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-project-registry-1.1.0.json",
+  "title": "Clover Project Registry 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "updatedAt",
+    "projects"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "protocolVersion": {
+      "const": "1.1.0"
+    },
+    "updatedAt": {
+      "type": "string"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "projectId",
+          "title",
+          "repository",
+          "adoptionStatus",
+          "productionBranch",
+          "authority"
+        ],
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string",
+            "pattern": "^[^/]+/[^/]+$"
+          },
+          "adoptionStatus": {
+            "enum": [
+              "pilot-validated-not-merged",
+              "portable-pilot-validated-not-merged",
+              "enrollment-pending",
+              "not-enrolled",
+              "blocked"
+            ]
+          },
+          "productionBranch": {
+            "type": "string"
+          },
+          "productionHeadAtVerification": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "pilotBranch": {
+            "type": "string"
+          },
+          "pilotHeadAtVerification": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$"
+          },
+          "authority": {
+            "type": "object",
+            "required": [
+              "mergeApproved",
+              "productionDeploymentApproved",
+              "productionDataMutationApproved"
+            ],
+            "properties": {
+              "mergeApproved": {
+                "const": false
+              },
+              "productionDeploymentApproved": {
+                "const": false
+              },
+              "productionDataMutationApproved": {
+                "const": false
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

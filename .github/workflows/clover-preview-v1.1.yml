@@ -1,0 +1,142 @@
+name: Clover reusable preview validation v1.1
+
+on:
+  workflow_call:
+    inputs:
+      protocol_ref:
+        description: Exact chrisdortch/first commit containing protocol 1.1.0
+        required: true
+        type: string
+      policy_path:
+        description: Path to the project-specific policy
+        required: false
+        default: .clover/project-policy.json
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      CI: '1'
+      CLOVER_BUILD_MODE: preview-only
+      CLOVER_ARTIFACT_DIR: ${{ runner.temp }}/clover-evidence
+      CLOVER_PROTOCOL_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-build-protocol/runtime/v1.1.0
+      CLOVER_SCHEMA_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-build-protocol/schemas
+      CLOVER_POLICY_PATH: ${{ inputs.policy_path }}
+      CLOVER_PROTOCOL_REF: ${{ inputs.protocol_ref }}
+
+    steps:
+      - name: Check out exact candidate commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out exact Clover protocol commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: chrisdortch/first
+          ref: ${{ inputs.protocol_ref }}
+          path: _clover_protocol
+          persist-credentials: false
+
+      - name: Verify exact Clover protocol checkout
+        shell: bash
+        run: |
+          test "$(git -C _clover_protocol rev-parse HEAD)" = "${{ inputs.protocol_ref }}"
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+
+      - name: Verify candidate boundaries before project commands
+        id: boundary
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/verify-boundaries.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR/boundary.json"
+
+      - name: Install project dependencies
+        id: install
+        if: steps.boundary.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/run-command.mjs" "$CLOVER_POLICY_PATH" install "$CLOVER_ARTIFACT_DIR/commands"
+
+      - name: Install pinned audit tooling without changing manifests
+        id: audit_tooling
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1 @playwright/test@1.62.1
+
+      - name: Validate project policy against formal schema
+        id: policy_schema
+        if: steps.audit_tooling.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/validate-json.mjs" "$CLOVER_SCHEMA_ROOT/project-policy.schema.json" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR/policy-schema.json"
+
+      - name: Run project verification contract
+        id: verify
+        if: steps.policy_schema.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/run-command.mjs" "$CLOVER_POLICY_PATH" verify "$CLOVER_ARTIFACT_DIR/commands"
+
+      - name: Install browser engines
+        id: browsers
+        if: steps.verify.outcome == 'success'
+        continue-on-error: true
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Run navigation-only browser audit
+        id: browser
+        if: steps.browsers.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/browser-audit.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR/browser"
+
+      - name: Assemble final build receipt
+        id: receipt
+        if: always()
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/assemble-receipt.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR"
+
+      - name: Validate final build receipt schema
+        id: receipt_schema
+        if: always() && steps.audit_tooling.outcome == 'success'
+        continue-on-error: true
+        run: node "$CLOVER_PROTOCOL_ROOT/validate-json.mjs" "$CLOVER_SCHEMA_ROOT/build-receipt.schema.json" "$CLOVER_ARTIFACT_DIR/build-receipt.json" "$CLOVER_ARTIFACT_DIR/build-receipt-schema.json"
+
+      - name: Publish compact summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$CLOVER_ARTIFACT_DIR/build-receipt.json" ]; then
+            echo "## Clover Build Protocol 1.1" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Status: **$(jq -r .status "$CLOVER_ARTIFACT_DIR/build-receipt.json")**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Release: **not authorized**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Candidate: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Clover did not produce a final receipt." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload bounded evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clover-v1.1-${{ github.repository_id }}-${{ github.sha }}
+          path: ${{ runner.temp }}/clover-evidence
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+          compression-level: 6
+
+      - name: Enforce final gate
+        if: always()
+        shell: bash
+        run: |
+          test -f "$CLOVER_ARTIFACT_DIR/build-receipt.json"
+          test "$(jq -r .status "$CLOVER_ARTIFACT_DIR/build-receipt.json")" = "passed"
+          test "${{ steps.receipt_schema.outcome }}" = "success"

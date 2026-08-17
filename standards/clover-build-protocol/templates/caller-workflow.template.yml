@@ -1,0 +1,16 @@
+name: Clover preview validation
+
+on:
+  push:
+    branches: ['chatpro/<exact-pilot-branch>']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clover:
+    uses: chrisdortch/first/.github/workflows/clover-preview-v1.1.yml@<exact-40-character-protocol-commit>
+    with:
+      protocol_ref: <same-exact-40-character-protocol-commit>
+      policy_path: .clover/project-policy.json

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": "1.1",
+  "description": "Git blob identities of every file in the preserved 1.0.0 version directory before 1.1.0 was created.",
+  "gitBlobShas": {
+    "standards/clover-build-protocol/versions/1.0.0/CLOVER_BUILD_PROTOCOL.md": "80dca5336d04e962b58492e8deddac829f641855",
+    "standards/clover-build-protocol/versions/1.0.0/IMPLEMENTATION_RECORD.md": "f08f99c526f65b0e5613352e84da2aa88e404fbb",
+    "standards/clover-build-protocol/versions/1.0.0/RELEASE_BOUNDARIES.md": "1a9722f61d42d6bd55776724b820de19d21c8a55",
+    "standards/clover-build-protocol/versions/1.0.0/TOKEN_EFFICIENCY.md": "91b1f38316b125e47b326f92ea365d115ca08b8f"
+  }
+}

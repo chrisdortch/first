@@ -1,38 +1,26 @@
-# Controlled Adoption Roadmap
+# Clover Build Protocol Roadmap
 
-Version 1.0.0 is a bounded pilot, not an automatic portfolio-wide rollout.
+## Current milestone: 1.1.0
 
-## Recommended sequence
+- Central reusable workflow and schemas.
+- Registry validation.
+- Third-project portability proof.
+- No production release authority.
 
-1. Public, low-side-effect applications.
-2. Read-mostly or static private applications.
-3. Operational applications using isolated test data.
-4. Waiver, reservation, and messaging applications with explicit no-send and test-data controls.
-5. Payment, customer-data, legal-evidence, or other high-impact systems only after sandbox, mutation, and rollback controls are project-specific and proven.
+## Next candidate: 1.2.0
 
-## Adoption rule
+- Durable evidence storage outside expiring CI artifacts.
+- Approved visual-baseline promotion rules.
+- Automatic Clover Vault receipts.
+- Reusable workflow caching and compute-budget measurement.
+- Low-risk enrollment of Poolside Pulse, Lifeguards, and other public read-mostly projects.
 
-Do not copy a pilot workflow blindly. Before enrollment, identify and record:
+## Separate protocol required before sensitive rollout
 
-- exact repository and production branch;
-- current production deployment and domains;
-- writable databases, storage, queues, email, SMS, payment, and third-party APIs;
-- sensitive paths and owner-only routes;
-- safe fixture or test-data strategy;
-- commands for install, lint, type checking, build, tests, and server startup;
-- required desktop and mobile journeys;
-- known acceptable network or console behavior;
-- release and rollback procedure.
+Clover Data Change Protocol v1 must exist before preview or release workflows may write to a database, object store, payment system, waiver record, reservation record, legal-evidence repository, or customer account.
 
-Use the project adoption checklist in `templates/PROJECT_ADOPTION_CHECKLIST.md`.
+It must include disposable test data, backup evidence, forward and corrective migrations, reconciliation, separate owner approval, and post-change verification.
 
-## Planned improvements
+## Long-term control plane
 
-- central reusable workflow with pinned action versions;
-- a formal JSON Schema for project policy files;
-- baseline approval and change-review rules;
-- artifact retention outside expiring CI storage;
-- automated registry validation;
-- project-class profiles for static, authenticated, data-backed, payment, and messaging systems;
-- measured token and CI-cost reporting;
-- explicit disaster-recovery and rollback drills.
+CloverApps should display protocol version, production commit, preview candidate, deterministic status, model-review state, backup state, data-backup state, owner decisions, and rollback anchors. Tests passing must never be treated as publication approval.

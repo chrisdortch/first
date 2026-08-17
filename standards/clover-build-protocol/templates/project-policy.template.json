@@ -1,61 +1,105 @@
 {
-  "schemaVersion": "1.0",
-  "protocolVersion": "1.0.0",
+  "schemaVersion": "1.1",
+  "protocol": {
+    "version": "1.1.0",
+    "repository": "chrisdortch/first",
+    "commit": "0000000000000000000000000000000000000000"
+  },
   "project": {
     "id": "replace-me",
     "title": "Replace Me",
     "repository": "owner/repository",
+    "class": "static-public",
     "productionBranch": "main",
-    "hostingProject": "replace-me",
-    "productionDomains": []
+    "productionUrl": "https://example.com"
   },
-  "risk": {
-    "classification": "low|medium|high|critical",
-    "productionData": "describe without secrets",
-    "payments": false,
-    "externalMessaging": false,
-    "authenticatedOwnerFlows": false
+  "source": {
+    "baselineCommit": "0000000000000000000000000000000000000000",
+    "productionCommitAtEnrollment": "0000000000000000000000000000000000000000"
   },
-  "build": {
-    "defaultMode": "preview-only",
+  "execution": {
+    "mode": "preview-only",
     "allowedBranchPrefixes": [
       "chatpro/",
-      "codex/",
-      "agent/"
+      "agent/",
+      "codex/"
     ],
-    "commands": {
-      "install": "replace-me",
-      "lint": "replace-me",
-      "typecheck": "replace-me",
-      "build": "replace-me",
-      "test": "replace-me"
-    }
-  },
-  "browser": {
-    "requiredProjects": [
-      "desktop-chromium",
-      "mobile-webkit"
+    "allowedChangePaths": [
+      ".clover/**",
+      ".github/workflows/clover-preview.yml"
     ],
-    "safeJourneys": [],
-    "maxInitialReviewScreenshots": 4
-  },
-  "boundaries": {
-    "mergeToProductionAuthorized": false,
-    "productionDeploymentAuthorized": false,
-    "domainOrDnsMutationAuthorized": false,
-    "productionDataMutationAuthorized": false,
-    "secretMutationAuthorized": false,
-    "externalMessagingAuthorized": false,
-    "purchaseAuthorized": false
-  },
-  "evidence": {
-    "required": [
-      "exact candidate commit",
-      "production anchor commit",
-      "changed-file inventory",
-      "deterministic check receipt",
-      "bounded browser evidence",
-      "owner acceptance before release"
+    "sensitivePaths": [
+      ".env*",
+      "api/**",
+      "sql/**"
+    ],
+    "forbiddenCapabilities": [
+      "merge",
+      "production-deploy",
+      "production-data-write",
+      "domain-or-dns-change",
+      "secret-change",
+      "external-message",
+      "purchase"
     ]
+  },
+  "commands": {
+    "install": "npm ci",
+    "verify": "npm test && npm run build",
+    "preview": "npm run preview -- --host 127.0.0.1 --port 4173"
+  },
+  "browserAudit": {
+    "baseUrl": "http://127.0.0.1:4173",
+    "profiles": [
+      {
+        "id": "desktop-chromium",
+        "browser": "chromium",
+        "width": 1440,
+        "height": 1000,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false
+      },
+      {
+        "id": "mobile-webkit",
+        "browser": "webkit",
+        "width": 390,
+        "height": 844,
+        "deviceScaleFactor": 2,
+        "isMobile": true,
+        "hasTouch": true
+      }
+    ],
+    "routes": [
+      {
+        "id": "home",
+        "path": "/",
+        "requiredSelectors": [
+          "body"
+        ]
+      }
+    ],
+    "budgets": {
+      "maxConsoleErrors": 0,
+      "maxPageErrors": 0,
+      "maxFirstPartyRequestFailures": 0,
+      "maxHttpErrors": 0,
+      "maxBrokenImages": 0,
+      "maxHorizontalOverflowPx": 1,
+      "maxDuplicateIds": 0,
+      "maxUnlabeledControls": 0
+    },
+    "ignoreConsolePatterns": [],
+    "ignoreRequestPatterns": [],
+    "stabilizationMs": 700
+  },
+  "authority": {
+    "mergeApproved": false,
+    "productionDeploymentApproved": false,
+    "productionDataMutationApproved": false,
+    "domainOrDnsChangeApproved": false,
+    "secretChangeApproved": false,
+    "externalMessageApproved": false,
+    "purchaseApproved": false
   }
 }

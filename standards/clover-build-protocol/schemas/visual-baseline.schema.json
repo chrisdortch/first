@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-visual-baseline-1.1.0.json",
+  "title": "Clover Visual Baseline 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "approvedByOwner",
+    "approvedAt",
+    "snapshots"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "projectId": {
+      "type": "string"
+    },
+    "approvedByOwner": {
+      "const": true
+    },
+    "approvedAt": {
+      "type": "string"
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "snapshots": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "routeId",
+          "profileId",
+          "semanticHash",
+          "screenshotHash"
+        ],
+        "properties": {
+          "routeId": {
+            "type": "string"
+          },
+          "profileId": {
+            "type": "string"
+          },
+          "semanticHash": {
+            "type": "string"
+          },
+          "screenshotHash": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

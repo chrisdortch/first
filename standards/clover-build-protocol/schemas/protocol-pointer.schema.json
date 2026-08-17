@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-protocol-pointer-1.1.0.json",
+  "title": "Clover Protocol Pointer",
+  "type": "object",
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "repository",
+    "currentVersion",
+    "currentDocument",
+    "standingProductionAuthority"
+  ],
+  "properties": {
+    "documentType": {
+      "const": "clover-build-protocol-pointer"
+    },
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "repository": {
+      "const": "chrisdortch/first"
+    },
+    "currentVersion": {
+      "const": "1.1.0"
+    },
+    "currentDocument": {
+      "type": "string"
+    },
+    "standingProductionAuthority": {
+      "const": false
+    }
+  },
+  "additionalProperties": true
+}

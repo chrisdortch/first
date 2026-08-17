@@ -1,38 +1,20 @@
-# AI Start Here
+# AI Start Here — Clover Project Work
 
-You are reading Chris Dortch's durable AI knowledge and operating-standards repository.
+This repository is the durable operating record for Chris Dortch's Clover project portfolio.
 
-## Required first steps
+Before changing any application:
 
-1. Identify the exact project the user is asking about.
-2. Read the applicable current standard and its machine-readable manifest.
-3. Inspect the project's actual repository, current branch, deployment, data stores, and existing safety boundaries before proposing or making changes.
-4. Treat every stored plan as versioned guidance, not as a standing authorization for a new merge, deployment, purchase, message, data mutation, credential change, or production action.
-5. Prefer the smallest reversible change on an isolated branch or preview.
-6. Produce evidence tied to exact commits and exact test runs.
-7. Preserve the user's authority over irreversible actions.
+1. Read `CLOVER_BUILD_PROTOCOL_POINTER.json`.
+2. Read `standards/clover-build-protocol/CURRENT.md` and the current numbered protocol.
+3. Read `standards/clover-build-protocol/registry/projects.json`.
+4. Inspect the exact target repository, production branch, current production commit, deployment, domains, databases, storage, secrets by name only, and open work.
+5. Treat all stored plans as versioned guidance, not standing authority.
+6. Work on one isolated branch and one exact project only.
+7. Use the reusable Clover workflow when the project is enrolled; do not copy or silently rewrite the central runtime.
+8. Run deterministic checks before requesting model visual review.
+9. Preserve receipts, screenshots, preview identity, and rollback anchors.
+10. Stop before merge, production promotion, domain/DNS changes, secret changes, purchases, external messages, or production-data writes unless the owner separately authorizes that exact action.
 
-## Current software-build standard
+The current protocol is designed to conserve model usage. Repetitive checks belong in CI. Model/browser judgment is reserved for visual changes, novel failures, authenticated flows, architecture, and final acceptance.
 
-Read, in this order:
-
-1. [`CLOVER_BUILD_PROTOCOL_POINTER.json`](CLOVER_BUILD_PROTOCOL_POINTER.json)
-2. [`standards/clover-build-protocol/CURRENT.md`](standards/clover-build-protocol/CURRENT.md)
-3. The numbered version referenced by `CURRENT.md`
-4. [`standards/clover-build-protocol/registry/projects.json`](standards/clover-build-protocol/registry/projects.json) when the project may already be enrolled
-
-## User objective
-
-Build at a high professional level while conserving model tokens and attention. Routine, repeatable verification should be deterministic. AI reasoning and browser control should be reserved for novel defects, design judgment, architecture, ambiguity, authenticated owner-only flows, and final acceptance.
-
-## Conflict and revision rule
-
-The user's current explicit instruction governs the present task, subject to safety and law. A later approved protocol version may supersede the current pointer, but historical version directories must not be rewritten to pretend the earlier process never existed.
-
-When changing the protocol:
-
-- create a new numbered version;
-- update the changelog and current pointer;
-- explain the reason and migration effect;
-- preserve prior versions and implementation records;
-- never reinterpret a protocol update as production approval for an application.
+A passing build is evidence. It is not publication authority.

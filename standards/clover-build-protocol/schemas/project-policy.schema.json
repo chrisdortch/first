@@ -1,0 +1,378 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-project-policy-1.1.0.json",
+  "title": "Clover Project Policy 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocol",
+    "project",
+    "source",
+    "execution",
+    "commands",
+    "browserAudit",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "repository",
+        "commit"
+      ],
+      "properties": {
+        "version": {
+          "const": "1.1.0"
+        },
+        "repository": {
+          "const": "chrisdortch/first"
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "repository",
+        "class",
+        "productionBranch",
+        "productionUrl"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[^/]+/[^/]+$"
+        },
+        "class": {
+          "enum": [
+            "static-public",
+            "public-read-mostly",
+            "authenticated-read-mostly",
+            "data-backed",
+            "payment",
+            "messaging",
+            "waiver",
+            "legal-evidence"
+          ]
+        },
+        "productionBranch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "productionUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "vercelProjectId": {
+          "type": "string"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineCommit",
+        "productionCommitAtEnrollment"
+      ],
+      "properties": {
+        "baselineCommit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "productionCommitAtEnrollment": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "allowedBranchPrefixes",
+        "allowedChangePaths",
+        "sensitivePaths",
+        "forbiddenCapabilities"
+      ],
+      "properties": {
+        "mode": {
+          "const": "preview-only"
+        },
+        "allowedBranchPrefixes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allowedChangePaths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "sensitivePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "forbiddenCapabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "install",
+        "verify",
+        "preview"
+      ],
+      "properties": {
+        "install": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verify": {
+          "type": "string",
+          "minLength": 1
+        },
+        "preview": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "browserAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseUrl",
+        "profiles",
+        "routes",
+        "budgets"
+      ],
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "format": "uri"
+        },
+        "profiles": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "browser",
+              "width",
+              "height"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "browser": {
+                "enum": [
+                  "chromium",
+                  "webkit"
+                ]
+              },
+              "width": {
+                "type": "integer",
+                "minimum": 320,
+                "maximum": 3000
+              },
+              "height": {
+                "type": "integer",
+                "minimum": 480,
+                "maximum": 4000
+              },
+              "deviceScaleFactor": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 4
+              },
+              "isMobile": {
+                "type": "boolean"
+              },
+              "hasTouch": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "path"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "pattern": "^/"
+              },
+              "requiredSelectors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "requiredText": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "waitForSelector": {
+                "type": "string"
+              },
+              "waitForText": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "maxConsoleErrors",
+            "maxPageErrors",
+            "maxFirstPartyRequestFailures",
+            "maxHttpErrors",
+            "maxBrokenImages",
+            "maxHorizontalOverflowPx"
+          ],
+          "properties": {
+            "maxConsoleErrors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxPageErrors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxFirstPartyRequestFailures": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxHttpErrors": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxBrokenImages": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxHorizontalOverflowPx": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxDuplicateIds": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxUnlabeledControls": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "ignoreConsolePatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ignoreRequestPatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stabilizationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15000
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mergeApproved",
+        "productionDeploymentApproved",
+        "productionDataMutationApproved",
+        "domainOrDnsChangeApproved",
+        "secretChangeApproved",
+        "externalMessageApproved",
+        "purchaseApproved"
+      ],
+      "properties": {
+        "mergeApproved": {
+          "const": false
+        },
+        "productionDeploymentApproved": {
+          "const": false
+        },
+        "productionDataMutationApproved": {
+          "const": false
+        },
+        "domainOrDnsChangeApproved": {
+          "const": false
+        },
+        "secretChangeApproved": {
+          "const": false
+        },
+        "externalMessageApproved": {
+          "const": false
+        },
+        "purchaseApproved": {
+          "const": false
+        }
+      }
+    }
+  }
+}

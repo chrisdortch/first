@@ -1,21 +1,16 @@
-# Chris Dortch AI Knowledge and Operating Standards
+# Clover Knowledge and Operating Standards
 
-This repository preserves durable, versioned information from Chris Dortch's ChatGPT and Codex work.
+This repository preserves versioned instructions, project registries, AI handoffs, and operating standards for the CloverApps portfolio.
 
-It is **not an application repository**, is not connected to a production deployment, and does not grant authority to change any other project.
+Start with [`AI_START_HERE.md`](AI_START_HERE.md).
 
-## Future AI threads: start here
+## Current standard
 
-Read [`AI_START_HERE.md`](AI_START_HERE.md) before performing project work.
+The active preserved standard is **Clover Build Protocol 1.1.0**. It adds a centrally pinned reusable workflow, formal schemas, automated registry validation, compact evidence packets, and a third-project portability pilot while preserving version 1.0.0 unchanged.
 
-For software-building work, the current canonical process is the [Clover Build Protocol](standards/clover-build-protocol/README.md).
+- Current pointer: [`CLOVER_BUILD_PROTOCOL_POINTER.json`](CLOVER_BUILD_PROTOCOL_POINTER.json)
+- Current protocol: [`standards/clover-build-protocol/CURRENT.md`](standards/clover-build-protocol/CURRENT.md)
+- Project registry: [`standards/clover-build-protocol/registry/projects.json`](standards/clover-build-protocol/registry/projects.json)
+- Revision queue: GitHub issue #1
 
-## Current preserved standard
-
-- Standard: **Clover Build Protocol**
-- Current preserved version: **1.0.0**
-- Status: **pilot-current**
-- Preserved locally on: **August 16, 2026 (America/Chicago)**
-- Core rule: **Use deterministic systems for repetition and certainty, models for interpretation and invention, and the owner for irreversible authority.**
-
-Versioned standards remain in their numbered directories even when the current plan later changes. Production actions always require current, project-specific authorization.
+This repository contains process documentation and public project metadata only. It must not contain secret values, customer records, private legal evidence, private communications, financial records, or production credentials.

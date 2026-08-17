@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-build-packet-1.1.0.json",
+  "title": "Clover Build Packet 1.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "projectId",
+    "baselineCommit",
+    "objective",
+    "allowedScope",
+    "forbiddenScope",
+    "acceptanceTests",
+    "previewOnly",
+    "expiresAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 8
+    },
+    "projectId": {
+      "type": "string"
+    },
+    "baselineCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowedScope": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbiddenScope": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "acceptanceTests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "previewOnly": {
+      "const": true
+    },
+    "expiresAt": {
+      "type": "string"
+    },
+    "maxOneTimeCostUsd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "maxRecurringCostUsd": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

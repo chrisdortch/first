@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-build-receipt-1.1.0.json",
+  "title": "Clover Build Receipt 1.1.0",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "generatedAt",
+    "project",
+    "source",
+    "status",
+    "authority",
+    "checks"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.1"
+    },
+    "protocolVersion": {
+      "const": "1.1.0"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "id",
+        "repository"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "repository": {
+          "type": "string"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "commit",
+        "baselineCommit",
+        "productionCommitAtEnrollment"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "baselineCommit": {
+          "type": "string"
+        },
+        "productionCommitAtEnrollment": {
+          "type": "string"
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "passed",
+        "failed",
+        "incomplete"
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "releaseState",
+        "productionEligible"
+      ],
+      "properties": {
+        "releaseState": {
+          "const": "not-authorized"
+        },
+        "productionEligible": {
+          "const": false
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped",
+              "unavailable"
+            ]
+          }
+        }
+      }
+    },
+    "browser": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "artifacts": {
+      "type": "array"
+    }
+  }
+}
