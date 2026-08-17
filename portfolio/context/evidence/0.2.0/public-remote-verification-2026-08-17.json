@@ -1,0 +1,140 @@
+{
+  "documentType": "clover-context-gateway-public-remote-verification",
+  "schemaVersion": "1.0",
+  "gatewayVersion": "0.2.0",
+  "observedAt": "2026-08-17T23:16:10.815Z",
+  "timezone": "America/Chicago",
+  "source": {
+    "repository": "chrisdortch/first",
+    "canonicalBranch": "main",
+    "gatewayMergeCommit": "e97191234904efaa7b4ada24331007bac112f053",
+    "publicHygieneCandidateCommit": "ccedb33ca5a206b6e4139aab4904befcb817b06b",
+    "publicHygieneMergeCommit": "3e65599458b6a90141b7c47084180750810e95e1",
+    "applicationRoot": "apps/clover-context-gateway",
+    "changedApplicationFiles": [
+      "apps/clover-context-gateway/api/index.js"
+    ]
+  },
+  "sourceValidation": {
+    "workflowRunId": 32079417086,
+    "node22Conclusion": "success",
+    "node24Conclusion": "success",
+    "deterministicTestsPassedPerRuntime": 9,
+    "httpCommandRoutingPassed": true,
+    "mcpSmokePassed": true,
+    "authorityInvariantValidationPassed": true
+  },
+  "vercel": {
+    "teamId": "team_kx19aCrSTnej6wpz0fLgmYDY",
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "projectName": "clover-context-gateway-preview",
+    "deploymentId": "dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP",
+    "url": "https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app",
+    "mcpUrl": "https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/mcp",
+    "commandCenterUrl": "https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/command-center",
+    "state": "READY",
+    "target": null,
+    "productionAliasAssigned": false,
+    "customDomainAdded": false,
+    "existingProjectReused": false,
+    "access": "public-https-read-only-pilot",
+    "region": "iad1",
+    "runtime": "nodejs24.x"
+  },
+  "sourceIntegrity": {
+    "method": "The Vercel build fetched each application file from the exact candidate Git commit, verified its Git blob SHA, installed the pinned lockfile, and passed source syntax checks before packaging.",
+    "candidateCommit": "ccedb33ca5a206b6e4139aab4904befcb817b06b",
+    "filesVerified": 9,
+    "correctedAdapterBlob": "a4dbc587447b526a34187ba85de388b98521b9e9",
+    "buildConclusion": "success"
+  },
+  "remoteVerification": {
+    "workflowRunId": 32079674011,
+    "workflowConclusion": "success",
+    "artifactId": 9304671380,
+    "artifactSha256": "c4ff9f430990859d9fe5981736ee1c17717d5dde175df802b72326462fc45503",
+    "artifactExpiresAt": "2026-09-16T23:16:10Z",
+    "vaultFileId": "1USpot-UvGOONCAmF2ZeOluwUxCsK2iJU",
+    "vaultFolderId": "1Z91pkHb83R0hoDCMDdJpXkKqnO6DtRxc"
+  },
+  "http": {
+    "status": "passed",
+    "service": "clover-context-gateway",
+    "version": "0.2.0",
+    "contextMode": "github",
+    "canonicalContextCommitAtTest": "7f1642bc7c9f26c5f56e1852515ea228da8cd895",
+    "canonicalContextCommitAfterPatchMerge": "3e65599458b6a90141b7c47084180750810e95e1",
+    "projectCount": 28,
+    "favicon": "passed",
+    "robots": "passed",
+    "resolvedTarget": "rollindd",
+    "intent": "evolve_project",
+    "liveSourceChecks": 7,
+    "ambiguousTargetState": "needs-project-resolution"
+  },
+  "mcp": {
+    "status": "passed",
+    "tools": [
+      "fetch",
+      "prepare_clover_command",
+      "render_clover_command_center",
+      "search"
+    ],
+    "allReadOnly": true,
+    "allNonDestructive": true,
+    "resolvedTarget": "rollindd",
+    "productionDeploymentApproved": false,
+    "productionDataAccessApproved": false
+  },
+  "visual": {
+    "status": "passed",
+    "browser": "Google Chrome 151.0.7922.108",
+    "profiles": [
+      {
+        "id": "desktop",
+        "viewportWidth": 1440,
+        "viewportHeight": 1000,
+        "bodyHeight": 1281,
+        "horizontalOverflowPixels": 0,
+        "minimumActionHeightPixels": 44,
+        "consoleErrors": 0,
+        "pageErrors": 0,
+        "failedRequests": 0,
+        "badResponses": 0
+      },
+      {
+        "id": "mobile",
+        "viewportWidth": 390,
+        "viewportHeight": 844,
+        "bodyHeight": 1948,
+        "horizontalOverflowPixels": 0,
+        "minimumActionHeightPixels": 44,
+        "consoleErrors": 0,
+        "pageErrors": 0,
+        "failedRequests": 0,
+        "badResponses": 0
+      }
+    ]
+  },
+  "authority": {
+    "gatewaySourceMergeCompleted": true,
+    "publicHygieneMergeCompleted": true,
+    "productionDeploymentApproved": false,
+    "productionAliasAssigned": false,
+    "domainOrDnsChangeApproved": false,
+    "productionDataAccessApproved": false,
+    "secretChangeApproved": false,
+    "externalMessageApproved": false,
+    "purchaseApproved": false,
+    "openAiSiteChangeApproved": false,
+    "customMcpWriteToolsEnabled": false
+  },
+  "completion": {
+    "estimate": 90,
+    "confidence": "high",
+    "remainingGates": [
+      "Connect and test the read-only custom MCP app in ChatGPT web Developer Mode.",
+      "Integrate the command interface into a saved review version of the official CloverApps Site before publication."
+    ]
+  }
+}

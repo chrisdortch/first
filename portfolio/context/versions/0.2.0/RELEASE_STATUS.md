@@ -1,89 +1,117 @@
 # Clover Context Gateway 0.2.0 — Release Status
 
-## Canonical source
+## Current state
 
-Clover Context Gateway 0.2.0 is canonical on `chrisdortch/first` `main` at:
+Clover Context Gateway 0.2.0 is canonical, publicly reachable, and remotely verified as a read-only preview.
 
-```text
-e97191234904efaa7b4ada24331007bac112f053
-```
+- Canonical gateway merge: `e97191234904efaa7b4ada24331007bac112f053`
+- Public-resource hygiene merge: `3e65599458b6a90141b7c47084180750810e95e1`
+- Completion estimate: **90%**, high confidence
+- Broad Clover mission estimate: **41%**, unchanged
 
-Pull request #5 was squash-merged only after:
+The remaining gateway work is the owner-authenticated ChatGPT custom-app connection and the later saved-review integration into the official CloverApps Site.
 
-- exact changed-file boundary review;
-- source syntax and nine deterministic tests;
-- HTTP search/fetch/command-packet smoke tests;
-- MCP initialization, tool-list, search, fetch, command, and UI-resource smoke tests;
-- dual-runtime validation on Node 22 and Node 24;
-- confirmation that no existing application repository or deployment is linked to `chrisdortch/first` in a way that this merge could trigger.
+## Read-only tool surface
 
-The four MCP tools remain exactly:
+The remote MCP endpoint exposes exactly:
 
 - `search`
 - `fetch`
 - `prepare_clover_command`
 - `render_clover_command_center`
 
-All are read-only. “Use CloverApps to evolve RollinD” resolves `rollindd`, not the CloverApps control plane. Ambiguous targets fail closed.
+All four tools advertise read-only and non-destructive annotations. No custom write tools exist.
 
-## Validation evidence
+The instruction:
 
-- Source evidence artifact: `9294476497`
-- Source evidence SHA-256: `1da1eb9e3643825d8a236eb973d478cf6409f6091e516fed5b94c3327b6ef904`
-- Dual-runtime validation commit: `d04dcf2cdb5b34455ab0e63b87c18f14cc57aa98`
-- Dual-runtime workflow: `32076713871` — success
-- Node 22 artifact: `9303689990`
-- Node 22 digest: `7ce878e6698848bcd4e0afca81e001b3dfc4faf3147b01e26b9b7db06114ee65`
-- Node 24 artifact: `9303687011`
-- Node 24 digest: `917ef77836fcbc1b51a529645e838d02da61d253189cedb9a8780e5a846712d2`
-- Master Plan validation: `32076713999` — success
+> Use CloverApps to evolve RollinD through a preview only.
+
+resolves `rollindd`, not the CloverApps control plane. A request that does not identify a project fails closed with `needs-project-resolution`.
 
 ## Canonical isolated Vercel preview
 
-A brand-new Vercel project was created without reusing or changing any existing project:
+A new Vercel project was created for the gateway without reusing or modifying any existing project.
 
 - Project: `clover-context-gateway-preview`
 - Project ID: `prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM`
-- Canonical ready preview: `dpl_ErcfTuFmSHaa99ozqsazgubMEV6c`
-- Source commit: `e97191234904efaa7b4ada24331007bac112f053`
-- URL: `https://clover-context-gateway-preview-aj7435hwm-chris-dortchs-projects.vercel.app`
+- Ready deployment: `dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP`
+- URL: `https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app`
+- MCP: `https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/mcp`
+- Command Center: `https://clover-context-gateway-preview-c4xo05gmr-chris-dortchs-projects.vercel.app/command-center`
 - Target: `null` — preview, not production
 - Production alias: none
 - Custom domain: none
+- Access: public HTTPS for the public/read-only pilot
 - Region: `iad1`
 - Runtime: Node 24.x
-- Access: Vercel Authentication protected
 
-The deployment build fetched every application file from the exact canonical commit, verified each Git blob identity, installed the pinned lockfile, and passed source syntax checks before packaging.
+The build fetched each application file from candidate commit `ccedb33ca5a206b6e4139aab4904befcb817b06b`, verified each Git blob identity, installed the pinned lockfile, and passed source syntax checks before packaging. That candidate was later squash-merged as `3e65599458b6a90141b7c47084180750810e95e1`.
 
-An initial configuration probe failed before publishing a function because `includeFiles` used the wrong Vercel JSON type. That failure is preserved in the deployment receipt rather than hidden.
+## Public-resource correction
 
-## Remote access result
+The first browser run identified one real console error: `/favicon.ico` returned 404. Vercel also recorded `/robots.txt` probes returning 404.
 
-Two external automation tests were attempted against the protected preview:
+A one-file adapter patch now:
 
-1. Vercel-generated share URL as a cookie session — workflow `32075689379`.
-2. The share token as an automation-bypass header — workflow `32075807382`.
+- serves a self-contained Clover SVG at `/favicon.ico` and `/favicon.svg`;
+- serves `robots.txt` with `Disallow: /`;
+- delegates all other requests unchanged to the validated gateway handler.
 
-Both stopped at Vercel Authentication before reaching the gateway. The first received Vercel dashboard authentication HTML; the second received HTTP 302. The generated share link is therefore not a machine-usable MCP bypass.
+Source workflow `32079417086` passed on Node 22 and Node 24 before the corrected preview was accepted.
 
-No gateway runtime errors were observed. No unauthenticated request reached the application function.
+## Final public remote verification
 
-Complete evidence: `portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json`.
+Workflow `32079674011` passed against deployment `dpl_3AzgkYhjvoaatTed2VnUfwp1CZSP`.
+
+Verified:
+
+- public root health and security boundaries;
+- live canonical GitHub context;
+- 28 project records;
+- favicon and crawler policy;
+- search and fetch;
+- command packet schema 1.1;
+- RollinD target resolution;
+- ambiguous-target rejection;
+- exact four-tool MCP inventory;
+- read-only and non-destructive tool annotations;
+- desktop Chromium at 1440×1000;
+- mobile Chromium at 390×844;
+- zero horizontal overflow;
+- 44-pixel action controls;
+- zero console errors;
+- zero page errors;
+- zero failed requests;
+- zero HTTP 4xx/5xx responses during the tested journeys.
+
+Evidence:
+
+- Workflow run: `32079674011`
+- GitHub artifact: `9304671380`
+- Artifact SHA-256: `c4ff9f430990859d9fe5981736ee1c17717d5dde175df802b72326462fc45503`
+- Durable Clover Vault file: `1USpot-UvGOONCAmF2ZeOluwUxCsK2iJU`
+- Repository receipt: `portfolio/context/evidence/0.2.0/public-remote-verification-2026-08-17.json`
+
+After the hygiene merge, the same deployment reported canonical context commit `3e65599458b6a90141b7c47084180750810e95e1` from `main`.
+
+## Historical access-boundary finding
+
+Before the owner disabled Vercel Authentication, two external tests stopped at Vercel's browser-login boundary:
+
+- share URL as cookie session: workflow `32075689379`;
+- share token as an automation header: workflow `32075807382`.
+
+Those failures are preserved in the prior deployment receipt. They demonstrated that a Vercel review-share link is not equivalent to a machine-usable MCP automation bypass.
 
 ## Remaining activation gates
 
-1. In Vercel, change access only for `clover-context-gateway-preview` by choosing one of:
-   - disable Vercel Authentication for this public/read-only pilot;
-   - configure supported OAuth; or
-   - create a Vercel automation-bypass secret suitable for a remote MCP client.
-2. Re-run external GET, POST, MCP, and desktop/mobile visual tests after the access boundary is changed.
-3. Connect the reachable `/mcp` endpoint as a read-only custom ChatGPT app in Developer Mode.
-4. Integrate the interface into the official CloverApps OpenAI Site only through the supported Sites editor.
-5. Any future write-capable tools require a new protocol version, exact action scopes, confirmations, receipts, and plan eligibility.
+1. In ChatGPT on the web, enable Developer Mode and create a custom app using the public MCP URL above.
+2. Confirm that ChatGPT lists exactly the four read-only tools and no write/modify tool.
+3. Test “Use CloverApps to evolve RollinD through a preview only.” through the connected app.
+4. Add the command interface to a saved review version of the official CloverApps Site through the supported Sites editor; stop before publication until separately approved.
 
 ## Authority and cost state
 
-The canonical-source merge is complete. It did not deploy or promote production, assign a domain, access production data, change secrets, purchase anything, send messages, or edit an OpenAI Site.
+The gateway remains preview-only and read-only. This work did not promote production, assign a domain, change DNS, access production data, change secrets, purchase anything, send messages, or edit an OpenAI Site.
 
-The purchased ChatGPT credits do not grant this conversation access to the owner's Vercel protection settings or ChatGPT Developer Mode screens. No additional credit purchase is indicated. The remaining two settings operations are account-authenticated UI actions, not model-compute shortages.
+No additional credit purchase is indicated. The remaining ChatGPT and Sites operations are authenticated account-interface gates, not source, deployment, or model-compute deficiencies.
