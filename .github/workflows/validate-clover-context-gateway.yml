@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - 'platform/clover-context-gateway/**'
+      - 'platform/clover-context-gateway*'
     paths:
       - 'apps/clover-context-gateway/**'
       - 'portfolio/context/**'
