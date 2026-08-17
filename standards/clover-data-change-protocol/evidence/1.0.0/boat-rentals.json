@@ -1,0 +1,88 @@
+{
+  "schemaVersion": "1.0",
+  "protocolVersion": "1.0.0",
+  "verifiedAt": "2026-08-17T04:08:39Z",
+  "project": {
+    "id": "serenity-shores-boat-rentals",
+    "repository": "chrisdortch/serenity-shores-boat-rentals",
+    "class": "waiver-records"
+  },
+  "source": {
+    "productionCommit": "680039ff44be030010c0e252dca7d68056fe853f",
+    "candidateCommit": "0507f5008896bfc78611292aabd7c246d485a013",
+    "protocolRuntimeCommit": "d98d6abc402964e6327984f7fb768a34bf2c09c6",
+    "changedFiles": [
+      ".clover/data-change-policy.json",
+      ".clover/data/assertions.sql",
+      ".clover/data/baseline.sql",
+      ".clover/data/forward.sql",
+      ".clover/data/post-rollback-assertions.sql",
+      ".clover/data/reconcile.sql",
+      ".clover/data/rollback.sql",
+      ".clover/data/seed.sql",
+      ".github/workflows/clover-data-preview.yml"
+    ],
+    "applicationSourceChanged": false
+  },
+  "github": {
+    "standardWorkflowRunId": 31993337570,
+    "pilotWorkflowRunId": 31993387866,
+    "pilotConclusion": "success",
+    "artifactId": 9276053822,
+    "artifactDigest": "sha256:2b2e0a47e69d73e5e30914d25a55ac8bd8f039400efce6eb51bb024ea188e8d4",
+    "artifactExpiresAt": "2026-09-16T04:08:38Z"
+  },
+  "vercel": {
+    "productionDeploymentId": "dpl_HdyBzY9HAVSYJm4gq4s5sCMUWAhx",
+    "productionCommit": "680039ff44be030010c0e252dca7d68056fe853f",
+    "previewDeploymentId": "dpl_B4Hd9dFeCkmvT32oNcCBxgUDXfSV",
+    "previewCommit": "0507f5008896bfc78611292aabd7c246d485a013",
+    "previewState": "READY",
+    "previewTarget": null
+  },
+  "database": {
+    "mode": "disposable-database-only",
+    "engine": "postgresql",
+    "majorVersion": 16,
+    "databaseName": "clover_data",
+    "syntheticDataOnly": true,
+    "productionDatabaseConnected": false,
+    "productionDataRead": false,
+    "productionDataWritten": false
+  },
+  "checks": {
+    "projectTestsPassed": 9,
+    "projectTestsFailed": 0,
+    "boundary": "passed",
+    "policySchema": "passed",
+    "sqlScreening": "passed",
+    "baseline": "passed",
+    "forward": "passed",
+    "forwardIdempotency": "passed",
+    "rollback": "passed",
+    "schemaRestored": "passed",
+    "reconciliationPreserved": "passed",
+    "receiptSchema": "passed"
+  },
+  "identities": {
+    "baselineSchemaSha256": "5c79c37c4d4b108ed2c5c7c73776e164d7b7798b06883d14569a0a243c5ef8a0",
+    "forwardFirstSchemaSha256": "68122f06164537b0094e2411195c1eef54b875399f5fbfadeb85f676a7c9413a",
+    "forwardSecondSchemaSha256": "68122f06164537b0094e2411195c1eef54b875399f5fbfadeb85f676a7c9413a",
+    "rollbackSchemaSha256": "5c79c37c4d4b108ed2c5c7c73776e164d7b7798b06883d14569a0a243c5ef8a0",
+    "reconciliationSha256": "6c68ff9091ee7248394b95f7102e4b10abab3f36afd6f239cd09c4e139fb9620"
+  },
+  "vault": {
+    "folderId": "1mHDjvtEGW0inHqs01F5qQTRSK1NWRLJz",
+    "evidenceFileId": "1cSYG_yzftN-W3jg1alzPFoVLDUiljxeO"
+  },
+  "authority": {
+    "releaseState": "not-authorized",
+    "productionEligible": false,
+    "productionDatabaseReadApproved": false,
+    "productionDatabaseWriteApproved": false,
+    "productionMigrationApproved": false,
+    "productionBackupOrRestoreApproved": false,
+    "mergeApproved": false,
+    "productionDeploymentApproved": false
+  }
+}
