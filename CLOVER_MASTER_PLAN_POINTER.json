@@ -11,6 +11,8 @@
   "nextWork": "portfolio/NEXT.md",
   "aiHandoff": "portfolio/AI_HANDOFF.md",
   "history": "portfolio/ledger/progress-history.jsonl",
+  "progressIssueNumber": 2,
+  "progressIssueUrl": "https://github.com/chrisdortch/first/issues/2",
   "status": "canonical-planning-baseline",
   "preservedLocalDate": "2026-08-17",
   "timezone": "America/Chicago",

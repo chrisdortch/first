@@ -11,6 +11,8 @@ Start with:
 5. `NEXT.md`
 6. `AI_HANDOFF.md`
 
+Permanent public progress/revision queue: [`chrisdortch/first` issue #2](https://github.com/chrisdortch/first/issues/2).
+
 ## Contents
 
 - `master-plan/` — versioned mission, architecture, phases, and definitions of done.
