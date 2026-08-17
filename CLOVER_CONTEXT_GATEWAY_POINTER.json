@@ -8,6 +8,25 @@
   "releaseStatus": "portfolio/context/versions/0.2.0/RELEASE_STATUS.md",
   "deploymentReceipt": "portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json",
   "status": "canonical-source-protected-preview-ready-remote-connection-blocked",
+  "completionEstimate": 80,
+  "completionEstimateAsOf": "2026-08-17",
+  "completionConfidence": "high",
+  "completionBasis": {
+    "canonicalSourceAndVersionedPlan": 20,
+    "exactTargetResolutionAndCommandPackets": 20,
+    "deterministicHttpAndMcpValidation": 15,
+    "isolatedPreviewDeployment": 15,
+    "receiptsVaultAndProgressTracking": 10,
+    "remoteMachineReachability": 0,
+    "chatgptCustomAppConnection": 0,
+    "cloverAppsSiteInterface": 0
+  },
+  "remainingCompletionGates": [
+    "Make only the isolated read-only preview remotely reachable through public HTTPS, supported OAuth, or a true automation-bypass secret.",
+    "Pass external GET, POST, MCP, desktop, and mobile tests against the reachable deployment.",
+    "Connect and test the four-tool read-only custom app in ChatGPT Developer Mode.",
+    "Add the command interface to the official CloverApps Site through a saved review version before publication."
+  ],
   "appDirectory": "apps/clover-context-gateway",
   "controlPlane": "portfolio/context/control-plane.json",
   "architecture": "portfolio/context/CONTROL_PLANE_ARCHITECTURE.md",
