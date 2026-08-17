@@ -6,6 +6,11 @@ on:
       - platform/clover-context-gateway-v0.2.1-serverless-post-only-20260817
     paths:
       - '.github/workflows/apply-clover-mcp-serverless-post-only.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/apply-clover-mcp-serverless-post-only.yml'
   workflow_dispatch:
 
 permissions:
@@ -13,7 +18,7 @@ permissions:
 
 jobs:
   patch-test-and-commit:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name != 'pull_request' || github.head_ref == 'platform/clover-context-gateway-v0.2.1-serverless-post-only-20260817')
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -22,6 +27,7 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 0
+          ref: platform/clover-context-gateway-v0.2.1-serverless-post-only-20260817
 
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -179,7 +185,7 @@ jobs:
           git status --short | tee "$RUNNER_TEMP/changed-files.txt"
           test "$(git diff --cached --name-only | sort | tr '\n' ' ')" = "apps/clover-context-gateway/server.js apps/clover-context-gateway/test/serverless-mcp.test.js "
           git commit -m 'Make Clover MCP transport serverless-safe'
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git push origin "HEAD:platform/clover-context-gateway-v0.2.1-serverless-post-only-20260817"
 
       - name: Upload patch validation evidence
         if: always()
