@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-command-packet-1.0.json",
+  "title": "Clover Command Packet 1.0",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "commandId",
+    "createdAt",
+    "originalRequest",
+    "intent",
+    "state",
+    "canonicalContext",
+    "freshness",
+    "cost",
+    "executionPlan",
+    "authority",
+    "stopConditions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "commandId": { "type": "string", "pattern": "^clover-[0-9a-f]{16}$" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "originalRequest": { "type": "string", "minLength": 1 },
+    "intent": {
+      "type": "object",
+      "required": ["id", "requiresProject"],
+      "properties": {
+        "id": { "type": "string" },
+        "requiresProject": { "type": "boolean" }
+      }
+    },
+    "project": { "type": ["object", "null"] },
+    "state": { "enum": ["needs-project-resolution", "refresh-required-before-execution"] },
+    "canonicalContext": { "type": "object" },
+    "freshness": {
+      "type": "object",
+      "required": ["policy", "requiredSources", "rule"],
+      "properties": {
+        "requiredSources": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "cost": { "type": "object" },
+    "executionPlan": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "authority": {
+      "type": "object",
+      "required": [
+        "previewOnlyByDefault",
+        "mergeApproved",
+        "productionDeploymentApproved",
+        "productionDataAccessApproved",
+        "domainOrDnsChangeApproved",
+        "secretChangeApproved",
+        "purchaseApproved",
+        "externalMessageApproved"
+      ],
+      "properties": {
+        "previewOnlyByDefault": { "const": true },
+        "mergeApproved": { "const": false },
+        "productionDeploymentApproved": { "const": false },
+        "productionDataAccessApproved": { "const": false },
+        "domainOrDnsChangeApproved": { "const": false },
+        "secretChangeApproved": { "const": false },
+        "purchaseApproved": { "const": false },
+        "externalMessageApproved": { "const": false }
+      }
+    },
+    "stopConditions": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+  }
+}
