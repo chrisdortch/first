@@ -2,8 +2,11 @@
   "documentType": "clover-context-gateway-pointer",
   "schemaVersion": "1.0",
   "repository": "chrisdortch/first",
+  "currentVersion": "0.2.0",
   "version": "0.2.0",
-  "status": "source-validated-preview-deployment-pending",
+  "currentDocument": "portfolio/context/versions/0.2.0/CONTROL_PLANE.md",
+  "releaseStatus": "portfolio/context/versions/0.2.0/RELEASE_STATUS.md",
+  "status": "source-validated-review-pending",
   "appDirectory": "apps/clover-context-gateway",
   "controlPlane": "portfolio/context/control-plane.json",
   "architecture": "portfolio/context/CONTROL_PLANE_ARCHITECTURE.md",
@@ -12,6 +15,14 @@
   "costPolicy": "portfolio/context/COST_POLICY.md",
   "liveAdapterRegistry": "portfolio/context/LIVE_ADAPTER_REGISTRY.json",
   "userCommandContract": "portfolio/context/USER_COMMAND_CONTRACT.md",
+  "sourceValidation": {
+    "canonicalBaseCommit": "8e5c8b92ac3968c8a6f009d8faf682b9393595b4",
+    "sourceInstallCommit": "459a6c7c4547b12c4deea4331478ebb78009a066",
+    "bootstrapWorkflowRunId": 32050038832,
+    "bootstrapConclusion": "success",
+    "deterministicTestsPassed": 9,
+    "mcpSmokePassed": true
+  },
   "standingProductionAuthority": false,
   "writeToolsEnabled": false,
   "privateContextEnabled": false,
@@ -26,6 +37,7 @@
     "CLOVER_MASTER_PLAN_POINTER.json",
     "portfolio/status/current.json",
     "portfolio/registry/projects.json",
-    "portfolio/context/CONTROL_PLANE_ARCHITECTURE.md"
+    "portfolio/context/versions/0.2.0/CONTROL_PLANE.md",
+    "portfolio/context/LIVE_ADAPTER_REGISTRY.json"
   ]
 }
