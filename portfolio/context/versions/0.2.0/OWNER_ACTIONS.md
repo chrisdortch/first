@@ -7,12 +7,20 @@ The source candidate is validated. These remaining actions are intentionally sep
 - Repository: `chrisdortch/first`
 - Draft PR: `https://github.com/chrisdortch/first/pull/5`
 - Candidate branch: `platform/clover-context-gateway-v0.2.0-preview-20260817`
-- Candidate commit: `904b599fedd4b5a1d8bf178416fc542a2b92a616`
+- Stable application-source installation commit: `459a6c7c4547b12c4deea4331478ebb78009a066`
 - Application root: `apps/clover-context-gateway`
 - Dedicated Vercel project: not created
 - ChatGPT custom app: not connected
 - OpenAI Sites integration: not performed
 - Tokens or API transcription required now: no
+
+Subsequent commits on PR #5 change validation, pointers, and versioned documentation—not the gateway application root. Before deployment, verify:
+
+```text
+git diff --exit-code 459a6c7c4547b12c4deea4331478ebb78009a066...<CURRENT_PR_HEAD> -- apps/clover-context-gateway
+```
+
+The command must produce no diff.
 
 Do **not** reuse the existing Vercel project named `nextjs-boilerplate`. Its source identity remains unresolved.
 
@@ -29,13 +37,14 @@ Preferred zero-agentic-credit path:
 1. In Vercel, create a **new** project named `clover-context-gateway-preview`.
 2. Select GitHub repository `chrisdortch/first`.
 3. Set Root Directory to `apps/clover-context-gateway`.
-4. Ensure the deployment source is branch `platform/clover-context-gateway-v0.2.0-preview-20260817` at commit `904b599fedd4b5a1d8bf178416fc542a2b92a616`.
-5. Create a preview deployment only. Do not use `--prod`, promote the deployment, assign a production alias, or add a custom domain.
-6. Keep Vercel Authentication or equivalent deployment protection enabled during review.
-7. Do not add secrets; version 0.2.0 uses public canonical context only.
-8. Record the Vercel project ID, deployment ID, exact commit, preview URL, build result, and protection state in the release receipt.
+4. Select branch `platform/clover-context-gateway-v0.2.0-preview-20260817` at the current PR head.
+5. Verify the gateway application root has no diff from source installation commit `459a6c7c4547b12c4deea4331478ebb78009a066`.
+6. Create a preview deployment only. Do not use `--prod`, promote the deployment, assign a production alias, or add a custom domain.
+7. Keep Vercel Authentication or equivalent deployment protection enabled during review.
+8. Do not add secrets; version 0.2.0 uses public canonical context only.
+9. Record the Vercel project ID, deployment ID, exact commit, preview URL, build result, and protection state in the release receipt.
 
-If the Vercel interface cannot guarantee the exact branch/commit and preview target before deployment, stop rather than deploying `main` or reusing another project.
+If the Vercel interface cannot guarantee the exact branch/current PR head and preview target before deployment, stop rather than deploying `main` or reusing another project.
 
 ## Gate 3 — Connect as a read-only ChatGPT app
 
@@ -72,6 +81,6 @@ That step requires the official Sites editor. It should use one exact, saved-ver
 
 Purchase or use agentic credits only for this bounded task:
 
-> Work only in `chrisdortch/first` at commit `904b599fedd4b5a1d8bf178416fc542a2b92a616`, application root `apps/clover-context-gateway`. Create a brand-new Vercel project named `clover-context-gateway-preview` and one protected preview deployment from that exact commit. Do not merge, deploy or promote production, reuse an existing Vercel project, add a custom domain, change DNS, add secrets, access production data, send messages, purchase services, or edit an OpenAI Site. Verify `/`, `/command-center`, `/api/search?q=RollinD`, `/api/fetch?id=clover://project/rollindd`, `/api/prepare-command`, and `/mcp`. Return the Vercel project ID, deployment ID, exact commit, protected preview URL, build/runtime logs, tool list, test results, cost, and rollback/deletion instructions, then stop.
+> Work only in `chrisdortch/first`, PR #5, branch `platform/clover-context-gateway-v0.2.0-preview-20260817`, application root `apps/clover-context-gateway`. Read the current PR head and verify that this application root has no diff from source installation commit `459a6c7c4547b12c4deea4331478ebb78009a066`. Create a brand-new Vercel project named `clover-context-gateway-preview` and one protected preview deployment from the current PR head. Do not merge, deploy or promote production, reuse an existing Vercel project, add a custom domain, change DNS, add secrets, access production data, send messages, purchase services, or edit an OpenAI Site. Verify `/`, `/command-center`, `/api/search?q=RollinD`, `/api/fetch?id=clover://project/rollindd`, `/api/prepare-command`, and `/mcp`. Return the Vercel project ID, deployment ID, exact commit, protected preview URL, build/runtime logs, tool list, test results, cost, and rollback/deletion instructions, then stop.
 
 Do not buy credits merely for discussion, planning, code review, deterministic tests, or ordinary use of the read-only gateway after it is connected.
