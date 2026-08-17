@@ -20,6 +20,11 @@
     "sourceInstallCommit": "459a6c7c4547b12c4deea4331478ebb78009a066",
     "bootstrapWorkflowRunId": 32050038832,
     "bootstrapConclusion": "success",
+    "permanentValidationCommit": "7260d75517aa8dfb3ac5ac314636172e5d562c38",
+    "permanentValidationWorkflowRunId": 32050433993,
+    "permanentValidationConclusion": "success",
+    "artifactId": 9294476497,
+    "artifactSha256": "1da1eb9e3643825d8a236eb973d478cf6409f6091e516fed5b94c3327b6ef904",
     "deterministicTestsPassed": 9,
     "mcpSmokePassed": true
   },
