@@ -1,0 +1,13 @@
+{
+  "documentType": "clover-project-context-pointer",
+  "schemaVersion": "1.0",
+  "projectId": "replace-with-canonical-project-id",
+  "canonicalRepository": "chrisdortch/first",
+  "masterPointer": "CLOVER_MASTER_PLAN_POINTER.json",
+  "contextGatewayPointer": "CLOVER_CONTEXT_GATEWAY_POINTER.json",
+  "projectRegistry": "portfolio/registry/projects.json",
+  "buildProtocolPointer": "CLOVER_BUILD_PROTOCOL_POINTER.json",
+  "dataProtocolPointer": "CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json",
+  "standingProductionAuthority": false,
+  "instructions": "Resolve this project in the canonical registry, refresh current source/deployment/data state, and follow the applicable Clover protocol before changing it."
+}

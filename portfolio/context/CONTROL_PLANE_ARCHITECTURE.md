@@ -1,82 +1,109 @@
-# Clover Context and Command Control Plane 0.1
+# Clover Context and Command Control Plane 0.2
 
 ## Goal
 
-Allow the owner to say:
+The owner should be able to say:
 
 > Use CloverApps to evolve SongAndStage toward the strongest show-night experience.
 
-and have the system automatically:
+without repasting project history or the master plan.
 
-1. resolve the exact project;
-2. read the current master plan and project record;
-3. refresh live repository, deployment, log, error, backup, and data boundaries;
-4. identify the appropriate cost lane;
-5. prepare a safe command packet;
-6. perform supported preview-only work;
-7. return a receipt;
-8. update the canonical status only when evidence changed.
+The control plane must then:
+
+1. resolve the intended project or show a visible unresolved/ambiguous state;
+2. bind the request to the current Master Plan, status, project registry, and applicable protocols;
+3. fetch only the target project and policies needed for that intent;
+4. refresh live repository, deployment, logs, errors, backup, data, Site, and analytics facts through the supported native connectors;
+5. assign the lowest adequate cost lane;
+6. prepare a non-authorizing command packet;
+7. perform supported reversible preview work;
+8. return exact evidence and receipts;
+9. update percentages only when evidence changes state.
+
+## One brain, many representations
+
+The public canonical repository stores portable plans, policies, project metadata, source identities, sanitized receipts, and history. CloverApps, WarRoom, the command center, and future OpenAI Sites are interfaces over that record; none is allowed to become the only copy.
+
+Private legal, guest, staff, financial, health, credential, and production-data context belongs in authenticated private systems. It is referenced through minimized source identities and receipts, not copied into this public repository.
 
 ## Components
 
 ### Canonical repository
 
-`chrisdortch/first` remains the portable source for public process, plans, registries, schemas, decisions, and dated status.
+`chrisdortch/first` is the portable public source for:
+
+- the Master Plan and current weighted status;
+- canonical project IDs, goals, priorities, confidence, and next milestones;
+- Build, Data Change, backup, freshness, and cost policies;
+- append-only decisions and progress history;
+- public/sanitized receipts and source identities.
 
 ### Clover Context Gateway
 
-A remote read-only MCP server and web command interface in `apps/clover-context-gateway`.
+`apps/clover-context-gateway` is a remote read-only MCP app and standalone command interface.
 
 It exposes:
 
 - standard `search` and `fetch` tools;
 - `prepare_clover_command`;
 - `render_clover_command_center`;
-- a standalone `/command-center` with optional browser speech recognition;
-- `/api/context` and `/api/prepare-command` for CloverApps integration.
+- `/api/context`, `/api/search`, `/api/fetch`, and `/api/prepare-command` for CloverApps integration;
+- optional browser speech recognition with device dictation and ChatGPT Voice fallbacks.
+
+The gateway supplies context and routing. It does not contain write authority.
 
 ### Live adapters
 
-The first gateway uses the canonical repository. Read-only adapters should then be added for:
+The gateway does not attempt to copy all current logs, traffic, deployments, and private evidence into one stale database. Instead, every command packet includes a source plan from `LIVE_ADAPTER_REGISTRY.json`.
 
-- GitHub;
-- Vercel;
-- backup/Vault receipts;
-- Google Drive references;
-- OpenAI Site receipts;
-- analytics providers when supported.
+Examples:
 
-Private adapters require owner authentication and a private deployment. Secret values never enter the public repository.
+- GitHub — repositories, branches, commits, pull requests, Actions, issues;
+- Vercel — deployments, build/runtime logs, grouped runtime errors, comments, supported observability;
+- Google Drive — exact approved source documents and Vault receipts;
+- official OpenAI Sites editor — exact Site identity and saved/deployed versions;
+- database/storage providers — engine/schema/backup identity under the Data Change Protocol;
+- analytics providers — traffic only when a verified supported provider exists;
+- web — current primary or authoritative external research.
 
-### Chat execution
+A fact that cannot be refreshed is `unknown`, not inferred.
 
-On ChatGPT Pro, the custom MCP app supplies read/fetch context. Ordinary Chat can then use built-in GitHub, Vercel, Drive, and other connected tools when available. The custom app does not need write permission to make Chat context-aware.
+### Execution surfaces
 
-### CloverApps execution
+- Ordinary Chat Pro handles reasoning and bounded work through available native connectors.
+- GitHub Actions and browser/data test runners handle repeatable deterministic checks without OpenAI model calls.
+- Full browser/Codex/Work is an escalation for novel visual judgment, authenticated UI, or execution not exposed in ordinary Chat.
+- OpenAI Sites remains the official authenticated save/deploy gate for Sites.
 
-CloverApps should call the gateway before presenting a build action. It should display:
+### CloverApps interface
 
-- resolved project;
-- current/stale/unknown source coverage;
-- command packet;
-- cost lane;
-- owner-only actions;
+CloverApps should call the gateway before showing a build action. Its project/seed interface should display:
+
+- resolved project and canonical ID;
+- current canonical version and status date;
+- current/stale/unknown/contradictory live-source coverage;
+- exact command packet and cost lane;
+- transcript and owner guidance;
 - preview/build receipt;
-- progress impact.
+- errors, logs, traffic, backup, and version links from their authoritative source;
+- owner-only action cards;
+- evidence-backed progress impact.
 
-CloverApps is the interface and operational mirror, not the sole source of truth.
+CloverApps is the owner-facing control plane and operational mirror, not the sole source of truth.
 
 ## Voice
 
-The lowest-cost path is:
+The lowest-cost sequence is:
 
 1. ChatGPT Voice, device dictation, or browser speech recognition;
-2. live interim transcript shown locally;
+2. local interim transcript;
 3. deterministic command packet;
-4. one model turn with compact current context.
+4. one compact model turn using target-only context;
+5. native connector refresh;
+6. deterministic checks and receipts.
 
-OpenAI Realtime transcription is an optional reliability upgrade with API usage charges.
+API-billed realtime transcription is optional when browser/device accuracy is insufficient.
 
 ## Current boundary
 
-The gateway is read-only and public-context-only. It cannot edit OpenAI Sites or expose private legal, guest, financial, health, or credential data. Those capabilities require separate authenticated lanes.
+Version 0.2 is public-context-only and read-only. Deployment and private ChatGPT connection remain pending. It cannot edit OpenAI Sites, access production databases, or expose private legal, guest, staff, financial, health, or credential data.

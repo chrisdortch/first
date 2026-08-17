@@ -6,17 +6,25 @@ on:
       - main
       - 'platform/clover-context-gateway*'
     paths:
+      - 'AGENTS.md'
+      - 'AI_START_HERE.md'
+      - 'CLOVER_CONTEXT_GATEWAY_POINTER.json'
       - 'apps/clover-context-gateway/**'
       - 'portfolio/context/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
+      - 'portfolio/schemas/clover-project-context-pointer.schema.json'
       - '.github/workflows/validate-clover-context-gateway.yml'
   pull_request:
     paths:
+      - 'AGENTS.md'
+      - 'AI_START_HERE.md'
+      - 'CLOVER_CONTEXT_GATEWAY_POINTER.json'
       - 'apps/clover-context-gateway/**'
       - 'portfolio/context/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
+      - 'portfolio/schemas/clover-project-context-pointer.schema.json'
       - '.github/workflows/validate-clover-context-gateway.yml'
   workflow_dispatch:
 
@@ -25,49 +33,102 @@ permissions:
 
 jobs:
   validate:
+    name: Validate on Node ${{ matrix.node-version }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: apps/clover-context-gateway
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
+    env:
+      CONTEXT_SOURCE_MODE: local
+      PUBLIC_BASE_URL: http://127.0.0.1:8787
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+          fetch-depth: 0
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '22'
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
       - name: Install pinned dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
-      - name: Validate source and deterministic router tests
+        working-directory: apps/clover-context-gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate source and deterministic tests
+        working-directory: apps/clover-context-gateway
         run: npm run validate
-      - name: Smoke-test the HTTP and command APIs
+
+      - name: Validate pointers, schemas, and non-authority invariants
         shell: bash
         run: |
           set -euo pipefail
-          PORT=8787 PUBLIC_BASE_URL=http://127.0.0.1:8787 npm start > "$RUNNER_TEMP/clover-context-gateway.log" 2>&1 &
+          node <<'NODE' > "$RUNNER_TEMP/control-plane-validation.json"
+          const fs = require('node:fs');
+          const files = [
+            'CLOVER_CONTEXT_GATEWAY_POINTER.json',
+            'portfolio/context/control-plane.json',
+            'portfolio/context/LIVE_ADAPTER_REGISTRY.json',
+            'portfolio/context/PROJECT_CONTEXT_POINTER.template.json',
+            'portfolio/schemas/clover-command-packet.schema.json',
+            'portfolio/schemas/clover-refresh-receipt.schema.json',
+            'portfolio/schemas/clover-project-context-pointer.schema.json'
+          ];
+          for (const file of files) JSON.parse(fs.readFileSync(file, 'utf8'));
+          const pointer = JSON.parse(fs.readFileSync('CLOVER_CONTEXT_GATEWAY_POINTER.json', 'utf8'));
+          const plane = JSON.parse(fs.readFileSync('portfolio/context/control-plane.json', 'utf8'));
+          if ((pointer.currentVersion || pointer.version) !== '0.2.0') process.exit(1);
+          if (!fs.existsSync(pointer.currentDocument)) process.exit(1);
+          if (pointer.writeToolsEnabled !== false || pointer.standingProductionAuthority !== false) process.exit(1);
+          if (plane.authority.writeToolsEnabled !== false || plane.authority.productionDataAccessEnabled !== false) process.exit(1);
+          if (!fs.readFileSync('AGENTS.md', 'utf8').includes('Use CloverApps to')) process.exit(1);
+          if (!fs.readFileSync('AI_START_HERE.md', 'utf8').includes('prepare_clover_command')) process.exit(1);
+          console.log(JSON.stringify({ status: 'passed', version: '0.2.0', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
+          NODE
+
+      - name: Smoke-test HTTP, exact target resolution, and MCP
+        shell: bash
+        working-directory: apps/clover-context-gateway
+        run: |
+          set -euo pipefail
+          PORT=8787 npm start > "$RUNNER_TEMP/clover-context-gateway.log" 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 40); do
+          for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:8787/ > "$RUNNER_TEMP/health.json"; then break; fi
             sleep 1
           done
-          curl --fail --silent http://127.0.0.1:8787/ | grep 'clover-context-gateway'
           curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center'
+          curl --fail --silent 'http://127.0.0.1:8787/api/search?q=RollinD' > "$RUNNER_TEMP/search.json"
+          curl --fail --silent --get --data-urlencode 'id=clover://project/rollindd' http://127.0.0.1:8787/api/fetch > "$RUNNER_TEMP/fetch.json"
           curl --fail --silent \
             -H 'content-type: application/json' \
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
             http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
-          node -e 'const x=require(process.argv[1]); if(x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false) process.exit(1)' "$RUNNER_TEMP/command.json"
-      - name: Upload smoke-test and lockfile evidence
+          node -e 'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(x.packet.schemaVersion!=="1.1"||x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false||!x.packet.freshness.sourcePlan.length) process.exit(1)' "$RUNNER_TEMP/command.json"
+          npm run smoke:mcp > "$RUNNER_TEMP/mcp-smoke.json"
+
+      - name: Upload source, command-packet, and MCP evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: clover-context-gateway-${{ github.sha }}
+          name: clover-context-gateway-v0.2-node-${{ matrix.node-version }}-${{ github.sha }}
           path: |
             apps/clover-context-gateway/package-lock.json
+            ${{ runner.temp }}/control-plane-validation.json
             ${{ runner.temp }}/health.json
+            ${{ runner.temp }}/search.json
+            ${{ runner.temp }}/fetch.json
             ${{ runner.temp }}/command.json
+            ${{ runner.temp }}/mcp-smoke.json
             ${{ runner.temp }}/clover-context-gateway.log
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 30
+          compression-level: 6

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-project-context-pointer-1.0.json",
+  "title": "Clover Project Context Pointer 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "projectId",
+    "canonicalRepository",
+    "masterPointer",
+    "contextGatewayPointer",
+    "projectRegistry",
+    "buildProtocolPointer",
+    "dataProtocolPointer",
+    "standingProductionAuthority",
+    "instructions"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-project-context-pointer" },
+    "schemaVersion": { "const": "1.0" },
+    "projectId": { "type": "string", "minLength": 1 },
+    "canonicalRepository": { "const": "chrisdortch/first" },
+    "masterPointer": { "type": "string" },
+    "contextGatewayPointer": { "type": "string" },
+    "projectRegistry": { "type": "string" },
+    "buildProtocolPointer": { "type": "string" },
+    "dataProtocolPointer": { "type": "string" },
+    "standingProductionAuthority": { "const": false },
+    "instructions": { "type": "string", "minLength": 1 }
+  }
+}
