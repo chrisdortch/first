@@ -8,6 +8,7 @@
     "schemaVersion",
     "protocolVersion",
     "updatedAt",
+    "validatedReusableRuntimeCommit",
     "projects"
   ],
   "properties": {
@@ -19,6 +20,10 @@
     },
     "updatedAt": {
       "type": "string"
+    },
+    "validatedReusableRuntimeCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
     },
     "projects": {
       "type": "array",
