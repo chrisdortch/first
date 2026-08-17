@@ -6,7 +6,8 @@
   "version": "0.2.0",
   "currentDocument": "portfolio/context/versions/0.2.0/CONTROL_PLANE.md",
   "releaseStatus": "portfolio/context/versions/0.2.0/RELEASE_STATUS.md",
-  "status": "source-validated-review-pending",
+  "deploymentReceipt": "portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json",
+  "status": "protected-preview-ready-remote-connection-blocked",
   "appDirectory": "apps/clover-context-gateway",
   "controlPlane": "portfolio/context/control-plane.json",
   "architecture": "portfolio/context/CONTROL_PLANE_ARCHITECTURE.md",
@@ -32,10 +33,19 @@
   "writeToolsEnabled": false,
   "privateContextEnabled": false,
   "deployment": {
-    "state": "not-deployed",
-    "mcpUrl": null,
-    "commandCenterUrl": null,
-    "chatgptAppConnected": false
+    "state": "ready-protected-preview",
+    "provider": "vercel",
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "projectName": "clover-context-gateway-preview",
+    "deploymentId": "dpl_8NFprUjZQbWX87bDfzxTtj4yr7kz",
+    "target": null,
+    "productionAliasAssigned": false,
+    "customDomainAdded": false,
+    "access": "vercel-authentication-protected",
+    "mcpUrl": "https://clover-context-gateway-preview-pep108ni4-chris-dortchs-projects.vercel.app/mcp",
+    "commandCenterUrl": "https://clover-context-gateway-preview-pep108ni4-chris-dortchs-projects.vercel.app/command-center",
+    "chatgptAppConnected": false,
+    "remoteConnectionBlocker": "Vercel Authentication requires a browser login. Generated share links were not machine-usable by an unauthenticated MCP client."
   },
   "readFirst": [
     "AI_START_HERE.md",
@@ -43,6 +53,7 @@
     "portfolio/status/current.json",
     "portfolio/registry/projects.json",
     "portfolio/context/versions/0.2.0/CONTROL_PLANE.md",
-    "portfolio/context/LIVE_ADAPTER_REGISTRY.json"
+    "portfolio/context/LIVE_ADAPTER_REGISTRY.json",
+    "portfolio/context/evidence/0.2.0/vercel-preview-2026-08-17.json"
   ]
 }
