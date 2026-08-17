@@ -38,7 +38,24 @@ const waitForServer = async () => {
 };
 const visibleMetrics = async (page, profile) => page.evaluate(({ isMobile }) => {
   const visible = (element) => { const style = getComputedStyle(element); const rect = element.getBoundingClientRect(); return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0; };
-  const label = (element) => (element.getAttribute('aria-label') || element.getAttribute('title') || element.textContent || element.querySelector('img')?.alt || '').replace(/\s+/g, ' ').trim();
+  const normalizeLabel = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const label = (element) => {
+    const direct = normalizeLabel(element.getAttribute('aria-label') || element.getAttribute('title'));
+    if (direct) return direct;
+    const labelledBy = element.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const labelledText = labelledBy
+        .split(/\s+/)
+        .map((id) => normalizeLabel(document.getElementById(id)?.textContent))
+        .filter(Boolean)
+        .join(' ');
+      if (labelledText) return labelledText;
+    }
+    const explicitLabels = element.labels
+      ? [...element.labels].map((item) => normalizeLabel(item.textContent)).filter(Boolean).join(' ')
+      : '';
+    return normalizeLabel(explicitLabels || element.closest('label')?.textContent || element.textContent || element.querySelector('img')?.alt);
+  };
   const ids = new Map();
   for (const element of document.querySelectorAll('[id]')) ids.set(element.id, (ids.get(element.id) || 0) + 1);
   const controls = [...document.querySelectorAll('button,input:not([type="hidden"]),select,textarea,a[href],[role="button"],[role="link"]')].filter(visible);
