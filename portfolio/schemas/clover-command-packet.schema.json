@@ -35,6 +35,7 @@
       "properties": {
         "id": {
           "enum": [
+            "portfolio_operating_loop",
             "launch_project",
             "evolve_project",
             "diagnose_project",
@@ -47,7 +48,16 @@
             "research"
           ]
         },
-        "requiresProject": { "type": "boolean" }
+        "requiresProject": { "type": "boolean" },
+        "mode": {
+          "enum": [
+            "brief",
+            "explain_priority",
+            "recommend_next",
+            "execute_safe_parts",
+            "report_activity"
+          ]
+        }
       }
     },
     "resolution": {
@@ -126,5 +136,29 @@
       }
     },
     "stopConditions": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "intent": {
+            "properties": {
+              "id": { "const": "portfolio_operating_loop" }
+            },
+            "required": ["id"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "intent": { "required": ["mode"] },
+          "resolution": {
+            "properties": {
+              "state": { "const": "resolved" }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -115,3 +115,48 @@ test("creates an exact conditional Sites action card", () => {
   assert.equal(packet.cost.additionalPurchaseExpected, "conditional");
   assert.ok(packet.ownerActionCards.some((card) => card.id === "official-sites-gate" && card.exactPrompt));
 });
+
+test("routes all five Clover Today questions without requiring a project", () => {
+  const cases = [
+    [
+      "Use CloverApps to tell me what I should know today across my current priorities, grounded in current sources and without changing anything.",
+      "brief",
+      "source_health",
+    ],
+    [
+      "Use CloverApps to explain why the most important item matters, show its sources, freshness, uncertainty, and consequences, without changing anything.",
+      "explain_priority",
+      "recent_decisions",
+    ],
+    [
+      "Use CloverApps to recommend the smallest highest-value next step, considering deadlines, risk, cash, owner attention, and project dependencies. Prepare only.",
+      "recommend_next",
+      "financial_constraints",
+    ],
+    [
+      "Use CloverApps to do only the safe, reversible, preview-only parts of the recommended step, preserve rollback, and stop before any approval-gated action.",
+      "execute_safe_parts",
+      "capability_registry",
+    ],
+    [
+      "Use CloverApps to report what changed, what was verified, what remains unknown, what authority was used, and what should be recorded in today's log.",
+      "report_activity",
+      "daily_log",
+    ],
+  ];
+
+  for (const [request, mode, expectedSource] of cases) {
+    const packet = prepareCommand({ request, projects, status, pointer, source });
+    assert.equal(packet.intent.id, "portfolio_operating_loop");
+    assert.equal(packet.intent.mode, mode);
+    assert.equal(packet.intent.requiresProject, false);
+    assert.equal(packet.resolution.state, "resolved");
+    assert.equal(packet.project, null);
+    assert.equal(packet.state, "refresh-required-before-execution");
+    assert.equal(packet.ownerActionCards.length, 0);
+    assert.ok(packet.freshness.requiredSources.includes(expectedSource));
+    assert.equal(packet.authority.mergeApproved, false);
+    assert.equal(packet.authority.productionDeploymentApproved, false);
+    assert.match(commandPrompt(packet), new RegExp(`Portfolio operating mode: ${mode}`));
+  }
+});
