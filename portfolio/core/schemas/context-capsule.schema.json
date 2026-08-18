@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/context-capsule.schema.json",
+  "title": "Clover Context Capsule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "capsuleId",
+    "generatedAt",
+    "expiresAt",
+    "purpose",
+    "question",
+    "target",
+    "sourcePointers",
+    "assertions",
+    "policies",
+    "authority",
+    "freshness",
+    "omissions",
+    "budget",
+    "containsPlaintextSecrets"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "capsuleId": {
+      "type": "string",
+      "pattern": "^ctx_[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectId",
+        "cellIds"
+      ],
+      "properties": {
+        "projectId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "cellIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      }
+    },
+    "sourcePointers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 200
+    },
+    "assertions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 500
+    },
+    "policies": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 100
+    },
+    "recentDecisions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 100
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "actionEnvelopeId",
+        "standingProductionAuthority"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "read-only",
+            "prepare-only",
+            "preview-authorized",
+            "action-authorized"
+          ]
+        },
+        "actionEnvelopeId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "standingProductionAuthority": {
+          "const": false
+        }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "asOf",
+        "unknownSources",
+        "staleSources"
+      ],
+      "properties": {
+        "asOf": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "unknownSources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "staleSources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "omissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dataClass",
+          "reason"
+        ],
+        "properties": {
+          "dataClass": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxInputTokens",
+        "maxModelCostUsd",
+        "ownerAttentionMinutes"
+      ],
+      "properties": {
+        "maxInputTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxModelCostUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ownerAttentionMinutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "containsPlaintextSecrets": {
+      "const": false
+    },
+    "contentHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(sha256:)?[a-f0-9]{64}$"
+    }
+  }
+}

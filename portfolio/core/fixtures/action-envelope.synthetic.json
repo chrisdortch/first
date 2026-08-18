@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "0.1",
+  "envelopeId": "act_synthetic_preview_0001",
+  "requestId": "synthetic-request-0001",
+  "createdAt": "2026-08-18T12:00:00-05:00",
+  "expiresAt": "2026-08-18T13:00:00-05:00",
+  "status": "approved",
+  "targetProjectId": "example-project",
+  "environment": "preview",
+  "resourceScope": [
+    {
+      "resourceType": "git-branch",
+      "resourceId": "example/repository:preview/example",
+      "expectedVersion": "synthetic-base"
+    }
+  ],
+  "allowedOperations": [
+    "create-synthetic-fixture",
+    "run-tests",
+    "render-preview"
+  ],
+  "deniedOperations": [
+    "merge",
+    "deploy-production",
+    "read-private-data",
+    "send-message",
+    "purchase"
+  ],
+  "dataClasses": [
+    "public"
+  ],
+  "cost": {
+    "maxUsd": 0,
+    "purchaseApproved": false,
+    "costCenter": null
+  },
+  "reversibility": {
+    "required": true,
+    "rollbackAnchor": "synthetic-base",
+    "rollbackProcedure": "Delete the synthetic branch and preview."
+  },
+  "preconditions": [
+    "Synthetic fixtures only.",
+    "No production target."
+  ],
+  "stopConditions": [
+    "Stop if target identity differs.",
+    "Stop if production authority would be required."
+  ],
+  "approvals": [
+    {
+      "approvalType": "owner",
+      "required": false,
+      "approvalId": null,
+      "approvedVersion": null
+    }
+  ],
+  "singleUse": true,
+  "receiptRequired": true,
+  "authorityHash": null
+}

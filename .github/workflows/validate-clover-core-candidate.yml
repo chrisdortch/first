@@ -1,0 +1,93 @@
+name: Validate Clover Core Candidate
+
+on:
+  push:
+    branches:
+      - 'platform/clover-context-gateway-core-*'
+    paths:
+      - 'apps/clover-context-gateway/public/command-center.html'
+      - 'apps/clover-context-gateway/test/today-surface.test.js'
+      - 'portfolio/core/**'
+      - 'portfolio/daily/**'
+      - 'portfolio/ledger/decisions.jsonl'
+      - '.github/workflows/validate-clover-core-candidate.yml'
+  pull_request:
+    paths:
+      - 'apps/clover-context-gateway/public/command-center.html'
+      - 'apps/clover-context-gateway/test/today-surface.test.js'
+      - 'portfolio/core/**'
+      - 'portfolio/daily/**'
+      - 'portfolio/ledger/decisions.jsonl'
+      - '.github/workflows/validate-clover-core-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Boundary and schema validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Install pinned gateway dependencies
+        working-directory: apps/clover-context-gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate existing gateway and new Core candidate
+        working-directory: apps/clover-context-gateway
+        run: npm run validate
+
+      - name: Record authority boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/clover-core-boundary.json"
+          const fs = require('node:fs');
+          const registry = JSON.parse(fs.readFileSync('portfolio/core/CAPABILITY_AUTHORITY_REGISTRY.json', 'utf8'));
+          if (registry.defaultDeny !== true) process.exit(1);
+          if (registry.standingProductionAuthority !== false) process.exit(1);
+          if (registry.standingPrivateDataAuthority !== false) process.exit(1);
+          if (registry.standingSecretRevealAuthority !== false) process.exit(1);
+          for (const system of registry.systems) {
+            if (system.capabilities.execute_production === 'allow') process.exit(1);
+          }
+          const fixtures = fs.readFileSync('portfolio/core/fixtures/events.synthetic.jsonl', 'utf8').trim().split(/\r?\n/).map(JSON.parse);
+          if (!fixtures.length || fixtures.some((event) => event.synthetic !== true)) process.exit(1);
+          console.log(JSON.stringify({
+            status: 'passed',
+            node: process.version,
+            defaultDeny: true,
+            standingProductionAuthority: false,
+            standingPrivateDataAuthority: false,
+            standingSecretRevealAuthority: false,
+            syntheticFixtureCount: fixtures.length
+          }, null, 2));
+          NODE
+
+      - name: Upload deterministic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clover-core-candidate-node-${{ matrix.node-version }}-${{ github.sha }}
+          path: ${{ runner.temp }}/clover-core-boundary.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6

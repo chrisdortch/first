@@ -1,0 +1,310 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/action-envelope.schema.json",
+  "title": "Clover Action Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "envelopeId",
+    "createdAt",
+    "expiresAt",
+    "status",
+    "requestId",
+    "targetProjectId",
+    "environment",
+    "resourceScope",
+    "allowedOperations",
+    "deniedOperations",
+    "dataClasses",
+    "cost",
+    "reversibility",
+    "approvals",
+    "singleUse"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "envelopeId": {
+      "type": "string",
+      "pattern": "^act_[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
+    },
+    "requestId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": [
+        "proposed",
+        "approved",
+        "consumed",
+        "expired",
+        "revoked",
+        "failed",
+        "rolled-back"
+      ]
+    },
+    "targetProjectId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "environment": {
+      "enum": [
+        "synthetic",
+        "local",
+        "preview",
+        "staging",
+        "production"
+      ]
+    },
+    "resourceScope": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "resourceType",
+          "resourceId"
+        ],
+        "properties": {
+          "resourceType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "resourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "expectedVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "allowedOperations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    },
+    "deniedOperations": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120
+      }
+    },
+    "dataClasses": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "public",
+          "sanitized-receipt",
+          "private",
+          "sensitive",
+          "legal",
+          "financial",
+          "health",
+          "credential",
+          "secret",
+          "production-data"
+        ]
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxUsd",
+        "purchaseApproved"
+      ],
+      "properties": {
+        "maxUsd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "purchaseApproved": {
+          "type": "boolean"
+        },
+        "costCenter": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 120
+        }
+      }
+    },
+    "reversibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "rollbackAnchor",
+        "rollbackProcedure"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "rollbackAnchor": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 300
+        },
+        "rollbackProcedure": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 2000
+        }
+      }
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "stopConditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "approvals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "approvalType",
+          "required",
+          "approvalId"
+        ],
+        "properties": {
+          "approvalType": {
+            "enum": [
+              "owner",
+              "security",
+              "legal",
+              "data",
+              "release"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "approvalId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "approvedVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "singleUse": {
+      "const": true
+    },
+    "receiptRequired": {
+      "type": "boolean",
+      "default": true
+    },
+    "authorityHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(sha256:)?[a-f0-9]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "const": "production"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "enum": [
+              "proposed",
+              "approved",
+              "consumed",
+              "failed",
+              "rolled-back"
+            ]
+          },
+          "approvals": {
+            "contains": {
+              "type": "object",
+              "properties": {
+                "approvalType": {
+                  "const": "owner"
+                },
+                "required": {
+                  "const": true
+                },
+                "approvalId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "approvalType",
+                "required",
+                "approvalId"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}
