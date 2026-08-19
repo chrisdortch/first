@@ -1,0 +1,51 @@
+{
+  "documentType": "clover-constitution-lifecycle-registry-candidate",
+  "schemaVersion": "0.2",
+  "status": "draft-unratified",
+  "precedence": "This candidate proposes that lifecycle status be resolved from a separately authenticated registry; normative Constitution documents contain no mutable lifecycle assertions. This draft registry is not itself authenticated or effective.",
+  "currentVersion": "0.1",
+  "versions": [
+    {
+      "version": "0.1",
+      "path": "portfolio/core/CLOVER_CONSTITUTION_CANDIDATE_V0.1.md",
+      "sha256": "82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e",
+      "lifecycleStatus": "ratified-active",
+      "current": true,
+      "ownerDecision": "approved-unchanged",
+      "authenticationAssurance": "legacy-owner-statement-not-cryptographically-authenticated",
+      "canonicalRepositoryStatus": "isolated-candidate-not-merged",
+      "runtimeEnforcementStatus": "not-established",
+      "ratificationEvidence": "portfolio/core/constitution/ratifications/2026-08-18-v0.1.json"
+    },
+    {
+      "version": "0.2",
+      "path": "portfolio/core/constitution/versions/0.2.md",
+      "sha256": "035c6d1e78769d658f64bd231e5faf61610bf30fea6e4639e6f7bdb52e73ddad",
+      "lifecycleStatus": "draft",
+      "current": false,
+      "ownerDecision": null,
+      "authenticationAssurance": "none",
+      "canonicalRepositoryStatus": "isolated-candidate-not-merged",
+      "runtimeEnforcementStatus": "none",
+      "ratificationEvidence": null
+    }
+  ],
+  "allowedLifecycleStates": [
+    "draft",
+    "ratified-inactive",
+    "ratified-active",
+    "suspended",
+    "superseded",
+    "repealed"
+  ],
+  "activationRequirements": [
+    "exact artifact hash",
+    "authenticated owner attestation bound to the displayed decision",
+    "trusted active credential",
+    "unconsumed challenge",
+    "canonical repository record",
+    "policy validation receipt",
+    "explicit runtime-enforcement status kept separate from owner adoption"
+  ],
+  "authorityGrantedByCandidate": []
+}

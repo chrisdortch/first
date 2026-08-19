@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'platform/clover-context-gateway-core-*'
+      - 'platform/clover-core-*'
     paths:
       - 'apps/clover-context-gateway/public/command-center.html'
       - 'apps/clover-context-gateway/test/today-surface.test.js'
@@ -47,6 +48,13 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clover-context-gateway/package-lock.json
 
+      - name: Verify dependency-free Core v0.2 contracts and Trust Slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test portfolio/core/test/*.test.mjs
+          node portfolio/core/scripts/verify-core.mjs > "$RUNNER_TEMP/clover-core-v02-verification.json"
+
       - name: Install pinned gateway dependencies
         working-directory: apps/clover-context-gateway
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -87,7 +95,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: clover-core-candidate-node-${{ matrix.node-version }}-${{ github.sha }}
-          path: ${{ runner.temp }}/clover-core-boundary.json
+          path: |
+            ${{ runner.temp }}/clover-core-boundary.json
+            ${{ runner.temp }}/clover-core-v02-verification.json
           if-no-files-found: warn
           retention-days: 30
           compression-level: 6

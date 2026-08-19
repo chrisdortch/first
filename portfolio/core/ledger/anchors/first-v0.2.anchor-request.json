@@ -1,0 +1,14 @@
+{
+  "documentType": "clover-ledger-anchor-request",
+  "schemaVersion": "0.2",
+  "status": "prepared-unanchored",
+  "ledgerId": "clover-core-v0.2-candidate",
+  "eventCount": 3,
+  "firstSequence": 1,
+  "lastSequence": 3,
+  "headEventHash": "44f0d3d583741ad4af6b6c0579b08e17d28a24bf7e84bf0b97a32d04eabdbee8",
+  "ledgerFileSha256": "a6e19ebd328dd09f978c7fa6c877144be31c8675425e607153127b58dd07fbcb",
+  "recordedAt": "2026-08-18T22:20:21-05:00",
+  "independentAttestation": null,
+  "anchorHash": "ae40c622ba769a9a44ec6d9267ae2470725c0d326063625384a553a8b00ac861"
+}

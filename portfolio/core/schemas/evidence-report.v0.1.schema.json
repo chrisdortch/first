@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/evidence-report.v0.1.schema.json",
+  "title": "Clover Evidence Report",
+  "type": "object",
+  "required": ["documentType", "schemaVersion", "recordedAt", "scope", "limitations", "authorityGranted"],
+  "properties": {
+    "documentType": { "type": "string", "minLength": 1 },
+    "schemaVersion": { "const": "0.1" },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "scope": { "type": "string", "minLength": 1 },
+    "limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "authorityGranted": { "type": "array", "maxItems": 0 }
+  }
+}

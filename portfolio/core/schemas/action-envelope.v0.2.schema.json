@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/action-envelope.v0.2.schema.json",
+  "title": "Clover Single-Use Action Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "envelopeId", "requestId", "intent", "intentHash", "createdAt", "expiresAt", "nonce", "singleUse", "accountId", "projectId", "environment", "target", "operation", "handlerId", "tool", "verifierId", "verificationTool", "readbackSource", "expectedPostcondition", "expectedPostconditionHash", "parameters", "parametersHash", "dataClasses", "cost", "rollback", "stopConditions", "policy", "policyHash", "approvalRequired", "authorityHash", "approval"],
+  "properties": {
+    "schemaVersion": { "const": "0.2" },
+    "envelopeId": { "$ref": "#/$defs/identifier" },
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "intent": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "intentHash": { "$ref": "#/$defs/sha256" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "nonce": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "singleUse": { "const": true },
+    "accountId": { "$ref": "#/$defs/identifier" },
+    "projectId": { "$ref": "#/$defs/identifier" },
+    "environment": { "enum": ["synthetic", "local", "preview", "staging"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resourceType", "nativeResourceId", "expectedVersion"],
+      "properties": {
+        "resourceType": { "$ref": "#/$defs/identifier" },
+        "nativeResourceId": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "expectedVersion": { "type": "string", "minLength": 1, "maxLength": 300 }
+      }
+    },
+    "operation": { "$ref": "#/$defs/identifier" },
+    "handlerId": { "$ref": "#/$defs/identifier" },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolId", "toolVersion"],
+      "properties": {
+        "toolId": { "$ref": "#/$defs/identifier" },
+        "toolVersion": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "verifierId": { "$ref": "#/$defs/identifier" },
+    "verificationTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolId", "toolVersion"],
+      "properties": {
+        "toolId": { "$ref": "#/$defs/identifier" },
+        "toolVersion": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "readbackSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["systemId", "nativeResourceId"],
+      "properties": {
+        "systemId": { "$ref": "#/$defs/identifier" },
+        "nativeResourceId": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "expectedPostcondition": {
+      "type": "object",
+      "required": ["version"],
+      "properties": { "version": { "type": "string", "minLength": 1, "maxLength": 300 } }
+    },
+    "expectedPostconditionHash": { "$ref": "#/$defs/sha256" },
+    "parameters": { "type": "object" },
+    "parametersHash": { "$ref": "#/$defs/sha256" },
+    "dataClasses": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "maxUsd", "purchaseApproved"],
+      "properties": {
+        "currency": { "const": "USD" },
+        "maxUsd": { "type": "number", "minimum": 0 },
+        "purchaseApproved": { "type": "boolean" }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "strategyId", "rollbackAnchor"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "strategyId": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "rollbackAnchor": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "stopConditions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 500 } },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyId", "policyVersion", "allowedOperations", "deniedOperations", "allowedEnvironments", "productionAllowed", "allowedDataClasses", "maxCostUsd", "purchaseApprovalRequiredAboveUsd", "rollbackRequired", "authenticatedApprovalRequired", "requiredStopConditions"],
+      "properties": {
+        "policyId": { "$ref": "#/$defs/identifier" },
+        "policyVersion": { "$ref": "#/$defs/identifier" },
+        "allowedOperations": { "$ref": "#/$defs/identifierList" },
+        "deniedOperations": { "$ref": "#/$defs/identifierList" },
+        "allowedEnvironments": { "$ref": "#/$defs/identifierList" },
+        "productionAllowed": { "const": false },
+        "allowedDataClasses": { "$ref": "#/$defs/identifierList" },
+        "maxCostUsd": { "type": "number", "minimum": 0 },
+        "purchaseApprovalRequiredAboveUsd": { "type": "number", "minimum": 0 },
+        "rollbackRequired": { "type": "boolean" },
+        "authenticatedApprovalRequired": { "type": "boolean" },
+        "requiredStopConditions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 500 } }
+      }
+    },
+    "policyHash": { "$ref": "#/$defs/sha256" },
+    "approvalRequired": { "type": "boolean" },
+    "authorityHash": { "$ref": "#/$defs/sha256" },
+    "approval": { "oneOf": [{ "$ref": "authenticated-attestation.v0.2.schema.json" }, { "type": "null" }] }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "identifier": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$", "maxLength": 160 },
+    "identifierList": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/identifier" } }
+  }
+}

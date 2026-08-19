@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/action-envelope-state.v0.2.schema.json",
+  "title": "Clover Action Envelope Execution State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "envelopeId", "authorityHash", "phase", "terminal", "reservedAt", "authoritySpentAt", "sideEffectStartedAt", "sideEffectFinishedAt", "completedAt", "handlerCalls", "readbackCalls", "compensationCalls", "effect", "handlerResult", "readback", "compensation", "error"],
+  "properties": {
+    "schemaVersion": { "const": "0.2" },
+    "envelopeId": { "type": "string", "minLength": 1 },
+    "authorityHash": { "$ref": "#/$defs/sha256" },
+    "phase": {
+      "enum": [
+        "reserved",
+        "executing",
+        "compensating",
+        "failed-before-side-effect",
+        "partial-failure-uncompensated",
+        "compensation-failed",
+        "rollback-unverified",
+        "rolled-back",
+        "succeeded"
+      ]
+    },
+    "terminal": { "type": "boolean" },
+    "reservedAt": { "type": "string", "format": "date-time" },
+    "authoritySpentAt": { "type": "string", "format": "date-time" },
+    "sideEffectStartedAt": { "type": ["string", "null"], "format": "date-time" },
+    "sideEffectFinishedAt": { "type": ["string", "null"], "format": "date-time" },
+    "completedAt": { "type": ["string", "null"], "format": "date-time" },
+    "handlerCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "readbackCalls": { "type": "integer", "minimum": 0 },
+    "compensationCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "effect": {
+      "enum": [null, "in-progress-or-unknown", "unknown-or-partial", "rolled-back-confirmed", "applied-confirmed"]
+    },
+    "handlerResult": { "type": ["object", "null"] },
+    "readback": { "type": ["object", "null"] },
+    "compensation": { "type": ["object", "null"] },
+    "error": { "type": ["object", "null"] }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/ratifier-trust.v0.2.schema.json",
+  "title": "Clover Ratifier Trust Registry Candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "status", "principalBindings", "trustedCredentials", "minimumAssuranceForRatification", "activationRule", "privateKeyPolicy", "authorityGrantedByCandidate"],
+  "properties": {
+    "documentType": { "const": "clover-ratifier-trust-registry-candidate" },
+    "schemaVersion": { "const": "0.2" },
+    "status": { "enum": ["configuration-required", "configured-active"] },
+    "principalBindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["principalId", "role", "bindingStatus"],
+        "properties": {
+          "principalId": { "type": "string", "minLength": 1 },
+          "role": { "const": "constitution-ratifier" },
+          "bindingStatus": { "enum": ["not-enrolled", "active", "revoked"] }
+        }
+      }
+    },
+    "trustedCredentials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["credentialId", "principalId", "fingerprint", "status", "roles", "assurance"],
+        "properties": {
+          "credentialId": { "type": "string", "minLength": 1 },
+          "principalId": { "type": "string", "minLength": 1 },
+          "fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "status": { "enum": ["active", "revoked"] },
+          "roles": { "type": "array", "contains": { "const": "constitution-ratifier" } },
+          "assurance": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "minimumAssuranceForRatification": { "type": "string", "minLength": 1 },
+    "activationRule": { "type": "string", "minLength": 1 },
+    "privateKeyPolicy": { "type": "string", "minLength": 1 },
+    "authorityGrantedByCandidate": { "type": "array", "maxItems": 0 }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/action-receipt.v0.2.schema.json",
+  "title": "Clover Action Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "envelopeId", "authorityHash", "target", "verification", "phase", "effect", "terminal", "recordedAt", "handlerCalls", "readbackCalls", "compensationCalls", "stateHash", "terminalState", "receiptHash"],
+  "properties": {
+    "documentType": { "const": "clover-action-receipt" },
+    "schemaVersion": { "const": "0.2" },
+    "envelopeId": { "type": "string", "minLength": 1 },
+    "authorityHash": { "$ref": "#/$defs/sha256" },
+    "target": { "type": "object" },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifierId", "tool", "source", "expectedPostconditionHash"],
+      "properties": {
+        "verifierId": { "type": "string", "minLength": 1 },
+        "tool": { "type": "object" },
+        "source": { "type": "object" },
+        "expectedPostconditionHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "phase": {
+      "enum": [
+        "failed-before-side-effect",
+        "partial-failure-uncompensated",
+        "compensation-failed",
+        "rollback-unverified",
+        "rolled-back",
+        "succeeded"
+      ]
+    },
+    "effect": { "enum": [null, "unknown-or-partial", "rolled-back-confirmed", "applied-confirmed"] },
+    "terminal": { "const": true },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "handlerCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "readbackCalls": { "type": "integer", "minimum": 0 },
+    "compensationCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "stateHash": { "$ref": "#/$defs/sha256" },
+    "terminalState": { "$ref": "action-envelope-state.v0.2.schema.json" },
+    "receiptHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}
