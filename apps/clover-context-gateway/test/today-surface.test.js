@@ -115,13 +115,25 @@ test('Synthetic fixtures are unmistakably synthetic', () => {
   }
 });
 
-test('Candidate governance remains visibly unratified', () => {
+test('Constitution 0.1 is ratified externally without rewriting the approved artifact', () => {
   const constitution = read('portfolio/core/CLOVER_CONSTITUTION_CANDIDATE_V0.1.md');
   assert.ok(constitution.includes('not yet ratified'));
-  assert.ok(constitution.includes('Authority effect: **none'));
   assert.ok(constitution.includes('No silent self-modification'));
 
+  const pointer = JSON.parse(read('portfolio/core/constitution/CURRENT.json'));
+  const receipt = JSON.parse(read('portfolio/core/constitution/ratifications/2026-08-18-v0.1.json'));
+  assert.equal(pointer.status, 'ratified-active');
+  assert.equal(pointer.currentVersion, '0.1');
+  assert.equal(pointer.constitutionSha256, '82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e');
+  assert.equal(receipt.owner.decision, 'approved-unchanged');
+  assert.equal(receipt.approvedArtifact.textModifiedByRatification, false);
+  assert.equal(receipt.ratificationEffect.futureAmendmentsAllowed, true);
+  assert.deepEqual(receipt.ratificationEffect.operationalAuthorityGranted, []);
+  assert.equal(pointer.standingProductionAuthority, false);
+  assert.equal(pointer.mergeAuthorityGranted, false);
+
   const daily = read('portfolio/daily/2026-08-18.md');
+  assert.ok(daily.includes('Constitution ratification — 6:58 p.m. CDT'));
   assert.ok(daily.includes('Mission completion: remains **41%**'));
-  assert.ok(daily.includes('Explicitly not authorized'));
+  assert.ok(daily.includes('does **not** approve merge'));
 });
