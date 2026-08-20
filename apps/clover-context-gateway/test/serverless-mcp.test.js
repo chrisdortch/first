@@ -223,13 +223,25 @@ test("POST /api/prepare-command returns Today beside, never inside, Command Pack
     const response = await fetch(`${baseUrl}/api/prepare-command`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ request: "What should I know?" }),
+      body: JSON.stringify({
+        request: "What matters today? Show current versus candidate truth, the three highest priorities, one recommended next action, and the exact Action ID. Do not execute anything.",
+      }),
     });
     assert.equal(response.status, 200);
     const body = await response.json();
 
     assert.equal(body.packet.schemaVersion, "1.2");
     assert.equal(Object.hasOwn(body.packet, "today"), false);
+    assert.equal(body.packet.intent.id, "portfolio_operating_loop");
+    assert.equal(body.packet.intent.mode, "brief");
+    assert.equal(body.packet.intent.requiresProject, false);
+    assert.equal(body.packet.resolution.state, "resolved");
+    assert.equal(body.packet.project, null);
+    assert.equal(body.packet.ownerActionCards.length, 0);
+    assert.ok(body.packet.freshness.requiredSources.includes("canonical_status"));
+    assert.equal(body.packet.freshness.requiredSources.includes("repository"), false);
+    assert.equal(body.packet.freshness.requiredSources.includes("build_logs"), false);
+    assert.equal(body.packet.freshness.requiredSources.includes("runtime_errors"), false);
     assert.equal(typeof body.today?.available, "boolean");
     if (!body.today.available) assert.equal(body.today.data, null);
     assert.equal(typeof body.followUpPrompt, "string");

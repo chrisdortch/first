@@ -161,3 +161,25 @@ test("routes all five Clover Today questions without requiring a project", () =>
     assert.match(commandPrompt(packet), new RegExp(`Portfolio operating mode: ${mode}`));
   }
 });
+
+test("routes the owner's natural what-matters-today prompt to the portfolio brief", () => {
+  const packet = prepareCommand({
+    request: "What matters today? Show current versus candidate truth, the three highest priorities, one recommended next action, and the exact Action ID. Do not execute anything.",
+    projects,
+    status,
+    pointer,
+    source,
+  });
+
+  assert.equal(packet.intent.id, "portfolio_operating_loop");
+  assert.equal(packet.intent.mode, "brief");
+  assert.equal(packet.intent.requiresProject, false);
+  assert.equal(packet.resolution.state, "resolved");
+  assert.equal(packet.project, null);
+  assert.equal(packet.ownerActionCards.length, 0);
+  assert.ok(packet.freshness.requiredSources.includes("canonical_status"));
+  assert.ok(packet.freshness.requiredSources.includes("project_registry"));
+  assert.equal(packet.freshness.requiredSources.includes("repository"), false);
+  assert.equal(packet.freshness.requiredSources.includes("build_logs"), false);
+  assert.equal(packet.freshness.requiredSources.includes("runtime_errors"), false);
+});
