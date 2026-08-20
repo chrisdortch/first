@@ -22,6 +22,8 @@ Exact project identity
 
 See [`CURRENT.md`](CURRENT.md). Numbered versions are immutable historical records. The central reusable workflow is pinned by commit from each project, so a future central change cannot silently alter an existing candidate run.
 
+Version 1.2.0 is an unvalidated hardening candidate. Its enrolled identity model moves authoritative policy hashes and source anchors out of the candidate repository, and its runtime measures source state around every project command. Version 1.1.0 remains current until exact-head CI and a separate promotion decision.
+
 ## Safety rule
 
 Use deterministic systems for repetition and certainty, models for interpretation and invention, and the owner for irreversible authority.

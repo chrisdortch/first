@@ -7,12 +7,14 @@ on:
       - 'CLOVER_BUILD_PROTOCOL_POINTER.json'
       - 'AI_START_HERE.md'
       - '.github/workflows/clover-preview-v1.1.yml'
+      - '.github/workflows/clover-preview-v1.2.yml'
       - '.github/workflows/validate-clover-standard.yml'
       - 'standards/clover-build-protocol/**'
   pull_request:
     paths:
       - 'CLOVER_BUILD_PROTOCOL_POINTER.json'
       - '.github/workflows/clover-preview-v1.1.yml'
+      - '.github/workflows/clover-preview-v1.2.yml'
       - '.github/workflows/validate-clover-standard.yml'
       - 'standards/clover-build-protocol/**'
   workflow_dispatch:
@@ -24,11 +26,16 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      CLOVER_VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact validation source
+        run: test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
@@ -42,3 +49,11 @@ jobs:
         run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/project-policy.schema.json standards/clover-build-protocol/templates/project-policy.template.json
       - name: Verify version and v1.0.0 immutability
         run: node standards/clover-build-protocol/runtime/v1.1.0/validate-standard.mjs
+      - name: Validate 1.2 candidate policy template
+        run: node standards/clover-build-protocol/runtime/v1.2.0/validate-json.mjs standards/clover-build-protocol/schemas/v1.2.0/project-policy.schema.json standards/clover-build-protocol/templates/v1.2.0/project-policy.template.json
+      - name: Validate 1.2 candidate enrollment template
+        run: node standards/clover-build-protocol/runtime/v1.2.0/validate-json.mjs standards/clover-build-protocol/schemas/v1.2.0/enrollment.schema.json standards/clover-build-protocol/templates/v1.2.0/enrollment.template.json
+      - name: Verify 1.2 candidate integrity without promoting it
+        run: node standards/clover-build-protocol/runtime/v1.2.0/validate-standard.mjs
+      - name: Test 1.2 security hardening
+        run: node --test standards/clover-build-protocol/runtime/v1.2.0/test/*.test.mjs

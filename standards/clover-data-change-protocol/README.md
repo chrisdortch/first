@@ -8,18 +8,27 @@ Its first automated lane is deliberately narrow:
 exact candidate
 → fail-closed changed-file boundary
 → policy schema validation
-→ project tests
+→ immutable workflow protocol + production-anchor binding
+→ isolated evidence + pre-command integrity snapshot
+→ reduced-environment project install/test
+→ independent post-command integrity checks + exact protocol restore
+→ symlink-safe SQL path resolution
+→ psql meta-command rejection
 → disposable PostgreSQL service
-→ baseline schema + synthetic seed
+→ dedicated NOSUPERUSER rehearsal role with no inherited memberships
+→ dynamic procedural SQL rejection
+→ baseline schema + candidate seed with bound identity and unknown provenance
 → forward migration
 → assertions and reconciliation
 → idempotency rerun
 → rollback
 → exact schema/data comparison
-→ machine-readable receipt
+→ artifact-hash-bound machine-readable receipt
 → owner gate
 ```
 
-No production database URL is accepted by the reusable workflow. Production inspection, backup, restore, and migration require a later, separately authorized lane with provider-specific recovery evidence.
+No production database URL or credential is supplied by the reusable workflow. The same-user hosted runner is not a hostile-code sandbox, so candidate-controlled npm external effects are reported as unknown rather than falsely reported as absent. Version 1.0.1 also binds the seed SQL bytes but reports seed-data provenance as unknown: content identity does not prove that literal values are synthetic. Production inspection, backup, restore, and migration require a later, separately authorized lane with provider-specific recovery evidence.
+
+Version 1.0.0 remains the validated current version. Version 1.0.1 is an additive, unvalidated security-hardening candidate; see [`CURRENT.md`](CURRENT.md) for the exact state.
 
 Start with [`CURRENT.md`](CURRENT.md).

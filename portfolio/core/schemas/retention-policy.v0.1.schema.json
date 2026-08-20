@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/retention-policy.v0.1.schema.json",
+  "title": "Clover Synthetic Retention Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["synthetic", "policyId", "deleteSupersededRawSource", "deleteAfter", "legalHold", "preserveTombstone", "preserveEventAndHash", "externalErasureClaimed"],
+  "properties": {
+    "synthetic": { "const": true },
+    "policyId": { "type": "string", "minLength": 1 },
+    "deleteSupersededRawSource": { "type": "boolean" },
+    "deleteAfter": { "type": "string", "format": "date-time" },
+    "legalHold": { "type": "boolean" },
+    "preserveTombstone": { "const": true },
+    "preserveEventAndHash": { "const": true },
+    "externalErasureClaimed": { "const": false }
+  }
+}

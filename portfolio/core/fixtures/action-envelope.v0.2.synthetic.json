@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "0.2",
+  "envelopeId": "act_synthetic_contract_0001",
+  "requestId": "request-synthetic-contract-0001",
+  "intent": "Write one synthetic record and verify exact readback.",
+  "intentHash": "21c1203fff029b16217d0befa4b7b5b77cca24a0705665877b05d03a75ec9cf6",
+  "createdAt": "2026-08-18T22:30:00-05:00",
+  "expiresAt": "2026-08-18T22:40:00-05:00",
+  "nonce": "single-use-synthetic-contract-nonce",
+  "singleUse": true,
+  "accountId": "acct_synthetic_01",
+  "projectId": "project_synthetic_01",
+  "environment": "synthetic",
+  "target": {
+    "expectedVersion": "version-synthetic-0001",
+    "nativeResourceId": "doc_native_synthetic_0001",
+    "resourceType": "synthetic-document"
+  },
+  "operation": "write-synthetic-record",
+  "handlerId": "synthetic.write",
+  "tool": {
+    "toolId": "synthetic-store",
+    "toolVersion": "1.0.0"
+  },
+  "verifierId": "synthetic.authoritative-readback",
+  "verificationTool": {
+    "toolId": "synthetic-readback",
+    "toolVersion": "1.0.0"
+  },
+  "readbackSource": {
+    "nativeResourceId": "doc_native_synthetic_0001",
+    "systemId": "synthetic-authoritative-store"
+  },
+  "expectedPostcondition": {
+    "applied": true,
+    "version": "version-synthetic-0002"
+  },
+  "expectedPostconditionHash": "29a15d5e3ed69e0c50fee1c6489f6844973e61246417f7952a1156e4c5d12cb5",
+  "parameters": {
+    "recordId": "record-1",
+    "value": "synthetic"
+  },
+  "parametersHash": "7aab9eced3c31fb0fcb13f2be9395eb22b5cc5b57242e44766278edc78920b98",
+  "dataClasses": [
+    "public-synthetic"
+  ],
+  "cost": {
+    "currency": "USD",
+    "maxUsd": 0,
+    "purchaseApproved": false
+  },
+  "rollback": {
+    "required": true,
+    "rollbackAnchor": "version-synthetic-0001",
+    "strategyId": "restore-synthetic-version"
+  },
+  "stopConditions": [
+    "target-version-changed",
+    "readback-not-confirmed"
+  ],
+  "policy": {
+    "allowedDataClasses": [
+      "public-synthetic"
+    ],
+    "allowedEnvironments": [
+      "synthetic"
+    ],
+    "allowedOperations": [
+      "write-synthetic-record"
+    ],
+    "authenticatedApprovalRequired": false,
+    "deniedOperations": [
+      "deploy-production",
+      "reveal-secret"
+    ],
+    "maxCostUsd": 0,
+    "policyId": "policy.synthetic",
+    "policyVersion": "v1",
+    "productionAllowed": false,
+    "purchaseApprovalRequiredAboveUsd": 0,
+    "requiredStopConditions": [
+      "target-version-changed",
+      "readback-not-confirmed"
+    ],
+    "rollbackRequired": true
+  },
+  "policyHash": "03f9364b24851637b4731512d4e3838d014c0343423d65ce9b6f13c49c4e5480",
+  "approvalRequired": false,
+  "authorityHash": "5c326af24e653cef17894b51343061c76a68d98725ff0c2f2cffca58ed8b50f2",
+  "approval": null
+}

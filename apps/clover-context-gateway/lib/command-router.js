@@ -401,7 +401,7 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
   const commandId = `clover-${crypto.createHash("sha256").update(sourceFingerprint).digest("hex").slice(0, 16)}`;
 
   return {
-    schemaVersion: "1.1",
+    schemaVersion: "1.2",
     commandId,
     createdAt: new Date().toISOString(),
     originalRequest,

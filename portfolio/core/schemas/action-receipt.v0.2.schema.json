@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/action-receipt.v0.2.schema.json",
+  "title": "Clover Action Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "envelopeId", "authorityHash", "target", "verification", "phase", "effect", "terminal", "recordedAt", "handlerCalls", "readbackCalls", "compensationCalls", "stateHash", "historyLength", "historyHash", "terminalState", "receiptHash"],
+  "properties": {
+    "documentType": { "const": "clover-action-receipt" },
+    "schemaVersion": { "const": "0.2" },
+    "envelopeId": { "type": "string", "minLength": 1 },
+    "authorityHash": { "$ref": "#/$defs/sha256" },
+    "target": { "type": "object" },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifierId", "tool", "source", "expectedPostconditionHash"],
+      "properties": {
+        "verifierId": { "type": "string", "minLength": 1 },
+        "tool": { "type": "object" },
+        "source": { "type": "object" },
+        "expectedPostconditionHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "phase": {
+      "enum": [
+        "failed-before-side-effect",
+        "partial-failure-uncompensated",
+        "compensation-failed",
+        "rollback-unverified",
+        "rolled-back",
+        "succeeded"
+      ]
+    },
+    "effect": { "enum": [null, "unknown-or-partial", "rolled-back-confirmed", "applied-confirmed"] },
+    "terminal": { "const": true },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "handlerCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "readbackCalls": { "type": "integer", "minimum": 0 },
+    "compensationCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
+    "stateHash": { "$ref": "#/$defs/sha256" },
+    "historyLength": { "type": "integer", "minimum": 2 },
+    "historyHash": { "$ref": "#/$defs/sha256" },
+    "terminalState": { "$ref": "action-envelope-state.v0.2.schema.json" },
+    "receiptHash": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "phase": { "const": "failed-before-side-effect" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": null },
+        "terminalState": { "type": "object", "properties": {
+          "phase": { "const": "failed-before-side-effect" }, "effect": { "const": null }
+        } }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "partial-failure-uncompensated" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "unknown-or-partial" },
+        "terminalState": { "type": "object", "properties": {
+          "phase": { "const": "partial-failure-uncompensated" }, "effect": { "const": "unknown-or-partial" }
+        } }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "compensation-failed" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "unknown-or-partial" },
+        "terminalState": { "type": "object", "properties": {
+          "phase": { "const": "compensation-failed" }, "effect": { "const": "unknown-or-partial" }
+        } }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "rollback-unverified" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "unknown-or-partial" },
+        "terminalState": { "type": "object", "properties": {
+          "phase": { "const": "rollback-unverified" }, "effect": { "const": "unknown-or-partial" }
+        } }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "rolled-back" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "rolled-back-confirmed" },
+        "terminalState": { "type": "object", "properties": {
+          "phase": { "const": "rolled-back" }, "effect": { "const": "rolled-back-confirmed" }
+        } }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "succeeded" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "applied-confirmed" },
+        "terminalState": { "type": "object", "properties": {
+          "phase": { "const": "succeeded" }, "effect": { "const": "applied-confirmed" }
+        } }
+      } }
+    }
+  ],
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

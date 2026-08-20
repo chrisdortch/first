@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/minimum-context-capsule.v0.2.schema.json",
+  "title": "Clover Minimum Context Capsule 0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "synthetic", "asOf", "ledgerId", "ledgerHeadEventHash", "items", "unknowns", "limitations", "capsuleHash"],
+  "properties": {
+    "documentType": { "const": "clover-minimum-context-capsule" },
+    "schemaVersion": { "const": "0.2" },
+    "synthetic": { "const": true },
+    "asOf": { "type": "string", "format": "date-time" },
+    "ledgerId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "ledgerHeadEventHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "items": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "$ref": "#/$defs/item" }
+    },
+    "unknowns": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "capsuleHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  },
+  "$defs": {
+    "importedFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "trust", "permittedUse", "canSetPolicy", "canApprove", "canInvokeTools"],
+      "properties": {
+        "value": { "type": "string", "minLength": 1, "maxLength": 4000 },
+        "trust": { "const": "untrusted-imported-source-data" },
+        "permittedUse": { "const": "display-and-reasoning-evidence-only" },
+        "canSetPolicy": { "const": false },
+        "canApprove": { "const": false },
+        "canInvokeTools": { "const": false }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "status", "nextMilestone", "assertedAt", "claimEventId", "claimEventHash", "sourceId", "sourceContentHash"],
+      "properties": {
+        "projectId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$" },
+        "status": { "$ref": "#/$defs/importedFact" },
+        "nextMilestone": { "$ref": "#/$defs/importedFact" },
+        "assertedAt": { "type": "string", "format": "date-time" },
+        "claimEventId": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "claimEventHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sourceId": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "sourceContentHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    }
+  }
+}

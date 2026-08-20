@@ -1,6 +1,10 @@
-# Clover Context Gateway 0.2.0
+# Clover Context Gateway 0.3.0 Candidate
 
 A read-only MCP app and standalone command interface that lets the owner say **“Use CloverApps to…”** without pasting the master plan into every prompt.
+
+Version 0.3.0 is an unmerged, undeployed candidate. The separately identified
+0.2.0 preview remains the latest deployed gateway until an exact 0.3.0 commit is
+validated and separately approved for deployment.
 
 ## Archetype
 

@@ -1,0 +1,8 @@
+{
+  "synthetic": true,
+  "sourceId": "synthetic-stale-project-status",
+  "observedAt": "2025-01-01T00:00:00Z",
+  "projectId": "clover-core",
+  "status": "unknown-old-state",
+  "nextMilestone": "This stale fixture must never replace current state."
+}

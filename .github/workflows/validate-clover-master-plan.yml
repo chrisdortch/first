@@ -28,12 +28,24 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      CLOVER_VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          fetch-depth: 0
+      - name: Verify exact candidate checkout
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
       - name: Validate master plan, percentages, registry, and ledgers
         run: node portfolio/runtime/validate-master-plan.mjs
+      - name: Validate additive federated registry candidate
+        run: node portfolio/registry/validate-registry-v2.mjs
+      - name: Test federated registry projection and version identities
+        run: node --test portfolio/registry/test/*.test.mjs

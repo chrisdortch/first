@@ -1,0 +1,26 @@
+{
+  "documentType": "clover-data-change-protocol-immutability-manifest",
+  "schemaVersion": "1.0",
+  "preservedVersion": "1.0.0",
+  "recordedFromCommit": "7d5d15bc2bc39a74725c9cfd6827bfe61dbb65ed",
+  "identityAlgorithm": "git-blob-sha1",
+  "gitBlobShas": {
+    "standards/clover-data-change-protocol/evidence/1.0.0/boat-rentals.json": "7f8cd69fc8e7efce920b777755bb5221b35106d3",
+    "standards/clover-data-change-protocol/registry/projects.json": "85b533fd3e34e7cd60b3a6329bc98c86f5662bf5",
+    "standards/clover-data-change-protocol/runtime/v1.0.0/assemble-data-receipt.mjs": "da411bd6895408338812957c8bb28d27924433f9",
+    "standards/clover-data-change-protocol/runtime/v1.0.0/data-rehearsal.mjs": "aff6193ad79ae1dc6180496e0052e50eb73cf25a",
+    "standards/clover-data-change-protocol/runtime/v1.0.0/run-project-command.mjs": "579a777a06e360e787df573533fcd26ff31c0ea6",
+    "standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs": "f5cab04fbd8d4c0f371caa79e5c8af31c9bfa3c6",
+    "standards/clover-data-change-protocol/runtime/v1.0.0/verify-data-boundaries.mjs": "6c9963226c711e9271bc223b94e57fca55b4e7a0",
+    "standards/clover-data-change-protocol/schemas/data-change-policy.schema.json": "e5bea93c9bff69927ebda3157cc3ae269751bb91",
+    "standards/clover-data-change-protocol/schemas/data-change-receipt.schema.json": "daeaee78eee38e3460fbc9e260aa1fe6d4ccd776",
+    "standards/clover-data-change-protocol/schemas/data-project-registry.schema.json": "01bb48d626755866c2e70c39580af0d55ca5a60c",
+    "standards/clover-data-change-protocol/schemas/protocol-pointer.schema.json": "eaebecac2e98c8e3e1c913e3bb5f220b8260ae1a",
+    "standards/clover-data-change-protocol/templates/caller-workflow.template.yml": "13f530544ed93eeb18d5f01c991703e69fda9640",
+    "standards/clover-data-change-protocol/templates/data-change-policy.template.json": "4fb2a31900191abcab7c593a2045de19ba8fa90b",
+    "standards/clover-data-change-protocol/versions/1.0.0/CLOVER_DATA_CHANGE_PROTOCOL.md": "6aee3509862c2c8a69435a77c5aa46f58e37c547",
+    "standards/clover-data-change-protocol/versions/1.0.0/IMPLEMENTATION_RECORD.md": "18f6d6e4be78c35f4aaf9456c02fd6823fb6d69a",
+    "standards/clover-data-change-protocol/versions/1.0.0/RELEASE_BOUNDARIES.md": "774fa5b45178371cedd48bfb317b4f65ed7cd9c7",
+    "standards/clover-data-change-protocol/versions/1.0.0/ROLLBACK_AND_RECONCILIATION.md": "b0e6df25e8e40e51395ee96be6b0c3632499d225"
+  }
+}

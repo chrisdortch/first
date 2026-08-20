@@ -1,14 +1,10 @@
-name: Clover disposable data rehearsal v1
+name: Clover disposable data rehearsal v1.0.1 candidate
 
 on:
   workflow_call:
     inputs:
-      protocol_ref:
-        description: Exact chrisdortch/first commit containing Clover Data Change Protocol 1.0.0
-        required: true
-        type: string
       policy_path:
-        description: Path to the project-specific data policy
+        description: Tracked path to the project-specific data policy
         required: false
         default: .clover/data-change-policy.json
         type: string
@@ -19,89 +15,244 @@ permissions:
 jobs:
   validate-data-change:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: clover
-          POSTGRES_PASSWORD: clover
+          POSTGRES_USER: clover_admin
+          POSTGRES_PASSWORD: clover_admin
           POSTGRES_DB: clover_data
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U clover -d clover_data"
+          --health-cmd "pg_isready -U clover_admin -d clover_data"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     env:
       CI: '1'
       CLOVER_DATA_MODE: disposable-database-only
-      CLOVER_DATA_ARTIFACT_DIR: ${{ github.workspace }}/.clover-data-evidence
-      CLOVER_DATA_PROTOCOL_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/runtime/v1.0.0
-      CLOVER_DATA_SCHEMA_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/schemas
-      CLOVER_BUILD_RUNTIME_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-build-protocol/runtime/v1.1.0
+      CLOVER_CANDIDATE_ROOT: ${{ github.workspace }}/_clover_candidate
+      CLOVER_PROTOCOL_CHECKOUT: ${{ github.workspace }}/_clover_protocol
+      CLOVER_CONTROL_CHECKOUT: ${{ github.workspace }}/_clover_control
+      CLOVER_DATA_PROTOCOL_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/runtime/v1.0.1
+      CLOVER_CONTROL_ROOT: ${{ github.workspace }}/_clover_control/standards/clover-data-change-protocol/runtime/v1.0.1
+      CLOVER_DATA_SCHEMA_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/schemas/1.0.1
       CLOVER_POLICY_PATH: ${{ inputs.policy_path }}
-      CLOVER_PROTOCOL_REF: ${{ inputs.protocol_ref }}
-      CLOVER_TEST_DATABASE_URL: postgresql://clover:clover@127.0.0.1:5432/clover_data
+      CLOVER_CANDIDATE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+      CLOVER_TEST_DATABASE_URL: postgresql://clover_rehearsal:clover_rehearsal@127.0.0.1:5432/clover_data
 
     steps:
       - name: Check out exact candidate commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: _clover_candidate
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check out exact Clover protocol commit
+      - name: Check out immutable workflow protocol
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: chrisdortch/first
-          ref: ${{ inputs.protocol_ref }}
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           path: _clover_protocol
           persist-credentials: false
 
-      - name: Verify exact protocol checkout
+      - name: Check out independent integrity control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_control
+          persist-credentials: false
+
+      - name: Verify immutable workflow and source identities
+        id: identity
+        env:
+          EXPECTED_PROTOCOL_REF: ${{ job.workflow_sha }}
+          EXPECTED_PROTOCOL_REPOSITORY: ${{ job.workflow_repository }}
+          EXPECTED_WORKFLOW_PATH: ${{ job.workflow_file_path }}
         shell: bash
-        run: test "$(git -C _clover_protocol rev-parse HEAD)" = "${{ inputs.protocol_ref }}"
+        run: |
+          [[ "$CLOVER_CANDIDATE_REF" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_PROTOCOL_REF" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_PROTOCOL_REPOSITORY" = chrisdortch/first
+          test "$EXPECTED_WORKFLOW_PATH" = .github/workflows/clover-data-preview-v1.yml
+          test "$(git -C "$CLOVER_CANDIDATE_ROOT" rev-parse HEAD)" = "$CLOVER_CANDIDATE_REF"
+          test "$(git -C "$CLOVER_PROTOCOL_CHECKOUT" rev-parse HEAD)" = "$EXPECTED_PROTOCOL_REF"
+          test "$(git -C "$CLOVER_CONTROL_CHECKOUT" rev-parse HEAD)" = "$EXPECTED_PROTOCOL_REF"
+          echo "CLOVER_PROTOCOL_REF=$EXPECTED_PROTOCOL_REF" >> "$GITHUB_ENV"
 
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
 
-      - name: Install pinned schema validator
+      - name: Initialize isolated evidence path
+        shell: bash
+        run: |
+          evidence_root="${RUNNER_TEMP}/clover-data-evidence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$evidence_root/integrity"
+          chmod 700 "$evidence_root"
+          echo "CLOVER_DATA_ARTIFACT_DIR=$evidence_root" >> "$GITHUB_ENV"
+
+      - name: Install pinned protocol schema tooling
         id: tooling
         continue-on-error: true
-        run: npm install --prefix _clover_protocol --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+        run: npm install --prefix "$CLOVER_PROTOCOL_CHECKOUT" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+
+      - name: Run protocol hardening regressions
+        id: hardening
+        if: steps.tooling.outcome == 'success'
+        continue-on-error: true
+        run: node --test "$CLOVER_DATA_PROTOCOL_ROOT/test/hardening.test.mjs"
 
       - name: Validate project data policy before project commands
         id: policy_schema
-        if: steps.tooling.outcome == 'success'
+        if: steps.hardening.outcome == 'success'
         continue-on-error: true
-        run: node "$CLOVER_BUILD_RUNTIME_ROOT/validate-json.mjs" "$CLOVER_DATA_SCHEMA_ROOT/data-change-policy.schema.json" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/policy-schema.json"
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/validate-json.mjs" "$CLOVER_DATA_SCHEMA_ROOT/data-change-policy.schema.json" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/policy-schema.json"
 
       - name: Verify source and authority boundaries
         id: boundary
         if: steps.policy_schema.outcome == 'success'
         continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_DATA_PROTOCOL_ROOT/verify-data-boundaries.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/boundary.json"
 
-      - name: Install project dependencies
-        id: install
+      - name: Capture source, protocol, input, and evidence state before install
+        id: pre_install
         if: steps.boundary.outcome == 'success'
         continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/capture-state.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR" "$CLOVER_DATA_ARTIFACT_DIR/integrity/pre-install.json"
+
+      - name: Install project dependencies with a reduced environment
+        id: install
+        if: steps.pre_install.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_DATA_PROTOCOL_ROOT/run-project-command.mjs" "$CLOVER_POLICY_PATH" install "$CLOVER_DATA_ARTIFACT_DIR/commands"
 
-      - name: Run project verification contract
-        id: verify
-        if: steps.install.outcome == 'success'
+      - name: Refresh trusted integrity control after install
+        id: control_after_install
+        if: always() && steps.pre_install.outcome == 'success'
         continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_control
+          clean: true
+          persist-credentials: false
+
+      - name: Verify integrity immediately after project install
+        id: install_integrity
+        if: always() && steps.pre_install.outcome == 'success' && steps.control_after_install.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        env:
+          CLOVER_EXPECTED_BEFORE_SHA: ${{ steps.pre_install.outputs.pre_install_sha256 }}
+        run: >-
+          node "$CLOVER_CONTROL_ROOT/verify-state.mjs"
+          "$CLOVER_POLICY_PATH"
+          "$CLOVER_DATA_ARTIFACT_DIR"
+          "$CLOVER_DATA_ARTIFACT_DIR/integrity/pre-install.json"
+          "$CLOVER_DATA_ARTIFACT_DIR/integrity/after-install.json"
+          "commands/install.json=${{ steps.install.outputs.install_receipt_sha256 }}"
+          "commands/install.log=${{ steps.install.outputs.install_log_sha256 }}"
+
+      - name: Restore exact protocol after project install
+        id: protocol_after_install
+        if: always() && steps.pre_install.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_protocol
+          clean: true
+          persist-credentials: false
+
+      - name: Restore pinned protocol tooling after install
+        id: tooling_after_install
+        if: steps.protocol_after_install.outcome == 'success'
+        continue-on-error: true
+        run: npm install --prefix "$CLOVER_PROTOCOL_CHECKOUT" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+
+      - name: Capture state before project verification
+        id: pre_verify
+        if: steps.install.outcome == 'success' && steps.install_integrity.outcome == 'success' && steps.tooling_after_install.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/capture-state.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR" "$CLOVER_DATA_ARTIFACT_DIR/integrity/pre-verify.json"
+
+      - name: Run project verification contract with a reduced environment
+        id: verify
+        if: steps.pre_verify.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_DATA_PROTOCOL_ROOT/run-project-command.mjs" "$CLOVER_POLICY_PATH" verify "$CLOVER_DATA_ARTIFACT_DIR/commands"
+
+      - name: Refresh trusted integrity control after verification
+        id: control_after_verify
+        if: always() && steps.pre_verify.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_control
+          clean: true
+          persist-credentials: false
+
+      - name: Verify integrity immediately after project verification
+        id: verify_integrity
+        if: always() && steps.pre_verify.outcome == 'success' && steps.control_after_verify.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        env:
+          CLOVER_EXPECTED_BEFORE_SHA: ${{ steps.pre_verify.outputs.pre_verify_sha256 }}
+        run: >-
+          node "$CLOVER_CONTROL_ROOT/verify-state.mjs"
+          "$CLOVER_POLICY_PATH"
+          "$CLOVER_DATA_ARTIFACT_DIR"
+          "$CLOVER_DATA_ARTIFACT_DIR/integrity/pre-verify.json"
+          "$CLOVER_DATA_ARTIFACT_DIR/integrity/after-verify.json"
+          "commands/verify.json=${{ steps.verify.outputs.verify_receipt_sha256 }}"
+          "commands/verify.log=${{ steps.verify.outputs.verify_log_sha256 }}"
+
+      - name: Restore exact protocol after project verification
+        id: protocol_after_verify
+        if: always() && steps.pre_verify.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_protocol
+          clean: true
+          persist-credentials: false
+
+      - name: Restore pinned protocol tooling after verification
+        id: tooling_after_verify
+        if: steps.protocol_after_verify.outcome == 'success'
+        continue-on-error: true
+        run: npm install --prefix "$CLOVER_PROTOCOL_CHECKOUT" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+
+      - name: Capture state before disposable database rehearsal
+        id: pre_rehearsal
+        if: steps.verify.outcome == 'success' && steps.verify_integrity.outcome == 'success' && steps.tooling_after_verify.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/capture-state.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR" "$CLOVER_DATA_ARTIFACT_DIR/integrity/pre-rehearsal.json"
 
       - name: Install PostgreSQL client
         id: postgres_client
-        if: steps.verify.outcome == 'success'
+        if: steps.pre_rehearsal.outcome == 'success'
         continue-on-error: true
         shell: bash
         run: |
@@ -115,43 +266,172 @@ jobs:
         shell: bash
         run: |
           for attempt in $(seq 1 30); do
-            if pg_isready -h 127.0.0.1 -p 5432 -U clover -d clover_data; then
+            if pg_isready -h 127.0.0.1 -p 5432 -U clover_admin -d clover_data; then
               exit 0
             fi
             sleep 1
           done
           exit 1
 
-      - name: Run forward, idempotency, reconciliation, and rollback rehearsal
-        id: rehearsal
+      - name: Provision dedicated restricted rehearsal role
+        id: rehearsal_role
         if: steps.postgres_ready.outcome == 'success'
         continue-on-error: true
+        shell: bash
+        env:
+          PGPASSWORD: clover_admin
+        run: |
+          psql --no-psqlrc -X --set ON_ERROR_STOP=on --host 127.0.0.1 --port 5432 --username clover_admin --dbname clover_data <<'SQL'
+          REVOKE ALL ON DATABASE clover_data FROM PUBLIC;
+          REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+          CREATE ROLE clover_rehearsal LOGIN PASSWORD 'clover_rehearsal' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          GRANT CONNECT, TEMPORARY ON DATABASE clover_data TO clover_rehearsal;
+          GRANT USAGE, CREATE ON SCHEMA public TO clover_rehearsal;
+          SQL
+
+      - name: Run forward, idempotency, reconciliation, and rollback rehearsal
+        id: rehearsal
+        if: steps.rehearsal_role.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_DATA_PROTOCOL_ROOT/data-rehearsal.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/database"
 
-      - name: Assemble final data-change receipt
-        id: receipt
+      - name: Refresh trusted integrity control after rehearsal
+        id: control_after_rehearsal
+        if: always() && steps.pre_rehearsal.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_control
+          clean: true
+          persist-credentials: false
+
+      - name: Verify integrity after disposable rehearsal
+        id: rehearsal_integrity
+        if: always() && steps.pre_rehearsal.outcome == 'success' && steps.control_after_rehearsal.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        env:
+          CLOVER_EXPECTED_BEFORE_SHA: ${{ steps.pre_rehearsal.outputs.pre_rehearsal_sha256 }}
+        run: >-
+          node "$CLOVER_CONTROL_ROOT/verify-state.mjs"
+          "$CLOVER_POLICY_PATH"
+          "$CLOVER_DATA_ARTIFACT_DIR"
+          "$CLOVER_DATA_ARTIFACT_DIR/integrity/pre-rehearsal.json"
+          "$CLOVER_DATA_ARTIFACT_DIR/integrity/after-rehearsal.json"
+          "database/database-rehearsal.json=${{ steps.rehearsal.outputs.database_rehearsal_sha256 }}"
+          "database/**"
+
+      - name: Restore exact protocol after rehearsal
+        id: protocol_after_rehearsal
+        if: always() && steps.pre_rehearsal.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_protocol
+          clean: true
+          persist-credentials: false
+
+      - name: Restore pinned protocol tooling after rehearsal
+        id: tooling_after_rehearsal
+        if: steps.protocol_after_rehearsal.outcome == 'success'
+        continue-on-error: true
+        run: npm install --prefix "$CLOVER_PROTOCOL_CHECKOUT" --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+
+      - name: Refresh final trusted receipt control
+        id: final_control
         if: always()
         continue-on-error: true
-        run: node "$CLOVER_DATA_PROTOCOL_ROOT/assemble-data-receipt.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR"
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_control
+          clean: true
+          persist-credentials: false
+
+      - name: Assemble evidence-bound data-change receipt
+        id: receipt
+        if: always() && steps.final_control.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        env:
+          CLOVER_OUTCOME_IDENTITY: ${{ steps.identity.outcome }}
+          CLOVER_OUTCOME_TOOLING: ${{ steps.tooling.outcome }}
+          CLOVER_OUTCOME_HARDENING: ${{ steps.hardening.outcome }}
+          CLOVER_OUTCOME_POLICY_SCHEMA: ${{ steps.policy_schema.outcome }}
+          CLOVER_OUTCOME_BOUNDARY: ${{ steps.boundary.outcome }}
+          CLOVER_OUTCOME_PRE_INSTALL: ${{ steps.pre_install.outcome }}
+          CLOVER_OUTCOME_INSTALL: ${{ steps.install.outcome }}
+          CLOVER_OUTCOME_CONTROL_AFTER_INSTALL: ${{ steps.control_after_install.outcome }}
+          CLOVER_OUTCOME_INSTALL_INTEGRITY: ${{ steps.install_integrity.outcome }}
+          CLOVER_OUTCOME_RESTORE_AFTER_INSTALL: ${{ steps.protocol_after_install.outcome }}
+          CLOVER_OUTCOME_TOOLING_AFTER_INSTALL: ${{ steps.tooling_after_install.outcome }}
+          CLOVER_OUTCOME_PRE_VERIFY: ${{ steps.pre_verify.outcome }}
+          CLOVER_OUTCOME_VERIFY: ${{ steps.verify.outcome }}
+          CLOVER_OUTCOME_CONTROL_AFTER_VERIFY: ${{ steps.control_after_verify.outcome }}
+          CLOVER_OUTCOME_VERIFY_INTEGRITY: ${{ steps.verify_integrity.outcome }}
+          CLOVER_OUTCOME_RESTORE_AFTER_VERIFY: ${{ steps.protocol_after_verify.outcome }}
+          CLOVER_OUTCOME_TOOLING_AFTER_VERIFY: ${{ steps.tooling_after_verify.outcome }}
+          CLOVER_OUTCOME_PRE_REHEARSAL: ${{ steps.pre_rehearsal.outcome }}
+          CLOVER_OUTCOME_POSTGRES_CLIENT: ${{ steps.postgres_client.outcome }}
+          CLOVER_OUTCOME_POSTGRES_READY: ${{ steps.postgres_ready.outcome }}
+          CLOVER_OUTCOME_REHEARSAL_ROLE: ${{ steps.rehearsal_role.outcome }}
+          CLOVER_OUTCOME_REHEARSAL: ${{ steps.rehearsal.outcome }}
+          CLOVER_OUTCOME_CONTROL_AFTER_REHEARSAL: ${{ steps.control_after_rehearsal.outcome }}
+          CLOVER_OUTCOME_REHEARSAL_INTEGRITY: ${{ steps.rehearsal_integrity.outcome }}
+          CLOVER_OUTCOME_RESTORE_AFTER_REHEARSAL: ${{ steps.protocol_after_rehearsal.outcome }}
+          CLOVER_OUTCOME_TOOLING_AFTER_REHEARSAL: ${{ steps.tooling_after_rehearsal.outcome }}
+          CLOVER_OUTCOME_FINAL_CONTROL: ${{ steps.final_control.outcome }}
+          CLOVER_EXPECTED_POLICY_SCHEMA_SHA: ${{ steps.policy_schema.outputs.policy_schema_sha256 }}
+          CLOVER_EXPECTED_BOUNDARY_SHA: ${{ steps.boundary.outputs.boundary_sha256 }}
+          CLOVER_EXPECTED_PRE_INSTALL_SHA: ${{ steps.pre_install.outputs.pre_install_sha256 }}
+          CLOVER_EXPECTED_INSTALL_RECEIPT_SHA: ${{ steps.install.outputs.install_receipt_sha256 }}
+          CLOVER_EXPECTED_INSTALL_LOG_SHA: ${{ steps.install.outputs.install_log_sha256 }}
+          CLOVER_EXPECTED_AFTER_INSTALL_SHA: ${{ steps.install_integrity.outputs.after_install_sha256 }}
+          CLOVER_EXPECTED_PRE_VERIFY_SHA: ${{ steps.pre_verify.outputs.pre_verify_sha256 }}
+          CLOVER_EXPECTED_VERIFY_RECEIPT_SHA: ${{ steps.verify.outputs.verify_receipt_sha256 }}
+          CLOVER_EXPECTED_VERIFY_LOG_SHA: ${{ steps.verify.outputs.verify_log_sha256 }}
+          CLOVER_EXPECTED_AFTER_VERIFY_SHA: ${{ steps.verify_integrity.outputs.after_verify_sha256 }}
+          CLOVER_EXPECTED_PRE_REHEARSAL_SHA: ${{ steps.pre_rehearsal.outputs.pre_rehearsal_sha256 }}
+          CLOVER_EXPECTED_REHEARSAL_SHA: ${{ steps.rehearsal.outputs.database_rehearsal_sha256 }}
+          CLOVER_EXPECTED_AFTER_REHEARSAL_SHA: ${{ steps.rehearsal_integrity.outputs.after_rehearsal_sha256 }}
+        run: node "$CLOVER_CONTROL_ROOT/assemble-data-receipt.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR"
 
       - name: Validate final receipt schema
         id: receipt_schema
-        if: always() && steps.tooling.outcome == 'success'
+        if: always() && steps.receipt.outcome == 'success' && steps.tooling_after_rehearsal.outcome == 'success'
         continue-on-error: true
-        run: node "$CLOVER_BUILD_RUNTIME_ROOT/validate-json.mjs" "$CLOVER_DATA_SCHEMA_ROOT/data-change-receipt.schema.json" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt-schema.json"
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        run: node "$CLOVER_DATA_PROTOCOL_ROOT/validate-json.mjs" "$CLOVER_DATA_SCHEMA_ROOT/data-change-receipt.schema.json" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt-schema.json"
+
+      - name: Recheck final receipt and every bound artifact
+        id: final_receipt
+        if: always() && steps.receipt.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        env:
+          CLOVER_EXPECTED_RECEIPT_SHA: ${{ steps.receipt.outputs.data_change_receipt_sha256 }}
+        run: node "$CLOVER_CONTROL_ROOT/verify-final-receipt.mjs" "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json" "$CLOVER_DATA_ARTIFACT_DIR"
 
       - name: Publish compact summary
         if: always()
         shell: bash
         run: |
           if [ -f "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json" ]; then
-            echo "## Clover Data Change Protocol 1.0" >> "$GITHUB_STEP_SUMMARY"
+            echo "## Clover Data Change Protocol 1.0.1 candidate" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo "- Status: **$(jq -r .status "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json")**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Database: **disposable PostgreSQL with synthetic data only**" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Production data access: **none**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Database: **disposable PostgreSQL; candidate seed SQL identity is bound**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Seed-data provenance: **unknown (no source-record provenance attestation)**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Project-command external effects: **unknown (same-user runner is not a hostile-code sandbox)**" >> "$GITHUB_STEP_SUMMARY"
+            echo "- Production credentials supplied by workflow: **no**" >> "$GITHUB_STEP_SUMMARY"
             echo "- Production migration: **not authorized**" >> "$GITHUB_STEP_SUMMARY"
-            printf '%s\n' "- Candidate: \`${GITHUB_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "- Candidate: \`${CLOVER_CANDIDATE_REF}\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Clover did not produce a data-change receipt." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -160,17 +440,46 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-data-v1-${{ github.sha }}
-          path: ${{ github.workspace }}/.clover-data-evidence
+          name: clover-data-v1.0.1-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/clover-data-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 30
           compression-level: 6
 
-      - name: Enforce final gate
+      - name: Enforce final fail-closed gate
         if: always()
         shell: bash
         run: |
           test -f "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json"
-          test "$(jq -r .status "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json")" = "passed"
-          test "${{ steps.receipt_schema.outcome }}" = "success"
+          test "$(jq -r .status "$CLOVER_DATA_ARTIFACT_DIR/data-change-receipt.json")" = passed
+          test "${{ steps.identity.outcome }}" = success
+          test "${{ steps.tooling.outcome }}" = success
+          test "${{ steps.hardening.outcome }}" = success
+          test "${{ steps.policy_schema.outcome }}" = success
+          test "${{ steps.boundary.outcome }}" = success
+          test "${{ steps.pre_install.outcome }}" = success
+          test "${{ steps.install.outcome }}" = success
+          test "${{ steps.control_after_install.outcome }}" = success
+          test "${{ steps.install_integrity.outcome }}" = success
+          test "${{ steps.protocol_after_install.outcome }}" = success
+          test "${{ steps.tooling_after_install.outcome }}" = success
+          test "${{ steps.pre_verify.outcome }}" = success
+          test "${{ steps.verify.outcome }}" = success
+          test "${{ steps.control_after_verify.outcome }}" = success
+          test "${{ steps.verify_integrity.outcome }}" = success
+          test "${{ steps.protocol_after_verify.outcome }}" = success
+          test "${{ steps.tooling_after_verify.outcome }}" = success
+          test "${{ steps.pre_rehearsal.outcome }}" = success
+          test "${{ steps.postgres_client.outcome }}" = success
+          test "${{ steps.postgres_ready.outcome }}" = success
+          test "${{ steps.rehearsal_role.outcome }}" = success
+          test "${{ steps.rehearsal.outcome }}" = success
+          test "${{ steps.control_after_rehearsal.outcome }}" = success
+          test "${{ steps.rehearsal_integrity.outcome }}" = success
+          test "${{ steps.protocol_after_rehearsal.outcome }}" = success
+          test "${{ steps.tooling_after_rehearsal.outcome }}" = success
+          test "${{ steps.final_control.outcome }}" = success
+          test "${{ steps.receipt.outcome }}" = success
+          test "${{ steps.receipt_schema.outcome }}" = success
+          test "${{ steps.final_receipt.outcome }}" = success

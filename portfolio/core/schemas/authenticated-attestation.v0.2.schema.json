@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/authenticated-attestation.v0.2.schema.json",
+  "title": "Clover Authenticated Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "algorithm", "purpose", "principalId", "credentialId", "credentialFingerprint", "publicKeySpkiBase64", "challengeId", "nonceHash", "issuedAt", "expiresAt", "payload", "payloadHash", "signatureBase64"],
+  "properties": {
+    "schemaVersion": { "const": "0.2" },
+    "algorithm": { "const": "Ed25519" },
+    "purpose": { "type": "string", "minLength": 1 },
+    "principalId": { "type": "string", "minLength": 1 },
+    "credentialId": { "type": "string", "minLength": 1 },
+    "credentialFingerprint": { "$ref": "#/$defs/sha256" },
+    "publicKeySpkiBase64": { "type": "string", "minLength": 1 },
+    "challengeId": { "type": "string", "minLength": 1 },
+    "nonceHash": { "$ref": "#/$defs/sha256" },
+    "issuedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" },
+    "payloadHash": { "$ref": "#/$defs/sha256" },
+    "signatureBase64": { "type": "string", "minLength": 1 }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

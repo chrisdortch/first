@@ -163,11 +163,12 @@ export function createGitHubContextStore({
   if (typeof fetchImpl !== "function") throw new Error("A fetch implementation is required for GitHub context mode.");
   const cache = new Map();
   let commitCache = null;
+  let commitLoad = null;
 
   function headers(accept = "text/plain") {
     return {
       accept,
-      "user-agent": "clover-context-gateway/0.2.0",
+      "user-agent": "clover-context-gateway/0.3.0",
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     };
   }
@@ -183,24 +184,32 @@ export function createGitHubContextStore({
 
   async function sourceIdentity() {
     if (commitCache && commitCache.expiresAt > Date.now()) return commitCache.value;
-    let commit = null;
-    try {
+    if (commitLoad) return commitLoad;
+    commitLoad = (async () => {
       const response = await fetchImpl(`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(sourceRef)}`, {
         headers: headers("application/vnd.github+json"),
         signal: AbortSignal.timeout(8000),
       });
-      if (response.ok) commit = (await response.json())?.sha || null;
-    } catch {
-      commit = null;
+      if (!response.ok) throw new Error(`Canonical source identity fetch failed: HTTP ${response.status}`);
+      const commit = (await response.json())?.sha || null;
+      if (!/^[a-f0-9]{40}$/.test(commit || "")) {
+        throw new Error("Canonical source identity did not resolve to a full Git commit SHA.");
+      }
+      const value = { repository, ref: sourceRef, commit, mode: "github" };
+      commitCache = { value, expiresAt: Date.now() + cacheTtlMs };
+      return value;
+    })();
+    try {
+      return await commitLoad;
+    } finally {
+      commitLoad = null;
     }
-    const value = { repository, ref: sourceRef, commit, mode: "github" };
-    commitCache = { value, expiresAt: Date.now() + cacheTtlMs };
-    return value;
   }
 
   async function loadDocument(definition) {
-    return cached(`document:${definition.relativePath}`, async () => {
-      const response = await fetchImpl(`https://raw.githubusercontent.com/${repository}/${encodeURIComponent(sourceRef)}/${definition.relativePath}`, {
+    const source = await sourceIdentity();
+    return cached(`document:${source.commit}:${definition.relativePath}`, async () => {
+      const response = await fetchImpl(`https://raw.githubusercontent.com/${repository}/${source.commit}/${definition.relativePath}`, {
         headers: headers("text/plain"),
         signal: AbortSignal.timeout(10000),
       });
@@ -208,13 +217,12 @@ export function createGitHubContextStore({
       if (!response.ok) throw new Error(`Canonical context fetch failed for ${definition.relativePath}: HTTP ${response.status}`);
       const raw = await response.text();
       const parsed = definition.kind === "json" ? JSON.parse(raw) : null;
-      const source = await sourceIdentity();
       return {
         ...definition,
         text: definition.kind === "json" ? JSON.stringify(parsed, null, 2) : raw,
         parsed,
         searchText: `${definition.keywords || ""} ${raw}`,
-        url: `https://github.com/${repository}/blob/${source.commit || sourceRef}/${definition.relativePath}`,
+        url: `https://github.com/${repository}/blob/${source.commit}/${definition.relativePath}`,
         metadata: {
           repository,
           ref: sourceRef,

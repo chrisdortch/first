@@ -1,0 +1,10 @@
+{
+  "synthetic": true,
+  "policyId": "synthetic-trust-slice-retention-v1",
+  "deleteSupersededRawSource": true,
+  "deleteAfter": "2026-08-18T21:12:00-05:00",
+  "legalHold": false,
+  "preserveTombstone": true,
+  "preserveEventAndHash": true,
+  "externalErasureClaimed": false
+}

@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "1.2",
+  "protocol": {
+    "version": "1.2.0"
+  },
+  "project": {
+    "id": "replace-me",
+    "title": "Replace Me",
+    "repository": "owner/repository",
+    "class": "static-public",
+    "productionBranch": "main",
+    "productionUrl": "https://example.com"
+  },
+  "execution": {
+    "mode": "preview-only",
+    "allowedBranchPrefixes": ["agent/", "chatpro/", "codex/"],
+    "allowedChangePaths": [".clover/**", "src/**", "test/**"],
+    "sensitivePaths": [".env*", ".github/workflows/**", "api/**", "sql/**"],
+    "forbiddenCapabilities": [
+      "merge",
+      "production-deploy",
+      "production-data-write",
+      "domain-or-dns-change",
+      "secret-change",
+      "external-message",
+      "purchase"
+    ]
+  },
+  "commands": {
+    "install": {
+      "executable": "npm",
+      "args": ["ci"],
+      "timeoutSeconds": 600
+    },
+    "verify": [
+      {
+        "executable": "npm",
+        "args": ["test"],
+        "timeoutSeconds": 600
+      },
+      {
+        "executable": "npm",
+        "args": ["run", "build"],
+        "timeoutSeconds": 900
+      }
+    ],
+    "preview": {
+      "executable": "npm",
+      "args": ["run", "preview", "--", "--host", "127.0.0.1", "--port", "4173"],
+      "timeoutSeconds": 1800
+    }
+  },
+  "browserAudit": {
+    "baseUrl": "http://127.0.0.1:4173",
+    "profiles": [
+      {
+        "id": "desktop-chromium",
+        "browser": "chromium",
+        "width": 1440,
+        "height": 1000,
+        "deviceScaleFactor": 1,
+        "isMobile": false,
+        "hasTouch": false
+      },
+      {
+        "id": "mobile-webkit",
+        "browser": "webkit",
+        "width": 390,
+        "height": 844,
+        "deviceScaleFactor": 2,
+        "isMobile": true,
+        "hasTouch": true
+      }
+    ],
+    "routes": [
+      {
+        "id": "home",
+        "path": "/",
+        "requiredSelectors": ["body"]
+      }
+    ],
+    "budgets": {
+      "maxConsoleErrors": 0,
+      "maxPageErrors": 0,
+      "maxFirstPartyRequestFailures": 0,
+      "maxHttpErrors": 0,
+      "maxBrokenImages": 0,
+      "maxHorizontalOverflowPx": 1,
+      "maxDuplicateIds": 0,
+      "maxUnlabeledControls": 0
+    },
+    "ignoreConsolePatterns": [],
+    "ignoreRequestPatterns": [],
+    "stabilizationMs": 700
+  },
+  "authority": {
+    "mergeApproved": false,
+    "productionDeploymentApproved": false,
+    "productionDataMutationApproved": false,
+    "domainOrDnsChangeApproved": false,
+    "secretChangeApproved": false,
+    "externalMessageApproved": false,
+    "purchaseApproved": false
+  }
+}

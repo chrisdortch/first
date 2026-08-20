@@ -12,6 +12,7 @@ on:
       - 'apps/clover-context-gateway/**'
       - 'portfolio/context/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
+      - 'portfolio/schemas/clover-command-packet-1.2.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
       - 'portfolio/schemas/clover-project-context-pointer.schema.json'
       - '.github/workflows/validate-clover-context-gateway.yml'
@@ -23,6 +24,7 @@ on:
       - 'apps/clover-context-gateway/**'
       - 'portfolio/context/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
+      - 'portfolio/schemas/clover-command-packet-1.2.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
       - 'portfolio/schemas/clover-project-context-pointer.schema.json'
       - '.github/workflows/validate-clover-context-gateway.yml'
@@ -42,13 +44,21 @@ jobs:
         node-version: ['22', '24']
     env:
       CONTEXT_SOURCE_MODE: local
+      CONTEXT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       PUBLIC_BASE_URL: http://127.0.0.1:8787
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Verify exact candidate HEAD
+        shell: bash
+        run: |
+          [[ "$CONTEXT_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CONTEXT_SOURCE_COMMIT"
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -71,25 +81,37 @@ jobs:
           set -euo pipefail
           node <<'NODE' > "$RUNNER_TEMP/control-plane-validation.json"
           const fs = require('node:fs');
+          const crypto = require('node:crypto');
           const files = [
             'CLOVER_CONTEXT_GATEWAY_POINTER.json',
             'portfolio/context/control-plane.json',
             'portfolio/context/LIVE_ADAPTER_REGISTRY.json',
             'portfolio/context/PROJECT_CONTEXT_POINTER.template.json',
             'portfolio/schemas/clover-command-packet.schema.json',
+            'portfolio/schemas/clover-command-packet-1.2.schema.json',
             'portfolio/schemas/clover-refresh-receipt.schema.json',
             'portfolio/schemas/clover-project-context-pointer.schema.json'
           ];
           for (const file of files) JSON.parse(fs.readFileSync(file, 'utf8'));
           const pointer = JSON.parse(fs.readFileSync('CLOVER_CONTEXT_GATEWAY_POINTER.json', 'utf8'));
           const plane = JSON.parse(fs.readFileSync('portfolio/context/control-plane.json', 'utf8'));
+          const legacyCommandSchemaBytes = fs.readFileSync('portfolio/schemas/clover-command-packet.schema.json');
+          const legacyCommandSchema = JSON.parse(legacyCommandSchemaBytes);
+          const candidateCommandSchema = JSON.parse(fs.readFileSync('portfolio/schemas/clover-command-packet-1.2.schema.json', 'utf8'));
+          if (crypto.createHash('sha256').update(legacyCommandSchemaBytes).digest('hex') !== 'b22cdb1a82852bc7fe419257d1bc79c9537a5483c753b79b5ac08002c14a1a36') process.exit(1);
+          if (legacyCommandSchema.properties?.schemaVersion?.const !== '1.1') process.exit(1);
+          if (candidateCommandSchema.properties?.schemaVersion?.const !== '1.2') process.exit(1);
           if ((pointer.currentVersion || pointer.version) !== '0.2.0') process.exit(1);
+          if (pointer.candidate?.version !== '0.3.0') process.exit(1);
+          if (pointer.candidate?.status !== 'draft-unmerged-undeployed') process.exit(1);
+          const packageJson = JSON.parse(fs.readFileSync('apps/clover-context-gateway/package.json', 'utf8'));
+          if (packageJson.version !== '0.3.0') process.exit(1);
           if (!fs.existsSync(pointer.currentDocument)) process.exit(1);
           if (pointer.writeToolsEnabled !== false || pointer.standingProductionAuthority !== false) process.exit(1);
           if (plane.authority.writeToolsEnabled !== false || plane.authority.productionDataAccessEnabled !== false) process.exit(1);
           if (!fs.readFileSync('AGENTS.md', 'utf8').includes('Use CloverApps to')) process.exit(1);
           if (!fs.readFileSync('AI_START_HERE.md', 'utf8').includes('prepare_clover_command')) process.exit(1);
-          console.log(JSON.stringify({ status: 'passed', version: '0.2.0', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
+          console.log(JSON.stringify({ status: 'passed', deployedVersion: '0.2.0', candidateVersion: '0.3.0', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
           NODE
 
       - name: Smoke-test HTTP, exact target resolution, and MCP
@@ -111,14 +133,30 @@ jobs:
             -H 'content-type: application/json' \
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
             http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
-          node -e 'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(x.packet.schemaVersion!=="1.1"||x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false||!x.packet.freshness.sourcePlan.length) process.exit(1)' "$RUNNER_TEMP/command.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const readReceipt = (name) => JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, 'utf8'));
+          const expectedCommit = process.env.CONTEXT_SOURCE_COMMIT;
+          const health = readReceipt('health.json');
+          const fetched = readReceipt('fetch.json');
+          const command = readReceipt('command.json');
+          if (!/^[a-f0-9]{40}$/.test(expectedCommit || '')) process.exit(1);
+          if (health.version !== '0.3.0') process.exit(1);
+          if (health.contextSource?.commit !== expectedCommit) process.exit(1);
+          if (fetched.metadata?.commit !== expectedCommit) process.exit(1);
+          if (command.packet?.canonicalContext?.sourceCommit !== expectedCommit) process.exit(1);
+          if (command.packet?.schemaVersion !== '1.2') process.exit(1);
+          if (command.packet?.project?.projectId !== 'rollindd') process.exit(1);
+          if (command.packet?.authority?.productionDeploymentApproved !== false) process.exit(1);
+          if (!command.packet?.freshness?.sourcePlan?.length) process.exit(1);
+          NODE
           npm run smoke:mcp > "$RUNNER_TEMP/mcp-smoke.json"
 
       - name: Upload source, command-packet, and MCP evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-context-gateway-v0.2-node-${{ matrix.node-version }}-${{ github.sha }}
+          name: clover-context-gateway-v0.3-candidate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/control-plane-validation.json

@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'platform/clover-context-gateway-core-*'
+      - 'platform/clover-core-*'
     paths:
       - 'apps/clover-context-gateway/public/command-center.html'
       - 'apps/clover-context-gateway/test/today-surface.test.js'
@@ -29,6 +30,8 @@ jobs:
     name: Boundary and schema validation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      CLOVER_VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,8 +40,13 @@ jobs:
       - name: Check out exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Verify exact candidate checkout
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -46,6 +54,13 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Verify dependency-free Core v0.2 contracts and Trust Slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test portfolio/core/test/*.test.mjs
+          node portfolio/core/scripts/verify-core.mjs > "$RUNNER_TEMP/clover-core-v02-verification.json"
 
       - name: Install pinned gateway dependencies
         working-directory: apps/clover-context-gateway
@@ -84,10 +99,12 @@ jobs:
 
       - name: Upload deterministic evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-core-candidate-node-${{ matrix.node-version }}-${{ github.sha }}
-          path: ${{ runner.temp }}/clover-core-boundary.json
+          name: clover-core-candidate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/clover-core-boundary.json
+            ${{ runner.temp }}/clover-core-v02-verification.json
           if-no-files-found: warn
           retention-days: 30
           compression-level: 6

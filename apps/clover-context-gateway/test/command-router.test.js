@@ -41,6 +41,7 @@ test("prepares an evolve command for a named project", () => {
     pointer,
     source,
   });
+  assert.equal(packet.schemaVersion, "1.2");
   assert.equal(packet.intent.id, "evolve_project");
   assert.equal(packet.project.projectId, "songandstage");
   assert.equal(packet.authority.productionDeploymentApproved, false);

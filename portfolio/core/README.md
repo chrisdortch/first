@@ -1,6 +1,6 @@
 # Clover Core Candidate Architecture 0.1
 
-Status: **preview-only candidate for owner review**  
+Status: **preview-only architecture candidate; Clover Constitution 0.1 ratified**
 Prepared: August 18, 2026 · America/Chicago  
 Canonical rollback anchor: `be62b3d8dfb07eecb52628f1b629fd308eb3cb24`  
 Command packet: `clover-575ec419516e5b1e`
@@ -82,11 +82,12 @@ The Truth Loop is read-only with respect to source systems. It can operate today
 
 1. Convert an accepted recommendation into an Action Envelope.
 2. Bind exact target resources, environment, operations, cost, duration, data classes, rollback anchor, and expiration.
-3. Obtain every required version-bound approval.
-4. Execute through the least-privileged tool.
-5. Independently read back the exact result.
-6. append a receipt, including failures and partial completion.
-7. Consume or revoke the envelope so it cannot silently become standing authority.
+3. Obtain every required version-bound approval and atomically consume its persistent challenge.
+4. Recheck expiry and the authoritative target version immediately before execution; use a native conditional write when the closed handler supports it.
+5. Execute through the least-privileged tool.
+6. Independently read back the exact result.
+7. Append a receipt from persisted, phase-valid state-machine history, including failures and partial completion.
+8. Consume or revoke the envelope so it cannot silently become standing authority.
 
 Production, secrets, disclosure, money movement, external messages, domain changes, and private-data movement are always explicit gates.
 
@@ -243,8 +244,8 @@ The next increment is accepted only when:
 6. the exact preview deployment is READY, has no production target or custom domain, and is independently read back;
 7. the original rollback anchor remains available;
 8. no mission or project percentage is changed without milestone evidence;
-9. the Constitution remains visibly unratified until the owner approves an exact version.
+9. the ratification pointer and receipt match the exact approved Constitution 0.1 hash, and later amendments preserve version 0.1.
 
 ## Next safe milestone
 
-Ratify or amend Constitution 0.1, then implement the first private restore-tested ingest Cell using one low-risk, non-secret source. The first proof must demonstrate immutable ingest, provenance, projection, portable export, clean-room restoration, deletion/retention behavior, and a task-specific Context Capsule without changing any production application.
+Constitution 0.1 is ratified. Next, implement the first private restore-tested ingest Cell using one low-risk, non-secret source. The first proof must demonstrate immutable ingest, provenance, projection, portable export, clean-room restoration, deletion/retention behavior, and a task-specific Context Capsule without changing any production application.

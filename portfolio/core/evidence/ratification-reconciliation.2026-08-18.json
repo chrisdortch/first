@@ -1,0 +1,90 @@
+{
+  "documentType": "clover-ratification-reconciliation-evidence",
+  "schemaVersion": "0.1",
+  "recordedAt": "2026-08-18T22:20:18-05:00",
+  "scope": "public repository, supplied portable ratification artifacts, and existing public preview metadata",
+  "canonicalRepository": {
+    "repository": "chrisdortch/first",
+    "visibility": "public",
+    "defaultBranch": "main",
+    "mainCommit": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+    "pullRequest": {
+      "number": 15,
+      "state": "open",
+      "draft": true,
+      "merged": false,
+      "baseCommit": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+      "headBranch": "platform/clover-context-gateway-core-today-20260818",
+      "headCommit": "05dd1c8c4e14d8133bb78490f8108f6b3c62f518",
+      "mergeabilityObserved": "clean",
+      "successfulActionRunIdsAtHead": [
+        32198348157,
+        32198348311,
+        32198348319
+      ],
+      "requiredChecksEnforcedByBranchProtection": false
+    }
+  },
+  "portablePackage": {
+    "syntheticRootCommit": "0890cfb94fa213752d82fe431425e3bdbca7d8de",
+    "portableRatificationCommit": "c15a96c5357e385da471675a25e6f6836b4e3da1",
+    "presentOnCanonicalGitHubAtReadback": false,
+    "portableParentIsCanonicalPullRequestHead": false,
+    "portableTrackedFileCount": 19,
+    "canonicalPullRequestHeadTrackedFileCount": 137,
+    "patchAppliedDirectlyToPullRequestHead": false,
+    "conflictingPath": "portfolio/daily/2026-08-18.md",
+    "evidenceRole": "portable evidence, not canonical ancestry"
+  },
+  "canonicalReconciliation": {
+    "branch": "platform/clover-core-trust-slice-v0.2-20260818",
+    "baseCommit": "05dd1c8c4e14d8133bb78490f8108f6b3c62f518",
+    "ratificationCommit": "ce5149dad0fdf418ea51d03b58d6d77f78d8032c",
+    "directParentVerified": true,
+    "portableDeltaReconciled": true,
+    "dailyLogConflictResolution": "preserved PR #15 receipt details and added the ratification record",
+    "constitutionPath": "portfolio/core/CLOVER_CONSTITUTION_CANDIDATE_V0.1.md",
+    "constitutionByteCount": 4995,
+    "constitutionSha256": "82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e",
+    "constitutionChangedByReconciliation": false,
+    "ratificationReceiptSha256": "8b0dbf7a34ce18409cad36929e4b2b04a17c033f44e32e21c2c751109a81ccbb",
+    "ownerStatementReadback": {
+      "receiptStatementOccurrenceCount": 1,
+      "currentRequestDisplayedOccurrenceCount": 2,
+      "semanticDifferenceObserved": false,
+      "exactTranscriptMatchClaimed": false,
+      "treatment": "Preserve the receipt unchanged and record this discrepancy instead of rewriting history."
+    },
+    "legacyLedgerSha256": "b5218d898bab0aa37ef761e2a9670fd51fc4f56d43f899b44a7a0c32f1aea4f7",
+    "legacyLedgerReceiptHashMismatch": {
+      "present": true,
+      "description": "The legacy daily_log_projected source labels the ratification receipt but stores the Constitution hash.",
+      "treatment": "Preserve legacy bytes and append a v0.2 correction event anchored to the full legacy ledger hash."
+    }
+  },
+  "previewReadback": {
+    "provider": "vercel",
+    "teamId": "team_kx19aCrSTnej6wpz0fLgmYDY",
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "latestReadyDeploymentId": "dpl_7nhkHzYK5tRJjKNRZCiqmjvJFwTn",
+    "latestReadyDeploymentTarget": null,
+    "latestReadyDeploymentCodeCommit": "e6d12dbf2be407c32b1dc5be3e07dfd011e37779",
+    "runtimeRepositoryRef": "main",
+    "runtimeRepositoryCommitAtReadback": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+    "mode": "read-only",
+    "writeToolsEnabled": false,
+    "standingProductionAuthority": false,
+    "representsPullRequest15": false,
+    "provenanceNote": "Deployed application code and dynamically read repository context have distinct commits."
+  },
+  "limitations": [
+    "The portable commits and canonical reconciliation commit are unsigned.",
+    "The original approval receipt is a conversation-derived owner statement, not a cryptographically authenticated ceremony.",
+    "The current request displays the approval sentence twice while the preserved receipt records it once; semantics appear unchanged, but exact transcript identity is not claimed.",
+    "The immutable Constitution 0.1 text still contains its pre-ratification candidate wording; the preserved pointer and lifecycle records carry its ratified-active status.",
+    "The legacy event ledger is not hash chained.",
+    "The existing secret scan is a limited pattern scan, not a comprehensive disclosure proof.",
+    "No merge, deployment, production mutation, private-data access, secret reveal, or runtime enforcement change was performed."
+  ],
+  "authorityGranted": []
+}
