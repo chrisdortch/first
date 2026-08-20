@@ -1,10 +1,12 @@
-# Clover Context Gateway 0.3.0 Candidate
+# Clover Context Gateway 0.3.1 Candidate
 
 A read-only MCP app and standalone command interface that lets the owner say **“Use CloverApps to…”** without pasting the master plan into every prompt.
 
-Version 0.3.0 is an unmerged, undeployed candidate. The separately identified
-0.2.0 preview remains the latest deployed gateway until an exact 0.3.0 commit is
-validated and separately approved for deployment.
+Version 0.3.1 is an unmerged, undeployed owner-session candidate. The exact
+0.3.0 Core/Gateway preview and the separately identified 0.2.0 canonical
+preview remain preserved under their own source identities. A 0.3.1 source
+commit and target-null preview must be validated independently; neither is a
+production release.
 
 ## Archetype
 
@@ -19,6 +21,7 @@ validated and separately approved for deployment.
 - Uses a pointer-first, target-only context budget so the model does not ingest the whole portfolio on every request.
 - Provides a standalone/browser widget with optional browser speech recognition and ChatGPT follow-up messaging.
 - Returns exact conditional owner action cards when an official Sites or other owner-only gate is required.
+- Exposes the dated, sanitized Minimum Useful Core session as a sibling to Command Packet 1.2 when every required candidate artifact is present and source-bound.
 
 It does **not** modify projects, merge code, deploy production, access production data, change domains, change secrets, purchase anything, or send messages.
 
@@ -30,7 +33,7 @@ When `CLOVER_MASTER_PLAN_POINTER.json` exists two levels above the app, the gate
 
 ### Public GitHub mode
 
-When the canonical files are not locally available, the gateway reads the public `chrisdortch/first` repository at `CONTEXT_SOURCE_REF` and caches results briefly. Search loads only the registry and lightweight document metadata; full documents are fetched only when requested. The gateway attempts to bind results to the current Git commit.
+When the canonical files are not locally available, the gateway reads the public `chrisdortch/first` repository at an exact `CONTEXT_SOURCE_COMMIT`, the exact Vercel Git commit when available, or finally `CONTEXT_SOURCE_REF`, in that order. Exact commit inputs must be full lowercase Git SHAs. Search loads only the registry and lightweight document metadata; full documents are fetched only when requested. A candidate preview is accepted only when runtime readback reports the exact source commit.
 
 Private material is intentionally excluded. Private context requires a separately authenticated relay.
 
@@ -42,6 +45,8 @@ Private material is intentionally excluded. Private context requires a separatel
 - `render_clover_command_center(request?)` — renders the optional command-center widget.
 
 ## HTTP interface
+
+The HTTP and MCP transport is an unauthenticated public compiler over records intentionally committed as sanitized public governance metadata. It is not the protected owner boundary. The private ChatGPT Project and CloverApps owner window provide owner context; raw private Cell data, credentials, approval secrets, and authority-bearing values must never enter this public Gateway. Local filesystem roots are not serialized in public source metadata.
 
 - `/` — health, source mode, and authority state.
 - `/mcp` — stateless Streamable HTTP MCP endpoint.

@@ -5,12 +5,22 @@ on:
     branches:
       - main
       - 'platform/clover-context-gateway*'
+      - 'platform/clover-core-*'
     paths:
       - 'AGENTS.md'
       - 'AI_START_HERE.md'
+      - 'CHATGPT_PROJECT_INSTRUCTIONS.md'
+      - 'CLOVER_CONNECTOR_ROUTING.md'
       - 'CLOVER_CONTEXT_GATEWAY_POINTER.json'
+      - 'CLOVER_HANDOFF_LEDGER.md'
+      - 'CLOVER_OWNER_START.md'
+      - 'CODEX_CLOVER_OPERATOR.md'
       - 'apps/clover-context-gateway/**'
+      - 'portfolio/core/handoff/**'
+      - 'portfolio/core/today/**'
       - 'portfolio/context/**'
+      - 'portfolio/registry/projections/core-project-index.v2.json'
+      - 'portfolio/status/candidates/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
       - 'portfolio/schemas/clover-command-packet-1.2.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
@@ -20,9 +30,18 @@ on:
     paths:
       - 'AGENTS.md'
       - 'AI_START_HERE.md'
+      - 'CHATGPT_PROJECT_INSTRUCTIONS.md'
+      - 'CLOVER_CONNECTOR_ROUTING.md'
       - 'CLOVER_CONTEXT_GATEWAY_POINTER.json'
+      - 'CLOVER_HANDOFF_LEDGER.md'
+      - 'CLOVER_OWNER_START.md'
+      - 'CODEX_CLOVER_OPERATOR.md'
       - 'apps/clover-context-gateway/**'
+      - 'portfolio/core/handoff/**'
+      - 'portfolio/core/today/**'
       - 'portfolio/context/**'
+      - 'portfolio/registry/projections/core-project-index.v2.json'
+      - 'portfolio/status/candidates/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
       - 'portfolio/schemas/clover-command-packet-1.2.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
@@ -102,16 +121,16 @@ jobs:
           if (legacyCommandSchema.properties?.schemaVersion?.const !== '1.1') process.exit(1);
           if (candidateCommandSchema.properties?.schemaVersion?.const !== '1.2') process.exit(1);
           if ((pointer.currentVersion || pointer.version) !== '0.2.0') process.exit(1);
-          if (pointer.candidate?.version !== '0.3.0') process.exit(1);
+          if (pointer.candidate?.version !== '0.3.1') process.exit(1);
           if (pointer.candidate?.status !== 'draft-unmerged-undeployed') process.exit(1);
           const packageJson = JSON.parse(fs.readFileSync('apps/clover-context-gateway/package.json', 'utf8'));
-          if (packageJson.version !== '0.3.0') process.exit(1);
+          if (packageJson.version !== '0.3.1') process.exit(1);
           if (!fs.existsSync(pointer.currentDocument)) process.exit(1);
           if (pointer.writeToolsEnabled !== false || pointer.standingProductionAuthority !== false) process.exit(1);
           if (plane.authority.writeToolsEnabled !== false || plane.authority.productionDataAccessEnabled !== false) process.exit(1);
           if (!fs.readFileSync('AGENTS.md', 'utf8').includes('Use CloverApps to')) process.exit(1);
           if (!fs.readFileSync('AI_START_HERE.md', 'utf8').includes('prepare_clover_command')) process.exit(1);
-          console.log(JSON.stringify({ status: 'passed', deployedVersion: '0.2.0', candidateVersion: '0.3.0', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
+          console.log(JSON.stringify({ status: 'passed', deployedVersion: '0.2.0', preservedCandidateVersion: '0.3.0', candidateVersion: '0.3.1', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
           NODE
 
       - name: Smoke-test HTTP, exact target resolution, and MCP
@@ -141,7 +160,7 @@ jobs:
           const fetched = readReceipt('fetch.json');
           const command = readReceipt('command.json');
           if (!/^[a-f0-9]{40}$/.test(expectedCommit || '')) process.exit(1);
-          if (health.version !== '0.3.0') process.exit(1);
+          if (health.version !== '0.3.1') process.exit(1);
           if (health.contextSource?.commit !== expectedCommit) process.exit(1);
           if (fetched.metadata?.commit !== expectedCommit) process.exit(1);
           if (command.packet?.canonicalContext?.sourceCommit !== expectedCommit) process.exit(1);
@@ -149,6 +168,14 @@ jobs:
           if (command.packet?.project?.projectId !== 'rollindd') process.exit(1);
           if (command.packet?.authority?.productionDeploymentApproved !== false) process.exit(1);
           if (!command.packet?.freshness?.sourcePlan?.length) process.exit(1);
+          if (command.today?.available !== true) process.exit(1);
+          if (command.today?.data?.actionId !== 'CLOVER-2026-08-20-002') process.exit(1);
+          if (!/^[a-f0-9]{64}$/.test(command.today?.data?.envelopeHash || '')) process.exit(1);
+          if (command.today?.data?.privacy?.publicSanitizedProjection !== true) process.exit(1);
+          if (command.today?.data?.privacy?.containsRawCellData !== false) process.exit(1);
+          for (const component of Object.values(command.today?.components || {})) {
+            if (component?.metadata?.commit !== expectedCommit) process.exit(1);
+          }
           NODE
           npm run smoke:mcp > "$RUNNER_TEMP/mcp-smoke.json"
 
@@ -156,7 +183,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-context-gateway-v0.3-candidate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
+          name: clover-context-gateway-v0.3.1-candidate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/control-plane-validation.json

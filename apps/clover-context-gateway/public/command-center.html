@@ -89,6 +89,9 @@
     }
     .card strong { display: block; margin-top: 7px; line-height: 1.3; }
     .card p { margin: 7px 0 0; color: var(--muted); line-height: 1.45; font-size: .88rem; }
+    .owner-session[hidden] { display: none; }
+    .priority-list { margin: 8px 0 0; padding-left: 22px; color: var(--muted); line-height: 1.55; }
+    .priority-list li + li { margin-top: 5px; }
     .question-grid {
       display: grid;
       grid-template-columns: repeat(5, minmax(150px, 1fr));
@@ -204,7 +207,7 @@
         <div class="card">
           <span class="card-label">Mission</span>
           <strong id="missionValue">Loading current context…</strong>
-          <p id="missionDetail">The date and source commit will appear when available.</p>
+          <p id="missionDetail">The date and source state will appear when available.</p>
         </div>
         <div class="card">
           <span class="card-label">Priority</span>
@@ -220,6 +223,62 @@
           <span class="card-label">Owner attention</span>
           <strong>One decision at a time</strong>
           <p>Clover should perform safe work first and surface only genuine owner gates.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="owner-session-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="owner-session-heading">Minimum Useful Core</h2>
+          <p>The dated owner session is shown only when supplied by the connected Clover app context.</p>
+        </div>
+      </div>
+      <p class="muted" id="ownerSessionState">Owner session context has not been supplied. No candidate priority or source identity is inferred.</p>
+      <div class="owner-session" id="ownerSession" hidden>
+        <div class="today-grid">
+          <div class="card">
+            <span class="card-label">What works now</span>
+            <strong id="worksNowValue">Recorded owner loop available</strong>
+            <p id="worksNowDetail">Awaiting the dated session.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">What changed</span>
+            <strong id="changedValue">Recorded changes available</strong>
+            <p id="changedDetail">Awaiting the dated session.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Live versus candidate</span>
+            <strong id="stateValue">State separation preserved</strong>
+            <p id="stateDetail">Awaiting the dated session.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Source freshness</span>
+            <strong id="freshnessValue">Unavailable</strong>
+            <p id="freshnessDetail">Unavailable sources remain unknown.</p>
+          </div>
+        </div>
+        <div class="today-grid" style="margin-top: 12px">
+          <div class="card">
+            <span class="card-label">Top three priorities</span>
+            <strong>Current candidate ranking</strong>
+            <ol class="priority-list" id="topPriorities"></ol>
+          </div>
+          <div class="card">
+            <span class="card-label">Recommended next action</span>
+            <strong id="recommendationValue">Unavailable</strong>
+            <p id="recommendationDetail">No action is implied by a recommendation.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Action ID and envelope</span>
+            <strong id="actionIdValue">Unavailable</strong>
+            <p id="envelopeValue">No durable envelope supplied.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Connector plan and authority</span>
+            <strong id="connectorValue">Unavailable</strong>
+            <p id="authorityValue">No standing authority.</p>
+          </div>
         </div>
       </div>
     </section>
@@ -337,6 +396,23 @@
   const missionDetailEl = document.getElementById('missionDetail');
   const priorityValueEl = document.getElementById('priorityValue');
   const unknownValueEl = document.getElementById('unknownValue');
+  const ownerSessionStateEl = document.getElementById('ownerSessionState');
+  const ownerSessionEl = document.getElementById('ownerSession');
+  const worksNowValueEl = document.getElementById('worksNowValue');
+  const worksNowDetailEl = document.getElementById('worksNowDetail');
+  const changedValueEl = document.getElementById('changedValue');
+  const changedDetailEl = document.getElementById('changedDetail');
+  const stateValueEl = document.getElementById('stateValue');
+  const stateDetailEl = document.getElementById('stateDetail');
+  const freshnessValueEl = document.getElementById('freshnessValue');
+  const freshnessDetailEl = document.getElementById('freshnessDetail');
+  const topPrioritiesEl = document.getElementById('topPriorities');
+  const recommendationValueEl = document.getElementById('recommendationValue');
+  const recommendationDetailEl = document.getElementById('recommendationDetail');
+  const actionIdValueEl = document.getElementById('actionIdValue');
+  const envelopeValueEl = document.getElementById('envelopeValue');
+  const connectorValueEl = document.getElementById('connectorValue');
+  const authorityValueEl = document.getElementById('authorityValue');
 
   let currentPrompt = '';
   let recognition;
@@ -372,6 +448,44 @@
     return 'Visible, never guessed';
   }
 
+  function firstDefined(value, keys) {
+    if (!value || typeof value !== 'object') return null;
+    for (const key of keys) {
+      if (value[key] !== undefined && value[key] !== null) return value[key];
+    }
+    return null;
+  }
+
+  function safeSummary(value, fallback = 'Unavailable') {
+    if (typeof value === 'string') return value || fallback;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      const summaries = value.map((entry) => safeSummary(entry, '')).filter(Boolean);
+      return summaries.length ? summaries.join('; ') : fallback;
+    }
+    if (value && typeof value === 'object') {
+      const summary = firstDefined(value, [
+        'summary', 'title', 'label', 'name', 'state', 'status', 'value', 'outcome',
+        'recommendation', 'recommendedAction', 'projectId', 'connector', 'sourceId'
+      ]);
+      if (summary !== value) return safeSummary(summary, fallback);
+    }
+    return fallback;
+  }
+
+  function listValue(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => safeSummary(entry, '')).filter(Boolean);
+  }
+
+  function priorityValue(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return safeSummary(value, '');
+    const title = safeSummary(value.title || value.targetId, 'Priority');
+    const score = typeof value.weightedScore === 'number' ? `score ${value.weightedScore}` : null;
+    const status = typeof value.status === 'string' ? value.status : null;
+    return [title, score, status].filter(Boolean).join(' · ');
+  }
+
   function addPill(text, className = '') {
     if ([...pillsEl.children].some((child) => child.textContent === text)) return;
     const pill = document.createElement('span');
@@ -398,7 +512,7 @@
     cardsEl.append(card);
   }
 
-  function renderSnapshot(status, source) {
+  function renderSnapshot(status, source, allowOwnerContext) {
     const estimate = status?.overallMissionCompletionEstimate;
     const asOf = status?.asOf || status?.statusAsOf || 'date unknown';
     if (estimate != null) {
@@ -411,24 +525,103 @@
     }
 
     const commit = source?.commit || source?.sourceCommit || source?.canonicalSourceCommit;
-    if (commit) addPill(`Context ${String(commit).slice(0, 8)}`);
+    if (allowOwnerContext && commit) addPill(`Context ${String(commit).slice(0, 8)}`);
 
     priorityValueEl.textContent = textFromPriority(status);
     unknownValueEl.textContent = countUnknowns(status);
   }
 
-  function render(data) {
+  function renderOwnerSession(todayWrapper, allowOwnerContext) {
+    ownerSessionEl.hidden = true;
+    topPrioritiesEl.replaceChildren();
+
+    if (!allowOwnerContext) {
+      ownerSessionStateEl.textContent = 'Open this surface through the connected Clover app to receive the dated owner session. Anonymous view remains context-free.';
+      return;
+    }
+    if (!todayWrapper || todayWrapper.available !== true || !todayWrapper.data) {
+      ownerSessionStateEl.textContent = 'The candidate owner session is unavailable at this exact source. No current state or priority is substituted.';
+      return;
+    }
+
+    const today = todayWrapper.data;
+    const worksNow = firstDefined(today, ['whatWorksNow', 'whatWorks', 'workingNow', 'currentCapabilities']);
+    const changed = firstDefined(today, ['whatChanged', 'recentChanges', 'changes']);
+    const state = firstDefined(today, ['liveVsCandidate', 'liveVersusCandidate', 'stateComparison', 'currentVsCandidate']);
+    const freshness = firstDefined(today, ['sourceFreshness', 'freshness', 'currentSourceFreshness']);
+    const priorityRecords = firstDefined(today, ['topPriorities', 'priorities', 'topThreePriorities']);
+    const priorities = Array.isArray(priorityRecords)
+      ? priorityRecords.map(priorityValue).filter(Boolean).slice(0, 3)
+      : [];
+    const recommendation = firstDefined(today, ['recommendedNextAction', 'recommendation', 'recommendedBranch']);
+    const actionId = firstDefined(today, ['actionId', 'nextActionId', 'recommendedActionId']);
+    const envelopePath = firstDefined(today, ['envelopePath', 'actionEnvelopePath', 'durableEnvelopePath']);
+    const envelopeHash = firstDefined(today, ['envelopeHash', 'actionEnvelopeHash']);
+    const connectorPlan = firstDefined(today, ['connectorPlan', 'connectors', 'sourcePlan']);
+    const authorityRequired = firstDefined(today, ['authorityRequired', 'ownerAuthorityRequired', 'ownerGates']);
+    const asOf = firstDefined(today, ['asOf', 'generatedAt', 'observedAt']);
+    const candidateStatus = firstDefined(today, ['candidateStatus']);
+
+    if (candidateStatus && typeof candidateStatus === 'object') {
+      const metrics = Array.isArray(candidateStatus.metrics) ? candidateStatus.metrics : [];
+      const broadMission = metrics.find((metric) => metric?.id === 'broad-mission-completion');
+      if (broadMission?.completionEstimate != null) {
+        missionValueEl.textContent = `${broadMission.completionEstimate}% broad mission candidate`;
+        missionDetailEl.textContent = `Candidate status as of ${candidateStatus.asOf || 'date unknown'} · confidence ${broadMission.confidence || 'unknown'} · not current or live.`;
+        addPill(`Candidate mission ${broadMission.completionEstimate}%`);
+      }
+      unknownValueEl.textContent = countUnknowns(candidateStatus);
+    }
+
+    worksNowValueEl.textContent = safeSummary(worksNow, 'Recorded current capabilities');
+    worksNowDetailEl.textContent = asOf ? `Candidate session as of ${safeSummary(asOf)}.` : 'Candidate session date unavailable.';
+    changedValueEl.textContent = safeSummary(changed, 'No recorded change summary');
+    changedDetailEl.textContent = 'Only source-bound recorded changes are shown.';
+    stateValueEl.textContent = safeSummary(state, 'Live and candidate state remain separate');
+    stateDetailEl.textContent = 'A candidate is never represented as current or live.';
+    freshnessValueEl.textContent = safeSummary(freshness, 'Source freshness unavailable');
+    freshnessDetailEl.textContent = 'Stale, contradictory, and unavailable sources remain labeled.';
+
+    for (const priority of priorities) {
+      const item = document.createElement('li');
+      item.textContent = priority;
+      topPrioritiesEl.append(item);
+    }
+    if (!priorities.length) {
+      const item = document.createElement('li');
+      item.textContent = 'No supported priority ranking is available.';
+      topPrioritiesEl.append(item);
+    }
+
+    recommendationValueEl.textContent = safeSummary(recommendation, 'No supported recommendation');
+    recommendationDetailEl.textContent = 'Recommendation only; execution still requires exact authority.';
+    actionIdValueEl.textContent = safeSummary(actionId, 'No Action ID supplied');
+    envelopeValueEl.textContent = envelopePath && envelopeHash
+      ? `Path: ${safeSummary(envelopePath)} · SHA-256: ${safeSummary(envelopeHash)}`
+      : 'No complete durable envelope path and hash supplied.';
+    connectorValueEl.textContent = safeSummary(connectorPlan, 'No connector plan supplied');
+    authorityValueEl.textContent = safeSummary(authorityRequired, 'No standing authority; exact owner gate remains required.');
+
+    ownerSessionStateEl.textContent = 'Dated candidate owner session supplied through the connected Clover app. It grants no authority.';
+    ownerSessionEl.hidden = false;
+    if (actionId) addPill(`Action ${safeSummary(actionId)}`);
+  }
+
+  function render(data, { allowOwnerContext = false } = {}) {
     const packet = data?.packet || null;
     const status = data?.status || null;
     const source = data?.source || packet?.canonicalContext || null;
     currentPrompt = data?.followUpPrompt || '';
 
-    renderSnapshot(status, source);
+    if (status) renderSnapshot(status, source, allowOwnerContext);
+    renderOwnerSession(data?.today || null, allowOwnerContext);
 
     if (!packet && !currentPrompt) return;
 
     promptEl.textContent = currentPrompt;
-    packetEl.textContent = JSON.stringify(packet, null, 2);
+    packetEl.textContent = allowOwnerContext
+      ? JSON.stringify(packet, null, 2)
+      : 'Machine-readable source identities are shown only inside the connected Clover app context.';
     summaryEl.textContent = packet
       ? `${packet.intent?.id || 'bounded request'} · ${packet.project?.title || packet.resolution?.state || 'project resolution required'} · ${packet.cost?.defaultLane || 'cost lane unknown'}`
       : 'Prepared Clover follow-up';
@@ -468,15 +661,10 @@
       let response;
       if (window.openai?.callTool) {
         response = await window.openai.callTool('prepare_clover_command', { request });
-        render(response?.structuredContent || response);
+        render(response?.structuredContent || response, { allowOwnerContext: true });
       } else {
-        response = await fetch('/api/prepare-command', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ request })
-        });
-        if (!response.ok) throw new Error(await response.text());
-        render(await response.json());
+        transcriptEl.textContent = 'Open this page through the connected Clover app to bind owner-session context. No anonymous candidate context was loaded.';
+        return;
       }
       transcriptEl.textContent = 'Bounded command prepared. No project or production system was changed.';
     } catch (error) {
@@ -562,15 +750,13 @@
   const initial = hostOutput();
   if (initial) {
     if (initial.packet?.originalRequest) requestEl.value = initial.packet.originalRequest;
-    render(initial);
+    render(initial, { allowOwnerContext: true });
   } else {
-    fetch('/api/context')
-      .then((response) => response.ok ? response.json() : null)
-      .then((snapshot) => snapshot && render(snapshot))
-      .catch(() => {
-        missionValueEl.textContent = 'Current context unavailable';
-        missionDetailEl.textContent = 'Prepare a command to retry. No state is inferred.';
-      });
+    missionValueEl.textContent = 'Owner context not loaded';
+    missionDetailEl.textContent = 'Open through the connected Clover app. Anonymous view does not fetch registry, candidate, or source identity data.';
+    priorityValueEl.textContent = 'Owner session required';
+    unknownValueEl.textContent = 'No state inferred';
+    renderOwnerSession(null, false);
   }
 </script>
 </body>

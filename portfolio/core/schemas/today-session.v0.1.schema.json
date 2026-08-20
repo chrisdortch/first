@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/today-session.v0.1.schema.json",
+  "title": "Clover Today Owner Session 0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "sessionId",
+    "status",
+    "asOf",
+    "generatedAt",
+    "sourceBasis",
+    "sourceFreshness",
+    "whatWorksNow",
+    "whatChanged",
+    "liveVsCandidate",
+    "metrics",
+    "topPriorities",
+    "recommendation",
+    "actionId",
+    "envelopePath",
+    "envelopeHash",
+    "handoffIndexPath",
+    "handoffIndexHash",
+    "connectorPlan",
+    "authorityRequired",
+    "safeNow",
+    "codexNext",
+    "ownerGates",
+    "unknowns",
+    "rollbackAnchors",
+    "cost",
+    "privacy",
+    "sessionHash"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-today-owner-session" },
+    "schemaVersion": { "const": "0.1.0" },
+    "sessionId": { "type": "string", "pattern": "^clover-today:[a-z0-9:-]+$" },
+    "status": { "const": "candidate-unmerged-undeployed" },
+    "asOf": { "type": "string", "pattern": "^2026-08-20$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "sourceBasis": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceFact" }
+    },
+    "sourceFreshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "newestObservedAt", "oldestMaterialEvidenceAt", "summary"],
+      "properties": {
+        "label": { "type": "string", "enum": ["current-task", "mixed", "historical", "unknown"] },
+        "newestObservedAt": { "type": ["string", "null"] },
+        "oldestMaterialEvidenceAt": { "type": ["string", "null"] },
+        "summary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "whatWorksNow": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/briefItem" }
+    },
+    "whatChanged": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/briefItem" }
+    },
+    "liveVsCandidate": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/briefItem" }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["metricId", "label", "completionEstimate", "stateClass", "confidence", "sourcePath"],
+        "properties": {
+          "metricId": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "minLength": 1 },
+          "completionEstimate": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "stateClass": { "$ref": "#/$defs/stateClass" },
+          "confidence": { "type": "string", "enum": ["high", "medium", "medium-low", "low", "unknown"] },
+          "sourcePath": { "$ref": "#/$defs/repositoryPath" }
+        }
+      }
+    },
+    "topPriorities": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rank", "targetId", "title", "weightedScore", "status", "rationale"],
+        "properties": {
+          "rank": { "type": "integer", "minimum": 1 },
+          "targetId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "title": { "type": "string", "minLength": 1 },
+          "weightedScore": { "type": "number", "minimum": 0, "maximum": 100 },
+          "status": { "type": "string", "enum": ["active", "blocked", "selected-pending-owner-gate", "queued"] },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "title", "summary", "mode", "actionBoundary"],
+      "properties": {
+        "targetId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "mode": { "const": "proposal-only" },
+        "actionBoundary": { "type": "string", "minLength": 1 }
+      }
+    },
+    "actionId": { "type": "string", "pattern": "^CLOVER-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{3}$" },
+    "envelopePath": { "$ref": "#/$defs/repositoryPath" },
+    "envelopeHash": { "$ref": "#/$defs/sha256" },
+    "handoffIndexPath": { "$ref": "#/$defs/repositoryPath" },
+    "handoffIndexHash": { "$ref": "#/$defs/sha256" },
+    "connectorPlan": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["connector", "mode", "purpose", "coverage", "state"],
+        "properties": {
+          "connector": { "type": "string", "minLength": 1 },
+          "mode": { "const": "read-only" },
+          "purpose": { "type": "string", "minLength": 1 },
+          "coverage": { "type": "string", "minLength": 1 },
+          "state": { "type": "string", "enum": ["checked", "available-not-used", "unavailable", "not-required"] }
+        }
+      }
+    },
+    "authorityRequired": { "$ref": "#/$defs/stringList" },
+    "safeNow": { "$ref": "#/$defs/stringList" },
+    "codexNext": { "$ref": "#/$defs/stringList" },
+    "ownerGates": { "$ref": "#/$defs/stringList" },
+    "unknowns": { "$ref": "#/$defs/stringList" },
+    "rollbackAnchors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["subject", "identity", "state"],
+        "properties": {
+          "subject": { "type": "string", "minLength": 1 },
+          "identity": { "type": ["string", "null"] },
+          "state": { "type": "string", "enum": ["verified", "reported", "unknown"] }
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane", "explicitPurchaseOrMoneyMovementUsd", "providerMeteredUsageCostUsd", "providerMeteredUsageCostStatus"],
+      "properties": {
+        "lane": { "const": "existing-plan-read-only" },
+        "explicitPurchaseOrMoneyMovementUsd": { "const": 0 },
+        "providerMeteredUsageCostUsd": { "type": "null" },
+        "providerMeteredUsageCostStatus": { "const": "unknown" }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["containsRawCellData", "containsPlaintextSecrets", "containsProductionPrivateData", "publicSanitizedProjection"],
+      "properties": {
+        "containsRawCellData": { "const": false },
+        "containsPlaintextSecrets": { "const": false },
+        "containsProductionPrivateData": { "const": false },
+        "publicSanitizedProjection": { "const": true }
+      }
+    },
+    "sessionHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "repositoryPath": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+    "stateClass": { "type": "string", "enum": ["live", "current", "candidate", "historical", "reported", "partially-verified", "unverified", "unknown"] },
+    "stringList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "sourceFact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "connector", "stateClass", "evidenceStatus", "observedAt", "exactIdentity", "fact"],
+      "properties": {
+        "sourceId": { "type": "string", "minLength": 1 },
+        "connector": { "type": "string", "minLength": 1 },
+        "stateClass": { "$ref": "#/$defs/stateClass" },
+        "evidenceStatus": { "type": "string", "enum": ["verified", "partially-verified", "reported", "unverified", "unknown"] },
+        "observedAt": { "type": ["string", "null"] },
+        "exactIdentity": { "type": ["string", "null"] },
+        "fact": { "type": "string", "minLength": 1 }
+      }
+    },
+    "briefItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "summary", "stateClass", "claimClass", "evidenceRefs"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "stateClass": { "$ref": "#/$defs/stateClass" },
+        "claimClass": { "type": "string", "enum": ["source-fact", "owner-direction", "AI-inference", "unknown"] },
+        "evidenceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

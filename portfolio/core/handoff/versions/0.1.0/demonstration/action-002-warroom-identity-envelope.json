@@ -1,0 +1,161 @@
+{
+  "documentType": "clover-handoff-action-envelope",
+  "schemaVersion": "0.1.0",
+  "actionId": "CLOVER-2026-08-20-002",
+  "envelopeId": "handoff-action:002:warroom-identity",
+  "branchCapsuleId": "cell-capsule:clover-warroom:20260820",
+  "branchCapsuleHash": "37e2487a27143900e66cc69cd0bd8fe1ae44e4cf3fef5ad1d57a69636e0df97d",
+  "createdAt": "2026-08-20T21:19:42.000Z",
+  "expiresAt": "2026-08-21T21:19:42.000Z",
+  "lifecycle": {
+    "issuanceState": "proposed",
+    "singleUse": true,
+    "revocationStatus": "not-revoked",
+    "revokedAt": null,
+    "revocationEvidenceHash": null,
+    "consumptionStatus": "unconsumed-at-issuance",
+    "consumedAt": null,
+    "consumedByReceiptId": null
+  },
+  "operation": "reconcile-public-project-identity",
+  "requestedOutcome": "Resolve public WarRoom repository, candidate, deployment, rollback, and sanitized receipt identities without accessing private project data.",
+  "target": {
+    "projectId": "clover-warroom",
+    "repository": null,
+    "branch": null,
+    "expectedCommit": null,
+    "environment": "public-metadata"
+  },
+  "scope": {
+    "allowedConnectors": ["github", "vercel", "clover-context-gateway", "local-canonical-checkout"],
+    "allowedReadPaths": ["portfolio/core/handoff/**", "portfolio/registry/projects.json"],
+    "allowedWritePaths": [],
+    "allowedRecordingPaths": [
+      "portfolio/core/handoff/versions/0.1.0/approvals/**",
+      "portfolio/core/handoff/versions/0.1.0/cells/**",
+      "portfolio/core/handoff/versions/0.1.0/demonstration/action-002-warroom-identity-receipt.json",
+      "portfolio/core/handoff/versions/0.1.0/reviews/**",
+      "portfolio/core/handoff/versions/0.1.0/indexes/**",
+      "portfolio/core/handoff/index.json"
+    ],
+    "allowedActions": ["read-public-metadata", "verify-exact-identity", "assemble-sanitized-receipt", "record-handoff-artifacts"],
+    "prohibitedActions": [
+      "merge",
+      "production-deployment",
+      "production-data-access",
+      "persistent-configuration-change",
+      "domain-or-alias-change",
+      "secret-change",
+      "external-message",
+      "payment-exercise",
+      "purchase"
+    ]
+  },
+  "sourceRequirements": [
+    {
+      "sourceRequirementId": "source:warroom-registry",
+      "sourceId": "local-canonical-checkout",
+      "identityMode": "exact",
+      "expectedIdentity": "clover-warroom",
+      "required": true,
+      "privacyClass": "public-governance-metadata"
+    },
+    {
+      "sourceRequirementId": "source:warroom-github",
+      "sourceId": "github",
+      "identityMode": "discover",
+      "expectedIdentity": null,
+      "required": true,
+      "privacyClass": "public-source-identity"
+    },
+    {
+      "sourceRequirementId": "source:warroom-gateway",
+      "sourceId": "clover-context-gateway",
+      "identityMode": "exact",
+      "expectedIdentity": "clover-warroom",
+      "required": true,
+      "privacyClass": "public-governance-metadata"
+    },
+    {
+      "sourceRequirementId": "source:warroom-vercel",
+      "sourceId": "vercel",
+      "identityMode": "discover",
+      "expectedIdentity": null,
+      "required": true,
+      "privacyClass": "public-source-identity"
+    }
+  ],
+  "evidenceRequirements": [
+    { "evidenceId": "evidence:warroom-source-identity", "kind": "source-identity", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true },
+    { "evidenceId": "evidence:warroom-sanitized-receipt", "kind": "receipt", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true }
+  ],
+  "readbackRequirements": [
+    { "readbackId": "readback:warroom-github", "connector": "github", "subject": "public canonical WarRoom repository and branches", "expectedIdentity": null, "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:warroom-vercel", "connector": "vercel", "subject": "public WarRoom deployment metadata", "expectedIdentity": null, "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:warroom-gateway", "connector": "clover-context-gateway", "subject": "minimized WarRoom project record", "expectedIdentity": "clover-warroom", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:warroom-registry", "connector": "local-canonical-checkout", "subject": "portfolio registry WarRoom record", "expectedIdentity": "clover-warroom", "required": true, "failIfUnavailable": true }
+  ],
+  "requestedAuthority": {
+    "readPublicMetadata": true,
+    "createIsolatedBranch": false,
+    "commitCandidate": false,
+    "pushCandidateBranch": false,
+    "openDraftPullRequest": false,
+    "runNonProductionChecks": false,
+    "createNonProductionPreview": false,
+    "recordHandoffArtifacts": true,
+    "standingAuthority": false,
+    "mergeAuthorized": false,
+    "productionDeploymentAuthorized": false,
+    "productionDataAccessAuthorized": false,
+    "persistentConfigurationChangeAuthorized": false,
+    "externalMessageAuthorized": false,
+    "purchaseAuthorized": false
+  },
+  "authority": {
+    "readPublicMetadata": false,
+    "createIsolatedBranch": false,
+    "commitCandidate": false,
+    "pushCandidateBranch": false,
+    "openDraftPullRequest": false,
+    "runNonProductionChecks": false,
+    "createNonProductionPreview": false,
+    "recordHandoffArtifacts": false,
+    "standingAuthority": false,
+    "mergeAuthorized": false,
+    "productionDeploymentAuthorized": false,
+    "productionDataAccessAuthorized": false,
+    "persistentConfigurationChangeAuthorized": false,
+    "externalMessageAuthorized": false,
+    "purchaseAuthorized": false
+  },
+  "approval": {
+    "required": true,
+    "requiredApproverId": "owner:chris-dortch",
+    "status": "proposed-unapproved",
+    "approvalEvidenceHash": null
+  },
+  "dataBoundary": {
+    "allowedClasses": ["public-governance-metadata", "public-source-identity", "sanitized-receipt-metadata"],
+    "rawCellDataAllowed": false,
+    "privateDataAllowed": false,
+    "secretValuesAllowed": false,
+    "productionDataReadAllowed": false
+  },
+  "costBoundary": {
+    "currency": "USD",
+    "maxExplicitPurchaseOrMoneyMovementUsd": 0,
+    "explicitPurchaseOrMoneyMovementAuthorized": false,
+    "providerMeteredUsageCostStatus": "unknown"
+  },
+  "stopConditions": [
+    "source-identity-changed",
+    "scope-expansion-required",
+    "private-data-required",
+    "secret-required",
+    "production-action-required",
+    "rollback-unproven",
+    "connector-unavailable"
+  ],
+  "envelopeHash": "71873de93355ec1301b2a398b34d72860339f19f52c937fffdc3c95638550214"
+}

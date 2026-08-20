@@ -1,0 +1,340 @@
+{
+  "documentType": "clover-today-owner-session",
+  "schemaVersion": "0.1.0",
+  "sessionId": "clover-today:2026-08-20:core-trunk-activation-0-1",
+  "status": "candidate-unmerged-undeployed",
+  "asOf": "2026-08-20",
+  "generatedAt": "2026-08-20T21:19:46.000Z",
+  "sourceBasis": [
+    {
+      "sourceId": "github-clover-pr15",
+      "connector": "github",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20",
+      "exactIdentity": "chrisdortch/first#15@05dd1c8c4e14d8133bb78490f8108f6b3c62f518",
+      "fact": "PR #15 is open, draft, unmerged, and unchanged."
+    },
+    {
+      "sourceId": "github-clover-pr16",
+      "connector": "github",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20",
+      "exactIdentity": "chrisdortch/first#16@364a9a96829f323aa00a679804fdd7ed879043b5",
+      "fact": "PR #16 is open, draft, unmerged, unchanged, and is the rollback parent for this candidate."
+    },
+    {
+      "sourceId": "vercel-gateway-0.3.0",
+      "connector": "vercel",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20",
+      "exactIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4@364a9a96829f323aa00a679804fdd7ed879043b5",
+      "fact": "Gateway 0.3.0 is READY, read-only, target null, alias-free, with write tools disabled and no standing production authority."
+    },
+    {
+      "sourceId": "sites-cloverapps-81",
+      "connector": "source-bound-receipt",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20",
+      "exactIdentity": "sites:81@029a4a1a18443277bd1e19804d1544ed798e6de8",
+      "fact": "The owner-provided source-bound Sites 81 receipt identifies CloverApps 7.4.3 as saved and undeployed; this Today session did not use Sites as a live connector."
+    },
+    {
+      "sourceId": "github-serenity-pr22",
+      "connector": "github",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20",
+      "exactIdentity": "chrisdortch/serenity-stores#22@0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03",
+      "fact": "Serenity PR #22 is evidence-only for this session and remains unchanged."
+    },
+    {
+      "sourceId": "github-rollind-preserved",
+      "connector": "github",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20",
+      "exactIdentity": "main@6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09;pr3@8db83f9c526915d2d58385b78da71ff344b18c99;pr6@ae2f1b0d2a649e645b1d2445b482f539670c6275",
+      "fact": "RollinD production, PR #3, and reconciliation PR #6 remain unchanged; Build Protocol 1.2 enrollment is outside this gate."
+    },
+    {
+      "sourceId": "candidate-status-2026-08-20",
+      "connector": "local-canonical-checkout",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20T21:19:46.000Z",
+      "exactIdentity": "sha256:4c7300f46253ea64027ad1c475f0683aaeddf9927848aafb975635cdd0937f90",
+      "fact": "The four completion metrics are self-bound and preserve the historical August 17 status."
+    },
+    {
+      "sourceId": "candidate-priority-2026-08-20",
+      "connector": "local-canonical-checkout",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20T21:19:46.000Z",
+      "exactIdentity": "sha256:edf73217a96d571652cd5eba5e2c8237875eaf77a602833d7713abc67b8e95e2",
+      "fact": "The deterministic priority output covers all 19 current P0/P1 targets and keeps unknown or blocked work visible."
+    },
+    {
+      "sourceId": "handoff-action-001-receipt",
+      "connector": "local-canonical-checkout",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20T21:19:44.000Z",
+      "exactIdentity": "sha256:85a80a7aea223d2317477e6975a9f1a34bd5fed8ba2f1f1e48edf2e742a6f3d8",
+      "fact": "The completed read-only status refresh is bound to Action 001 and its durable Handoff execution receipt."
+    },
+    {
+      "sourceId": "gateway-0.3.1-source-candidate",
+      "connector": "local-canonical-checkout",
+      "stateClass": "candidate",
+      "evidenceStatus": "verified",
+      "observedAt": "2026-08-20T21:19:46.000Z",
+      "exactIdentity": "sha256:55a1264f560301456c02f9556fd22eb788cccd1146c859ea7628f3326ed3e434",
+      "fact": "The versioned Gateway 0.3.1 source record describes the additive Today sibling; exact-head CI and preview readback remain pending."
+    }
+  ],
+  "sourceFreshness": {
+    "label": "mixed",
+    "newestObservedAt": "2026-08-20T21:19:46.000Z",
+    "oldestMaterialEvidenceAt": "2026-08-17",
+    "summary": "GitHub, Vercel, Gateway, CloverApps, Serenity, and RollinD anchors were refreshed on August 20; some portfolio estimates and operating-loop inputs remain historical or intentionally uninspected."
+  },
+  "whatWorksNow": [
+    {
+      "title": "Governed public Core baseline",
+      "summary": "Constitution 0.1 is ratified, canonical v1 status and Registry 1.0 remain current, and candidate records remain additive.",
+      "stateClass": "current",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["candidate-status-2026-08-20"]
+    },
+    {
+      "title": "Exact read-only context compiler",
+      "summary": "Gateway 0.3.0 provides exact-source public context and four read-only, non-destructive tools with standing production authority false.",
+      "stateClass": "candidate",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["vercel-gateway-0.3.0"]
+    },
+    {
+      "title": "Durable bounded handoff model",
+      "summary": "Action 001 demonstrates a source-bound read-only receipt; Action 002 is a separate unapproved single-use proposal.",
+      "stateClass": "candidate",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["handoff-action-001-receipt"]
+    }
+  ],
+  "whatChanged": [
+    {
+      "title": "Four completion questions replace one ambiguous percentage",
+      "summary": "Broad mission, owner-usable loop, live production, and verified candidate completion are separately scoped and recalculated.",
+      "stateClass": "candidate",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["candidate-status-2026-08-20"]
+    },
+    {
+      "title": "Priority is transparent and WIP-limited",
+      "summary": "The owner-authorized 30/25/20/15/10 model scores 19 P0/P1 targets; only Core is active and the affiliated lane remains empty.",
+      "stateClass": "candidate",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["candidate-priority-2026-08-20"]
+    },
+    {
+      "title": "Gateway 0.3.1 is a new source candidate",
+      "summary": "It can expose a cross-bound Today sibling without changing canonical v1 context or granting execution authority; exact-head preview readback is still pending.",
+      "stateClass": "candidate",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["gateway-0.3.1-source-candidate"]
+    }
+  ],
+  "liveVsCandidate": [
+    {
+      "title": "CloverApps owner window",
+      "summary": "7.4.2 is live; 7.4.3 / Sites 81 is saved and undeployed with no preview.",
+      "stateClass": "live",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["sites-cloverapps-81"]
+    },
+    {
+      "title": "Core governance and trunk",
+      "summary": "Constitution 0.1 is current; Core lifecycle 0.2, PR #16, and this trunk activation remain candidates.",
+      "stateClass": "current",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["github-clover-pr16", "candidate-status-2026-08-20"]
+    },
+    {
+      "title": "Context Gateway",
+      "summary": "Gateway 0.3.0 has an exact target-null preview; 0.3.1 is source-only until a separate exact-head preview is verified.",
+      "stateClass": "candidate",
+      "claimClass": "source-fact",
+      "evidenceRefs": ["vercel-gateway-0.3.0"]
+    }
+  ],
+  "metrics": [
+    {
+      "metricId": "broad-mission-completion",
+      "label": "Broad mission completion",
+      "completionEstimate": 45,
+      "stateClass": "candidate",
+      "confidence": "medium-low",
+      "sourcePath": "portfolio/status/candidates/2026-08-20/status.json"
+    },
+    {
+      "metricId": "owner-usable-operating-loop-completion",
+      "label": "Owner-usable operating-loop completion",
+      "completionEstimate": 25,
+      "stateClass": "current",
+      "confidence": "medium",
+      "sourcePath": "portfolio/status/candidates/2026-08-20/status.json"
+    },
+    {
+      "metricId": "live-production-completion",
+      "label": "Live production completion",
+      "completionEstimate": 35,
+      "stateClass": "live",
+      "confidence": "medium-low",
+      "sourcePath": "portfolio/status/candidates/2026-08-20/status.json"
+    },
+    {
+      "metricId": "verified-candidate-completion",
+      "label": "Verified candidate completion",
+      "completionEstimate": 70,
+      "stateClass": "candidate",
+      "confidence": "medium",
+      "sourcePath": "portfolio/status/candidates/2026-08-20/status.json"
+    }
+  ],
+  "topPriorities": [
+    {
+      "rank": 1,
+      "targetId": "clover-core",
+      "title": "Clover Core",
+      "weightedScore": 81.5,
+      "status": "active",
+      "rationale": "The active trunk reduces governance and handoff ambiguity across every affiliated Cell."
+    },
+    {
+      "rank": 2,
+      "targetId": "lakeside-essentials",
+      "title": "Lakeside Essentials",
+      "weightedScore": 79.5,
+      "status": "blocked",
+      "rationale": "Commerce and reservation integrity is high value and high risk, but documented hold points prevent safe activation."
+    },
+    {
+      "rank": 3,
+      "targetId": "boat-rentals",
+      "title": "Boat Rentals",
+      "weightedScore": 75,
+      "status": "blocked",
+      "rationale": "Reservation and waiver integrity is commercially material, but exact current production and candidate identities remain unresolved."
+    }
+  ],
+  "recommendation": {
+    "targetId": "clover-warroom",
+    "title": "Reconcile WarRoom public identity and receipt integrity",
+    "summary": "Use the first eligible affiliated lane only for a sanitized read-only identity precursor; do not access legal evidence or start a branch until exact source and rollback are known.",
+    "mode": "proposal-only",
+    "actionBoundary": "Action 002 is unapproved, single-use, read-only public metadata reconciliation. A future branch action remains blocked until the resulting capsule proves exact source and rollback."
+  },
+  "actionId": "CLOVER-2026-08-20-002",
+  "envelopePath": "portfolio/core/handoff/versions/0.1.0/demonstration/action-002-warroom-identity-envelope.json",
+  "envelopeHash": "71873de93355ec1301b2a398b34d72860339f19f52c937fffdc3c95638550214",
+  "handoffIndexPath": "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
+  "handoffIndexHash": "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c",
+  "connectorPlan": [
+    {
+      "connector": "github",
+      "mode": "read-only",
+      "purpose": "Refresh exact public repository, PR, CI, and rollback identities named by this session.",
+      "coverage": "Clover PR #15/#16, Serenity PR #22, and RollinD main/PR #3/PR #6 only.",
+      "state": "checked"
+    },
+    {
+      "connector": "vercel",
+      "mode": "read-only",
+      "purpose": "Verify exact deployment source, READY state, target class, aliases, and authority boundary.",
+      "coverage": "Named Gateway, Serenity, and RollinD deployments only.",
+      "state": "checked"
+    },
+    {
+      "connector": "clover-context-gateway",
+      "mode": "read-only",
+      "purpose": "Read minimized public canonical context and confirm tool authority annotations.",
+      "coverage": "Immutable Gateway 0.3.0 candidate preview at exact PR #16 source.",
+      "state": "checked"
+    },
+    {
+      "connector": "openai-sites",
+      "mode": "read-only",
+      "purpose": "A future session may refresh live CloverApps and immutable saved checkpoint separation if separately needed.",
+      "coverage": "Not called in this session; Sites 81 status came only from the owner-provided source-bound receipt.",
+      "state": "available-not-used"
+    }
+  ],
+  "authorityRequired": [
+    "A separate exact owner approval attestation must bind Action CLOVER-2026-08-20-002 and its envelope hash before execution.",
+    "Recording that approval is a separately authorized candidate-branch write; the read-only Gateway cannot record it.",
+    "Any later branch, merge, production, private-data, message, payment, purchase, domain, alias, permission, environment, secret, or OpenAI Site action requires another exact gate."
+  ],
+  "safeNow": [
+    "Review the public sanitized status, priority reasoning, Branch Capsules, and completed Action 001 receipt.",
+    "Use the read-only Gateway to inspect exact current and candidate public context.",
+    "Prepare an independent APPROVE, AMEND, or HOLD review against one exact receipt."
+  ],
+  "codexNext": [
+    "Do not execute Action 002 while its lifecycle is proposed and owner approval is pending.",
+    "After a valid indexed approval exists, resolve the exact envelope, refresh named public sources, stop on contradiction, and return only a sanitized source-bound receipt and resulting capsule.",
+    "Do not begin a WarRoom implementation branch until a later exact envelope binds repository, source, rollback, and authority."
+  ],
+  "ownerGates": [
+    "Decide whether to approve the exact read-only Action 002 after independent review of its envelope.",
+    "Decide separately whether any resulting exact WarRoom branch action should begin.",
+    "Decide separately on every merge or production promotion; none is authorized here."
+  ],
+  "unknowns": [
+    "WarRoom canonical repository, branch, commit, deployment, backup, and rollback identities are unknown.",
+    "The installed canonical Gateway exact source is not established as candidate 0.3 state.",
+    "CloverApps Sites 81 has no owner-window preview readback.",
+    "Twenty-eight Registry 2.0 identities remain unverified.",
+    "Build Protocol 1.2 enrolled-project and Data Protocol 1.0.1 disposable-project pilots remain pending.",
+    "Private-source freshness was not checked by policy."
+  ],
+  "rollbackAnchors": [
+    {
+      "subject": "clover-core-trunk-activation",
+      "identity": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "state": "verified"
+    },
+    {
+      "subject": "gateway-0.3.0",
+      "identity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4",
+      "state": "verified"
+    },
+    {
+      "subject": "cloverapps-sites81",
+      "identity": "029a4a1a18443277bd1e19804d1544ed798e6de8",
+      "state": "verified"
+    },
+    {
+      "subject": "warroom-action-002",
+      "identity": "no-mutation; retain the existing unknown source state",
+      "state": "verified"
+    }
+  ],
+  "cost": {
+    "lane": "existing-plan-read-only",
+    "explicitPurchaseOrMoneyMovementUsd": 0,
+    "providerMeteredUsageCostUsd": null,
+    "providerMeteredUsageCostStatus": "unknown"
+  },
+  "privacy": {
+    "containsRawCellData": false,
+    "containsPlaintextSecrets": false,
+    "containsProductionPrivateData": false,
+    "publicSanitizedProjection": true
+  },
+  "sessionHash": "56e5d0342c3f4d47dcaf5cec8cf2c6f52341ea57115bdecdc3751e7df7afd208"
+}

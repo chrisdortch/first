@@ -1,0 +1,117 @@
+{
+  "documentType": "clover-handoff-branch-capsule",
+  "schemaVersion": "0.1.0",
+  "capsuleId": "cell-capsule:lakeside-essentials:20260820",
+  "recordedAt": "2026-08-20T21:19:42.000Z",
+  "project": {
+    "projectId": "lakeside-essentials",
+    "title": "Lakeside Essentials / Serenity Stores",
+    "kind": "application",
+    "portfolioArea": "resort-commerce",
+    "purpose": "Provide resort commerce and rental experiences while keeping customer and operational records inside the project boundary."
+  },
+  "privacy": {
+    "sensitivity": "mixed-sensitive",
+    "containsRawCellData": false,
+    "containsSecretValues": false,
+    "containsPersonalData": false,
+    "publicCapsuleSafe": true,
+    "boundarySummary": "Contains only public repository, pull-request, preview, and hold-state metadata; no customer, order, rental, message, or transaction records are copied into Core."
+  },
+  "identities": {
+    "live": {
+      "status": "reported",
+      "repository": "chrisdortch/serenity-stores",
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": "live production identity not source-bound in this capsule",
+      "deploymentId": null,
+      "url": "https://lakesideessentials.com",
+      "observedAt": "2026-08-17T00:00:00.000Z",
+      "sourceRef": "portfolio/registry/projects.json#lakeside-essentials",
+      "confidence": "low"
+    },
+    "current": {
+      "status": "verified",
+      "repository": "chrisdortch/serenity-stores",
+      "branch": "v10-square-cart-polish-20260604",
+      "commit": "d92411f5bec1b7a31fdc79904287729df2c77d35",
+      "tree": null,
+      "version": "pull-request-22-base",
+      "deploymentId": null,
+      "url": "https://github.com/chrisdortch/serenity-stores/pull/22",
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "github:chrisdortch/serenity-stores#pull/22",
+      "confidence": "high"
+    },
+    "candidate": {
+      "status": "verified",
+      "repository": "chrisdortch/serenity-stores",
+      "branch": "codex/audit-square-webhook-fix-20260820",
+      "commit": "0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03",
+      "tree": "37fcabb90c3accbeff63173a270a30d5002b87ab",
+      "version": "draft-pull-request-22",
+      "deploymentId": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi",
+      "url": "https://serenity-stores-9k70g8djs-chris-dortchs-projects.vercel.app",
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "github:chrisdortch/serenity-stores#pull/22",
+      "confidence": "high"
+    }
+  },
+  "links": {
+    "repository": "chrisdortch/serenity-stores",
+    "publicUrl": "https://lakesideessentials.com",
+    "sources": [
+      { "kind": "repository", "ref": "https://github.com/chrisdortch/serenity-stores", "status": "verified" },
+      { "kind": "pull-request", "ref": "https://github.com/chrisdortch/serenity-stores/pull/22", "status": "verified" },
+      { "kind": "deployment", "ref": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi", "status": "verified" },
+      { "kind": "registry", "ref": "portfolio/registry/projects.json#lakeside-essentials", "status": "verified" }
+    ]
+  },
+  "verification": {
+    "asOf": "2026-08-20T21:19:42.000Z",
+    "freshness": "current",
+    "checkedSources": ["github", "source-bound-receipt"],
+    "unavailableSources": ["production-source-binding"]
+  },
+  "health": {
+    "state": "verified-candidate",
+    "blockers": [
+      "Draft pull request 22 remains unmerged and production remains separately owner-gated.",
+      "Operational readiness, durable throttling, reconciliation, and privileged correction boundaries remain hold points."
+    ],
+    "unknowns": ["The live production source commit was not refreshed in this capsule pass."]
+  },
+  "relationships": {
+    "dependencies": [
+      { "projectId": "clover-core", "relationship": "Uses governance and receipt contracts while commerce records remain in the project Cell.", "status": "proposed" }
+    ],
+    "dependents": []
+  },
+  "latestAcceptedReceipt": {
+    "status": "none-known",
+    "receiptId": null,
+    "receiptHash": null,
+    "sourceRef": null
+  },
+  "activeOwnerDecision": {
+    "status": "active",
+    "decisionId": "decision:preserve-serenity-pr22",
+    "summary": "Keep Serenity pull request 22, its candidate deployments, configuration, data, and production systems unchanged during this Core gate.",
+    "sourceRef": "current-owner-authorization"
+  },
+  "recommendedNextAction": {
+    "actionId": "next:lakeside-independent-hold-review",
+    "summary": "Independently review the source-bound candidate receipt and remaining hold points before a separate owner decision.",
+    "state": "owner-gated",
+    "requiredApproval": "exact-owner-approval",
+    "sourceBasis": "Exact pull-request 22 head, source-bound preview identity, and recorded remaining holds."
+  },
+  "rollbackAnchors": [
+    { "anchorType": "git-commit", "identity": "d92411f5bec1b7a31fdc79904287729df2c77d35", "status": "verified", "sourceRef": "github:chrisdortch/serenity-stores#pull/22-base" },
+    { "anchorType": "git-commit", "identity": "0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03", "status": "verified", "sourceRef": "github:chrisdortch/serenity-stores#pull/22-head" },
+    { "anchorType": "deployment", "identity": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi", "status": "verified", "sourceRef": "source-bound-preview-receipt" }
+  ],
+  "capsuleHash": "733c7d0c729a3a20e90ebadbc4dee848873e6ab4e6701f4c62f3c2102b14cfc1"
+}

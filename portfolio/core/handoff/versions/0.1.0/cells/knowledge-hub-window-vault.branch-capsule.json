@@ -1,0 +1,116 @@
+{
+  "documentType": "clover-handoff-branch-capsule",
+  "schemaVersion": "0.1.0",
+  "capsuleId": "cell-capsule:knowledge-hub-window-vault:20260820",
+  "recordedAt": "2026-08-20T21:19:42.000Z",
+  "project": {
+    "projectId": "knowledge-hub-window-vault",
+    "title": "Knowledge Hub / Window / Vault",
+    "kind": "infrastructure",
+    "portfolioArea": "knowledge",
+    "purpose": "Maintain portable, restorable source knowledge behind minimized pointers while separating public governance from private source material."
+  },
+  "privacy": {
+    "sensitivity": "mixed-sensitive",
+    "containsRawCellData": false,
+    "containsSecretValues": false,
+    "containsPersonalData": false,
+    "publicCapsuleSafe": true,
+    "boundarySummary": "No document contents, communications, personal records, or credentials are included; only public architecture and source-state metadata is retained."
+  },
+  "identities": {
+    "live": {
+      "status": "not-applicable",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": null,
+      "deploymentId": null,
+      "url": null,
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "portfolio/registry/projects.json#knowledge-hub-window-vault",
+      "confidence": "medium"
+    },
+    "current": {
+      "status": "verified",
+      "repository": "chrisdortch/first",
+      "branch": "main",
+      "commit": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+      "tree": "7a47dbb42e7b4b033269cb1f9a5005ab6dfd04b9",
+      "version": "architecture-and-standards-verified",
+      "deploymentId": null,
+      "url": "https://github.com/chrisdortch/first",
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "github:chrisdortch/first#main",
+      "confidence": "high"
+    },
+    "candidate": {
+      "status": "unknown",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": null,
+      "deploymentId": null,
+      "url": null,
+      "observedAt": null,
+      "sourceRef": "portfolio/registry/projects.json#knowledge-hub-window-vault",
+      "confidence": "unknown"
+    }
+  },
+  "links": {
+    "repository": "chrisdortch/first",
+    "publicUrl": null,
+    "sources": [
+      { "kind": "repository", "ref": "https://github.com/chrisdortch/first", "status": "verified" },
+      { "kind": "registry", "ref": "portfolio/registry/projects.json#knowledge-hub-window-vault", "status": "verified" }
+    ]
+  },
+  "verification": {
+    "asOf": "2026-08-20T21:19:42.000Z",
+    "freshness": "current",
+    "checkedSources": ["github", "core-registry"],
+    "unavailableSources": ["private-source-inventory", "restore-test-inventory"]
+  },
+  "health": {
+    "state": "partially-verified",
+    "blockers": [
+      "The complete source inventory is not represented in public Core.",
+      "Portfolio-wide restore-test coverage remains incomplete."
+    ],
+    "unknowns": ["Exact private ingest coverage is intentionally not asserted by this public capsule."]
+  },
+  "relationships": {
+    "dependencies": [],
+    "dependents": [
+      { "projectId": "clover-core", "relationship": "Provides minimized source and evidence pointers rather than raw knowledge payloads.", "status": "reported" },
+      { "projectId": "clover-warroom", "relationship": "May provide access-controlled evidence pointers without public content replication.", "status": "proposed" },
+      { "projectId": "cloverapps-ai", "relationship": "Provides owner-window source freshness and restore-status summaries.", "status": "proposed" }
+    ]
+  },
+  "latestAcceptedReceipt": {
+    "status": "unknown",
+    "receiptId": null,
+    "receiptHash": null,
+    "sourceRef": null
+  },
+  "activeOwnerDecision": {
+    "status": "none-known",
+    "decisionId": null,
+    "summary": "No standing authority to ingest private sources or change storage is recorded in this capsule.",
+    "sourceRef": null
+  },
+  "recommendedNextAction": {
+    "actionId": "next:knowledge-hub-source-inventory",
+    "summary": "Prepare a minimized source inventory and an immutable restore-tested ingest proposal without copying private payloads into Core.",
+    "state": "owner-gated",
+    "requiredApproval": "exact-owner-approval",
+    "sourceBasis": "The current registry identifies architecture and restore coverage as incomplete."
+  },
+  "rollbackAnchors": [
+    { "anchorType": "git-commit", "identity": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24", "status": "verified", "sourceRef": "github:chrisdortch/first#main" },
+    { "anchorType": "no-mutation", "identity": "No private source material copied into public Core", "status": "verified", "sourceRef": "AGENTS.md" }
+  ],
+  "capsuleHash": "7cd8aaa4154275f46f70a0420752d69bd5bd32bb9c967a52c86602beb53d5e2a"
+}

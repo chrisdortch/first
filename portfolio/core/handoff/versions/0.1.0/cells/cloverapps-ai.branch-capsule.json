@@ -1,0 +1,118 @@
+{
+  "documentType": "clover-handoff-branch-capsule",
+  "schemaVersion": "0.1.0",
+  "capsuleId": "cell-capsule:cloverapps-ai:20260820",
+  "recordedAt": "2026-08-20T21:19:42.000Z",
+  "project": {
+    "projectId": "cloverapps-ai",
+    "title": "CloverApps.ai",
+    "kind": "platform",
+    "portfolioArea": "clover-control-plane",
+    "purpose": "Provide the protected owner window over governed Core status, approvals, receipts, and bounded project handoffs."
+  },
+  "privacy": {
+    "sensitivity": "owner-internal",
+    "containsRawCellData": false,
+    "containsSecretValues": false,
+    "containsPersonalData": false,
+    "publicCapsuleSafe": true,
+    "boundarySummary": "The public capsule records only version and relationship metadata; owner intelligence and Cell payloads stay outside the public repository."
+  },
+  "identities": {
+    "live": {
+      "status": "reported",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": "CloverApps 7.4.2",
+      "deploymentId": null,
+      "url": "https://cloverapps.ai",
+      "observedAt": "2026-08-20T00:00:00.000Z",
+      "sourceRef": "owner-provided-exact-starting-identity",
+      "confidence": "high"
+    },
+    "current": {
+      "status": "reported",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": "Sites 80 preserved base checkpoint",
+      "deploymentId": null,
+      "url": null,
+      "observedAt": "2026-08-20T00:00:00.000Z",
+      "sourceRef": "owner-provided-exact-starting-identity",
+      "confidence": "high"
+    },
+    "candidate": {
+      "status": "reported",
+      "repository": null,
+      "branch": null,
+      "commit": "029a4a1a18443277bd1e19804d1544ed798e6de8",
+      "tree": null,
+      "version": "CloverApps 7.4.3 / Sites 81 saved and undeployed",
+      "deploymentId": null,
+      "url": null,
+      "observedAt": "2026-08-20T00:00:00.000Z",
+      "sourceRef": "CloverApps_7.4.3_Sites81_Source_Save_Receipt_2026-08-20.json",
+      "confidence": "high"
+    }
+  },
+  "links": {
+    "repository": null,
+    "publicUrl": "https://cloverapps.ai",
+    "sources": [
+      { "kind": "public-url", "ref": "https://cloverapps.ai", "status": "reported" },
+      { "kind": "site-version", "ref": "Sites 80 preserved base checkpoint", "status": "reported" },
+      { "kind": "site-version", "ref": "Sites 81 / CloverApps 7.4.3 / 029a4a1a18443277bd1e19804d1544ed798e6de8", "status": "reported" },
+      { "kind": "registry", "ref": "portfolio/registry/projects.json#cloverapps-ai", "status": "verified" }
+    ]
+  },
+  "verification": {
+    "asOf": "2026-08-20T21:19:42.000Z",
+    "freshness": "recent",
+    "checkedSources": ["owner-source-bound-receipt", "core-registry"],
+    "unavailableSources": ["sites-live-readback"]
+  },
+  "health": {
+    "state": "partially-verified",
+    "blockers": [
+      "Sites 81 has no source-bound preview URL.",
+      "An owner-only hosted preview cannot be claimed from the saved source checkpoint alone."
+    ],
+    "unknowns": ["Current live runtime source binding was not refreshed in this capsule pass."]
+  },
+  "relationships": {
+    "dependencies": [
+      { "projectId": "clover-core", "relationship": "Reads governed status, authority, relationships, and receipts.", "status": "reported" },
+      { "projectId": "clover-context-gateway", "relationship": "Uses a read-only minimized context compiler without changing the installed canonical connection.", "status": "reported" }
+    ],
+    "dependents": []
+  },
+  "latestAcceptedReceipt": {
+    "status": "none-known",
+    "receiptId": null,
+    "receiptHash": null,
+    "sourceRef": null
+  },
+  "activeOwnerDecision": {
+    "status": "active",
+    "decisionId": "decision:preserve-cloverapps-sites81",
+    "summary": "Preserve live 7.4.2, Sites 80, and saved undeployed Sites 81 as separate identities; do not deploy or overwrite them in this gate.",
+    "sourceRef": "current-owner-authorization"
+  },
+  "recommendedNextAction": {
+    "actionId": "next:owner-only-cloverapps-candidate-readback",
+    "summary": "When separately authorized, create a source-bound owner-only candidate readback without changing the live site or Sites 81 checkpoint.",
+    "state": "owner-gated",
+    "requiredApproval": "exact-owner-approval",
+    "sourceBasis": "Saved Sites 81 source identity and the absence of a candidate preview URL."
+  },
+  "rollbackAnchors": [
+    { "anchorType": "source-version", "identity": "CloverApps 7.4.2 live", "status": "reported", "sourceRef": "https://cloverapps.ai" },
+    { "anchorType": "site-version", "identity": "Sites 80", "status": "reported", "sourceRef": "owner-provided-exact-starting-identity" },
+    { "anchorType": "site-version", "identity": "Sites 81 / 029a4a1a18443277bd1e19804d1544ed798e6de8", "status": "reported", "sourceRef": "CloverApps_7.4.3_Sites81_Source_Save_Receipt_2026-08-20.json" }
+  ],
+  "capsuleHash": "4b165bb68ab8c92ce3fd22d34576c34058a9f37718eb4f77cfa5f3a17062a781"
+}

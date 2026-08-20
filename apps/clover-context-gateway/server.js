@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -21,11 +22,12 @@ const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 65536);
 const widgetHtml = readFileSync(path.join(appDir, "public", "command-center.html"), "utf8");
 const WIDGET_URI = "ui://clover/command-center.html";
 const MCP_PATH = "/mcp";
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 
 const SERVER_INSTRUCTIONS = [
   "When the user says 'Use CloverApps to…', call prepare_clover_command before planning execution.",
   "For project/status questions, search first and fetch only the target records needed for the current task.",
+  "When the optional Clover Today candidate is available, treat it as a dated candidate sibling to the canonical Command Packet, never as a replacement for current status or as authority.",
   "Canonical Clover records preserve intent and dated state; before any mutation, refresh materially relevant live facts through the native GitHub, Vercel, Drive, Sites, analytics, or Vault connector available in the conversation.",
   "Treat unavailable or contradictory facts as unknown. Never infer merge, production deployment, production-data access, domain/DNS, secret, purchase, messaging, agreement, or publication authority.",
   "Use deterministic checks before model visual/browser review and return exact receipts and status evidence.",
@@ -49,6 +51,201 @@ function resultWithStructured(payload) {
   return {
     content: [{ type: "text", text: JSON.stringify(payload) }],
     structuredContent: payload,
+  };
+}
+
+function firstPresent(record, keys) {
+  if (!record || typeof record !== "object") return null;
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null) return record[key];
+  }
+  return null;
+}
+
+function componentPointer(component) {
+  return {
+    id: component?.id || null,
+    available: component?.available === true,
+    metadata: component?.metadata || null,
+  };
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function documentSelfHash(document, field, { prefix = false } = {}) {
+  if (!document || typeof document !== "object" || Array.isArray(document)) return null;
+  const clone = structuredClone(document);
+  delete clone[field];
+  const digest = createHash("sha256").update(canonicalJson(clone)).digest("hex");
+  return prefix ? `sha256:${digest}` : digest;
+}
+
+function componentHasIdentity(component, id, relativePath) {
+  return component?.id === id
+    && component?.metadata?.relativePath === relativePath;
+}
+
+function candidateStatusContract(component) {
+  const data = component?.data;
+  return componentHasIdentity(component, "clover://status/candidate/2026-08-20", "portfolio/status/candidates/2026-08-20/status.json")
+    && data?.documentType === "clover-master-status-candidate"
+    && data?.schemaVersion === "0.2-candidate"
+    && data?.status === "candidate-unmerged-undeployed"
+    && data?.statusHash === documentSelfHash(data, "statusHash", { prefix: true });
+}
+
+function registryCandidateContract(component) {
+  const data = component?.data;
+  return componentHasIdentity(component, "clover://registry/candidate/2.0.0", "portfolio/registry/projections/core-project-index.v2.json")
+    && data?.documentType === "clover-core-portfolio-projection"
+    && data?.schemaVersion === "2.0.0"
+    && data?.status === "candidate-unmerged-undeployed"
+    && data?.projectionPolicy?.rawCellDataIncluded === false
+    && data?.architecture?.rawCellDataStoredInKernel === false
+    && Array.isArray(data?.projects)
+    && data.projects.length === 45;
+}
+
+function sessionContract(component) {
+  const data = component?.data;
+  return componentHasIdentity(component, "clover://today/candidate/2026-08-20", "portfolio/core/today/2026-08-20/session.json")
+    && data?.documentType === "clover-today-owner-session"
+    && data?.schemaVersion === "0.1.0"
+    && /^[a-f0-9]{64}$/.test(data?.sessionHash || "")
+    && data?.sessionHash !== "0".repeat(64)
+    && data?.sessionHash === documentSelfHash(data, "sessionHash");
+}
+
+function handoffContract(component) {
+  const data = component?.data;
+  return componentHasIdentity(component, "clover://handoff/index", "portfolio/core/handoff/index.json")
+    && data?.documentType === "clover-handoff-action-receipt-index"
+    && data?.schemaVersion === "0.1.0"
+    && /^[a-f0-9]{64}$/.test(data?.indexHash || "")
+    && data?.indexHash === documentSelfHash(data, "indexHash")
+    && Array.isArray(data?.entries);
+}
+
+function componentsShareExactSource(components) {
+  const metadata = components.map((component) => component?.metadata);
+  if (metadata.some((item) => !item || item.found !== true)) return false;
+  const [{ repository, commit }] = metadata;
+  return typeof repository === "string"
+    && repository.length > 0
+    && /^[a-f0-9]{40}$/.test(commit || "")
+    && metadata.every((item) => item.repository === repository && item.commit === commit);
+}
+
+function matchesPendingHandoff(entry, { actionId, envelopePath, envelopeHash }) {
+  return entry?.actionId === actionId
+    && entry?.envelopePath === envelopePath
+    && entry?.envelopeHash === envelopeHash
+    && entry?.status === "pending"
+    && entry?.outcome === "pending"
+    && entry?.lifecycle?.state === "proposed"
+    && entry?.lifecycle?.singleUse === true
+    && entry?.lifecycle?.consumedAt === null
+    && entry?.lifecycle?.consumedByReceiptId === null
+    && entry?.lifecycle?.revokedAt === null
+    && entry?.lifecycle?.revocationEvidenceHash === null
+    && entry?.ownerApproval?.status === "pending"
+    && entry?.receiptId === null
+    && entry?.receiptPath === null
+    && entry?.receiptHash === null;
+}
+
+export function composeTodaySibling(snapshot = {}) {
+  const session = snapshot.today || { id: "clover://today/candidate/2026-08-20", available: false, data: null, metadata: null };
+  const candidateStatus = snapshot.candidateStatus || { available: false, data: null, metadata: null };
+  const registryCandidate = snapshot.registryCandidate || { available: false, data: null, metadata: null };
+  const handoff = snapshot.handoff || { available: false, data: null, metadata: null };
+  const source = session.available === true && session.data && typeof session.data === "object" ? session.data : null;
+  const action = firstPresent(source, ["action", "recommendedAction", "actionEnvelope"]);
+  const topPriorities = firstPresent(source, ["topPriorities"]);
+  const recommendation = firstPresent(source, ["recommendation"]);
+  const actionId = firstPresent(source, ["actionId"]) ?? firstPresent(action, ["actionId", "id", "envelopeId"]);
+  const envelopePath = firstPresent(source, ["envelopePath"]) ?? firstPresent(action, ["envelopePath", "path"]);
+  const envelopeHash = firstPresent(source, ["envelopeHash"]) ?? firstPresent(action, ["envelopeHash", "hash"]);
+  const handoffIndexPath = firstPresent(source, ["handoffIndexPath"]);
+  const handoffIndexHash = firstPresent(source, ["handoffIndexHash"]);
+  const connectorPlan = firstPresent(source, ["connectorPlan"]);
+  const authorityRequired = firstPresent(source, ["authorityRequired"]);
+  const sourceFreshness = firstPresent(source, ["sourceFreshness"]);
+  const privacy = firstPresent(source, ["privacy"]);
+  const handoffEntries = Array.isArray(handoff?.data?.entries) ? handoff.data.entries : [];
+  const handoffMatches = handoffEntries.filter((entry) => matchesPendingHandoff(entry, {
+    actionId,
+    envelopePath,
+    envelopeHash,
+  }));
+  const componentSourcesExact = componentsShareExactSource([session, candidateStatus, registryCandidate, handoff]);
+  const complete = session.available === true
+    && candidateStatus.available === true
+    && registryCandidate.available === true
+    && handoff.available === true
+    && Array.isArray(topPriorities)
+    && topPriorities.length === 3
+    && recommendation !== null
+    && typeof actionId === "string"
+    && /^CLOVER-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{3}$/.test(actionId)
+    && typeof envelopePath === "string"
+    && envelopePath.length > 0
+    && typeof envelopeHash === "string"
+    && /^[a-f0-9]{64}$/.test(envelopeHash)
+    && typeof handoffIndexPath === "string"
+    && /^portfolio\/core\/handoff\/versions\/0\.1\.0\/indexes\/action-receipt-index-[0-9]{4}\.json$/.test(handoffIndexPath)
+    && typeof handoffIndexHash === "string"
+    && /^[a-f0-9]{64}$/.test(handoffIndexHash)
+    && handoffIndexHash === handoff?.data?.indexHash
+    && Array.isArray(connectorPlan)
+    && connectorPlan.length > 0
+    && Array.isArray(authorityRequired)
+    && authorityRequired.length > 0
+    && sourceFreshness !== null
+    && privacy?.publicSanitizedProjection === true
+    && privacy?.containsRawCellData === false
+    && privacy?.containsPlaintextSecrets === false
+    && privacy?.containsProductionPrivateData === false
+    && handoffMatches.length === 1
+    && componentSourcesExact
+    && candidateStatusContract(candidateStatus)
+    && registryCandidateContract(registryCandidate)
+    && sessionContract(session)
+    && handoffContract(handoff);
+
+  return {
+    id: session.id || "clover://today/candidate/2026-08-20",
+    available: complete,
+    data: complete
+      ? {
+          ...source,
+          candidateStatus: candidateStatus.data,
+          topPriorities,
+          recommendation,
+          actionId,
+          envelopePath,
+          envelopeHash,
+          connectorPlan,
+          authorityRequired,
+        }
+      : null,
+    metadata: {
+      ...(session.metadata || {}),
+      complete,
+      contract: "minimum-useful-core-2026-08-20",
+    },
+    components: {
+      candidateStatus: componentPointer(candidateStatus),
+      registryCandidate: componentPointer(registryCandidate),
+      session: componentPointer(session),
+      handoff: componentPointer(handoff),
+    },
   };
 }
 
@@ -117,6 +314,7 @@ function createCloverServer(baseUrl) {
     },
     async ({ request }) => {
       const snapshot = await contextStore.snapshot();
+      const today = composeTodaySibling(snapshot);
       const packet = prepareCommand({
         request,
         projects: snapshot.projects,
@@ -126,7 +324,11 @@ function createCloverServer(baseUrl) {
       });
       return {
         content: [{ type: "text", text: commandPrompt(packet) }],
-        structuredContent: { packet, followUpPrompt: commandPrompt(packet) },
+        structuredContent: {
+          packet,
+          today,
+          followUpPrompt: commandPrompt(packet),
+        },
       };
     }
   );
@@ -143,6 +345,7 @@ function createCloverServer(baseUrl) {
     },
     async ({ request = "" }) => {
       const snapshot = await contextStore.snapshot();
+      const today = composeTodaySibling(snapshot);
       const packet = request
         ? prepareCommand({ request, projects: snapshot.projects, status: snapshot.status, pointer: snapshot.pointer, source: snapshot.source })
         : null;
@@ -159,6 +362,7 @@ function createCloverServer(baseUrl) {
             estimateAsOf,
             verificationStatus,
           })),
+          today,
           packet,
           followUpPrompt: packet ? commandPrompt(packet) : "",
         },
@@ -269,6 +473,7 @@ export async function handler(req, res) {
       try {
         const body = await readJsonBody(req);
         const snapshot = await contextStore.snapshot();
+        const today = composeTodaySibling(snapshot);
         const packet = prepareCommand({
           request: body.request,
           projects: snapshot.projects,
@@ -276,7 +481,11 @@ export async function handler(req, res) {
           pointer: snapshot.pointer,
           source: snapshot.source,
         });
-        return json(res, 200, { packet, followUpPrompt: commandPrompt(packet) });
+        return json(res, 200, {
+          packet,
+          today,
+          followUpPrompt: commandPrompt(packet),
+        });
       } catch (error) {
         return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
       }

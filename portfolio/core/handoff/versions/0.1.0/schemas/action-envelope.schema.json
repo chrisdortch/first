@@ -1,0 +1,382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core/handoff/0.1.0/action-envelope.schema.json",
+  "title": "Clover Handoff Action Envelope 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "actionId",
+    "envelopeId",
+    "branchCapsuleId",
+    "branchCapsuleHash",
+    "createdAt",
+    "expiresAt",
+    "lifecycle",
+    "operation",
+    "requestedOutcome",
+    "target",
+    "scope",
+    "sourceRequirements",
+    "evidenceRequirements",
+    "readbackRequirements",
+    "requestedAuthority",
+    "authority",
+    "approval",
+    "dataBoundary",
+    "costBoundary",
+    "stopConditions",
+    "envelopeHash"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-handoff-action-envelope" },
+    "schemaVersion": { "const": "0.1.0" },
+    "actionId": { "$ref": "#/$defs/actionId" },
+    "envelopeId": { "$ref": "#/$defs/identifier" },
+    "branchCapsuleId": { "$ref": "#/$defs/identifier" },
+    "branchCapsuleHash": { "$ref": "#/$defs/sha256" },
+    "createdAt": { "$ref": "#/$defs/timestamp" },
+    "expiresAt": { "$ref": "#/$defs/timestamp" },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuanceState",
+        "singleUse",
+        "revocationStatus",
+        "revokedAt",
+        "revocationEvidenceHash",
+        "consumptionStatus",
+        "consumedAt",
+        "consumedByReceiptId"
+      ],
+      "properties": {
+        "issuanceState": { "enum": ["available", "proposed"] },
+        "singleUse": { "const": true },
+        "revocationStatus": { "enum": ["not-revoked", "revoked"] },
+        "revokedAt": { "type": ["string", "null"], "format": "date-time" },
+        "revocationEvidenceHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "consumptionStatus": { "const": "unconsumed-at-issuance" },
+        "consumedAt": { "const": null },
+        "consumedByReceiptId": { "const": null }
+      }
+    },
+    "operation": {
+      "enum": [
+        "refresh-public-candidate-status",
+        "reconcile-public-project-identity",
+        "prepare-isolated-candidate-branch",
+        "run-non-production-validation",
+        "prepare-source-bound-receipt"
+      ]
+    },
+    "requestedOutcome": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "repository", "branch", "expectedCommit", "environment"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/identifier" },
+        "repository": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "branch": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$" },
+        "expectedCommit": { "type": ["string", "null"], "pattern": "^[a-f0-9]{40}$" },
+        "environment": { "enum": ["public-metadata", "local-checkout", "non-production-preview"] }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedConnectors",
+        "allowedReadPaths",
+        "allowedWritePaths",
+        "allowedRecordingPaths",
+        "allowedActions",
+        "prohibitedActions"
+      ],
+      "properties": {
+        "allowedConnectors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/connector" }
+        },
+        "allowedReadPaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "allowedWritePaths": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "allowedRecordingPaths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/repositoryPath" }
+        },
+        "allowedActions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/allowedAction" }
+        },
+        "prohibitedActions": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/prohibitedAction" }
+        }
+      }
+    },
+    "sourceRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceRequirementId", "sourceId", "identityMode", "expectedIdentity", "required", "privacyClass"],
+        "properties": {
+          "sourceRequirementId": { "$ref": "#/$defs/identifier" },
+          "sourceId": {
+            "enum": ["github", "vercel", "clover-context-gateway", "local-canonical-checkout"]
+          },
+          "identityMode": { "enum": ["exact", "discover"] },
+          "expectedIdentity": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+          "required": { "const": true },
+          "privacyClass": {
+            "enum": ["public-governance-metadata", "public-source-identity", "sanitized-receipt-metadata"]
+          }
+        }
+      }
+    },
+    "evidenceRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["evidenceId", "kind", "exactSourceRequired", "sourceBoundRequired", "required"],
+        "properties": {
+          "evidenceId": { "$ref": "#/$defs/identifier" },
+          "kind": { "enum": ["source-identity", "cleanliness", "ancestry", "deployment", "receipt"] },
+          "exactSourceRequired": { "type": "boolean" },
+          "sourceBoundRequired": { "type": "boolean" },
+          "required": { "const": true }
+        }
+      }
+    },
+    "readbackRequirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["readbackId", "connector", "subject", "expectedIdentity", "required", "failIfUnavailable"],
+        "properties": {
+          "readbackId": { "$ref": "#/$defs/identifier" },
+          "connector": { "$ref": "#/$defs/connector" },
+          "subject": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "expectedIdentity": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+          "required": { "const": true },
+          "failIfUnavailable": { "const": true }
+        }
+      }
+    },
+    "requestedAuthority": { "$ref": "#/$defs/authority" },
+    "authority": { "$ref": "#/$defs/authority" },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "requiredApproverId", "status", "approvalEvidenceHash"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "requiredApproverId": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["not-required", "proposed-unapproved"] },
+        "approvalEvidenceHash": { "const": null }
+      }
+    },
+    "dataBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "allowedClasses",
+        "rawCellDataAllowed",
+        "privateDataAllowed",
+        "secretValuesAllowed",
+        "productionDataReadAllowed"
+      ],
+      "properties": {
+        "allowedClasses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "public-governance-metadata",
+              "public-source-identity",
+              "sanitized-receipt-metadata"
+            ]
+          }
+        },
+        "rawCellDataAllowed": { "const": false },
+        "privateDataAllowed": { "const": false },
+        "secretValuesAllowed": { "const": false },
+        "productionDataReadAllowed": { "const": false }
+      }
+    },
+    "costBoundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currency",
+        "maxExplicitPurchaseOrMoneyMovementUsd",
+        "explicitPurchaseOrMoneyMovementAuthorized",
+        "providerMeteredUsageCostStatus"
+      ],
+      "properties": {
+        "currency": { "const": "USD" },
+        "maxExplicitPurchaseOrMoneyMovementUsd": { "const": 0 },
+        "explicitPurchaseOrMoneyMovementAuthorized": { "const": false },
+        "providerMeteredUsageCostStatus": { "const": "unknown" }
+      }
+    },
+    "stopConditions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "source-identity-changed",
+          "branch-not-clean",
+          "scope-expansion-required",
+          "private-data-required",
+          "secret-required",
+          "production-action-required",
+          "rollback-unproven",
+          "connector-unavailable"
+        ]
+      }
+    },
+    "envelopeHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "actionId": { "type": "string", "pattern": "^CLOVER-\\d{4}-\\d{2}-\\d{2}-\\d{3}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "repository": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._*?\\[\\]{}/-]+$"
+    },
+    "gitSha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "connector": {
+      "enum": ["github", "vercel", "clover-context-gateway", "local-canonical-checkout"]
+    },
+    "allowedAction": {
+      "enum": [
+        "read-public-metadata",
+        "verify-exact-identity",
+        "verify-local-cleanliness",
+        "verify-source-ancestry",
+        "assemble-sanitized-receipt",
+        "record-handoff-artifacts",
+        "create-isolated-branch",
+        "commit-candidate",
+        "push-candidate-branch",
+        "open-draft-pull-request",
+        "run-local-validation",
+        "create-non-production-preview"
+      ]
+    },
+    "prohibitedAction": {
+      "enum": [
+        "merge",
+        "production-deployment",
+        "production-data-access",
+        "persistent-configuration-change",
+        "domain-or-alias-change",
+        "secret-change",
+        "external-message",
+        "payment-exercise",
+        "purchase"
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "readPublicMetadata",
+        "createIsolatedBranch",
+        "commitCandidate",
+        "pushCandidateBranch",
+        "openDraftPullRequest",
+        "runNonProductionChecks",
+        "createNonProductionPreview",
+        "recordHandoffArtifacts",
+        "standingAuthority",
+        "mergeAuthorized",
+        "productionDeploymentAuthorized",
+        "productionDataAccessAuthorized",
+        "persistentConfigurationChangeAuthorized",
+        "externalMessageAuthorized",
+        "purchaseAuthorized"
+      ],
+      "properties": {
+        "readPublicMetadata": { "type": "boolean" },
+        "createIsolatedBranch": { "type": "boolean" },
+        "commitCandidate": { "type": "boolean" },
+        "pushCandidateBranch": { "type": "boolean" },
+        "openDraftPullRequest": { "type": "boolean" },
+        "runNonProductionChecks": { "type": "boolean" },
+        "createNonProductionPreview": { "type": "boolean" },
+        "recordHandoffArtifacts": { "type": "boolean" },
+        "standingAuthority": { "const": false },
+        "mergeAuthorized": { "const": false },
+        "productionDeploymentAuthorized": { "const": false },
+        "productionDataAccessAuthorized": { "const": false },
+        "persistentConfigurationChangeAuthorized": { "const": false },
+        "externalMessageAuthorized": { "const": false },
+        "purchaseAuthorized": { "const": false }
+      }
+    }
+  }
+}

@@ -3,9 +3,27 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createContextStore, createGitHubContextStore } from "../lib/context-store.js";
+import { createAutoContextStore, createContextStore, createGitHubContextStore, resolveDefaultSourceRef } from "../lib/context-store.js";
 
-function fixtureRoot() {
+test("deployment source selection prefers exact commit bindings over mutable refs", () => {
+  assert.equal(resolveDefaultSourceRef({ CONTEXT_SOURCE_REF: "main" }), "main");
+  assert.equal(
+    resolveDefaultSourceRef({ CONTEXT_SOURCE_REF: "main", VERCEL_GIT_COMMIT_SHA: "a".repeat(40) }),
+    "a".repeat(40),
+  );
+  assert.equal(
+    resolveDefaultSourceRef({
+      CONTEXT_SOURCE_REF: "main",
+      VERCEL_GIT_COMMIT_SHA: "a".repeat(40),
+      CONTEXT_SOURCE_COMMIT: "b".repeat(40),
+    }),
+    "b".repeat(40),
+  );
+  assert.throws(() => resolveDefaultSourceRef({ CONTEXT_SOURCE_COMMIT: "short" }), /full lowercase Git commit SHA/);
+  assert.throws(() => resolveDefaultSourceRef({ VERCEL_GIT_COMMIT_SHA: "short" }), /full lowercase Git commit SHA/);
+});
+
+function fixtureRoot({ withCandidates = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "clover-context-"));
   const write = (relativePath, content) => {
     const file = path.join(root, relativePath);
@@ -37,6 +55,35 @@ function fixtureRoot() {
     "portfolio/context/COST_POLICY.md": "# Cost\n",
     "portfolio/context/LIVE_ADAPTER_REGISTRY.json": { adapters: [] },
   })) write(relativePath, content);
+  if (withCandidates) {
+    for (const [relativePath, content] of Object.entries({
+      "portfolio/status/candidates/2026-08-20/status.json": {
+        documentType: "clover-master-status-candidate",
+        asOf: "2026-08-20",
+        status: "candidate-unmerged-undeployed",
+      },
+      "portfolio/registry/projections/core-project-index.v2.json": {
+        documentType: "clover-core-portfolio-projection",
+        schemaVersion: "2.0.0",
+        projects: [{ projectId: "synthetic-cell", title: "Synthetic Cell" }],
+      },
+      "portfolio/core/today/2026-08-20/session.json": {
+        documentType: "clover-today-owner-session",
+        asOf: "2026-08-20",
+        topPriorities: ["Synthetic priority"],
+        recommendedNextAction: "Review the synthetic candidate.",
+      },
+      "portfolio/core/handoff/index.json": {
+        documentType: "clover-handoff-ledger-index",
+        schemaVersion: "0.1.0",
+        entries: [],
+      },
+      "CLOVER_OWNER_START.md": "# Clover Owner Start\n",
+      "CHATGPT_PROJECT_INSTRUCTIONS.md": "# ChatGPT Project Instructions\n",
+      "CODEX_CLOVER_OPERATOR.md": "# Codex Clover Operator\n",
+      "CLOVER_CONNECTOR_ROUTING.md": "# Clover Connector Routing\n",
+    })) write(relativePath, content);
+  }
   return root;
 }
 
@@ -54,13 +101,94 @@ test("local search and fetch use canonical IDs", () => {
   }
 });
 
-test("local snapshot returns status and projects", () => {
+test("local snapshot preserves canonical v1 status and projects while optional candidates fail closed", () => {
   const root = fixtureRoot();
   try {
     const snapshot = createContextStore({ root, sourceRef: "fixture" }).snapshot();
     assert.equal(snapshot.status.overallMissionCompletionEstimate, 41);
     assert.equal(snapshot.projects.length, 2);
     assert.equal(snapshot.source.mode, "local");
+    assert.equal(Object.hasOwn(snapshot.source, "root"), false);
+    for (const key of ["candidateStatus", "registryCandidate", "today", "handoff"]) {
+      assert.equal(snapshot[key].available, false, `${key} must be unavailable`);
+      assert.equal(snapshot[key].data, null, `${key} must not fall back to canonical data`);
+      assert.equal(snapshot[key].metadata.found, false);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local candidate artifacts are optional, source-bound siblings", () => {
+  const root = fixtureRoot({ withCandidates: true });
+  try {
+    const commit = "d".repeat(40);
+    const store = createContextStore({ root, sourceRef: "fixture", sourceCommit: commit });
+    const snapshot = store.snapshot();
+
+    assert.equal(snapshot.status.overallMissionCompletionEstimate, 41);
+    assert.equal(snapshot.projects.length, 2);
+    assert.equal(snapshot.candidateStatus.available, true);
+    assert.equal(snapshot.candidateStatus.data.asOf, "2026-08-20");
+    assert.equal(snapshot.registryCandidate.available, true);
+    assert.equal(snapshot.registryCandidate.data.projects[0].projectId, "synthetic-cell");
+    assert.equal(snapshot.today.available, true);
+    assert.equal(snapshot.today.data.topPriorities[0], "Synthetic priority");
+    assert.equal(snapshot.handoff.available, true);
+    assert.equal(snapshot.handoff.metadata.commit, commit);
+    assert.equal(snapshot.handoff.metadata.relativePath, "portfolio/core/handoff/index.json");
+    assert.equal(snapshot.handoff.metadata.repository, "chrisdortch/first");
+
+    const ownerGuide = store.fetch("clover://owner/start");
+    assert.equal(ownerGuide.metadata.relativePath, "CLOVER_OWNER_START.md");
+    assert.equal(ownerGuide.metadata.commit, commit);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("auto local mode binds Vercel's exact Git commit as component metadata", () => {
+  const root = fixtureRoot({ withCandidates: true });
+  try {
+    const commit = "9".repeat(40);
+    const store = createAutoContextStore({
+      root,
+      environment: {
+        CONTEXT_SOURCE_MODE: "local",
+        CONTEXT_SOURCE_REF: "main",
+        VERCEL_GIT_COMMIT_SHA: commit,
+      },
+    });
+    const snapshot = store.snapshot();
+    assert.equal(snapshot.source.ref, commit);
+    assert.equal(snapshot.source.commit, commit);
+    for (const key of ["candidateStatus", "registryCandidate", "today", "handoff"]) {
+      assert.equal(snapshot[key].metadata.commit, commit);
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("corrupt optional candidate JSON fails closed without replacing canonical v1 context", () => {
+  const root = fixtureRoot();
+  try {
+    const relativePath = "portfolio/core/today/2026-08-20/session.json";
+    const file = path.join(root, relativePath);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{not-json\n");
+    const commit = "e".repeat(40);
+    const store = createContextStore({ root, sourceRef: "fixture", sourceCommit: commit });
+    const snapshot = store.snapshot();
+
+    assert.equal(snapshot.status.overallMissionCompletionEstimate, 41);
+    assert.equal(snapshot.projects.length, 2);
+    assert.equal(snapshot.today.available, false);
+    assert.equal(snapshot.today.data, null);
+    assert.equal(snapshot.today.metadata.commit, commit);
+    assert.equal(snapshot.today.metadata.relativePath, relativePath);
+    assert.equal(store.fetch("clover://today/candidate/2026-08-20"), null);
+    assert.equal(store.search("owner session").some((item) => item.id === "clover://today/candidate/2026-08-20"), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -73,6 +201,9 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
     ["portfolio/status/current.json", JSON.stringify({ asOf: "2026-08-17", overallMissionCompletionEstimate: 41 })],
     ["portfolio/registry/projects.json", JSON.stringify({ projects: [{ projectId: "rollindd", title: "RollinD", repository: "chrisdortch/rollindd-platform" }] })],
     ["portfolio/NEXT.md", "# Current Next Work\n"],
+    ["portfolio/status/candidates/2026-08-20/status.json", JSON.stringify({ documentType: "clover-master-status-candidate", asOf: "2026-08-20" })],
+    ["portfolio/core/today/2026-08-20/session.json", JSON.stringify({ documentType: "clover-today-owner-session", topPriorities: ["Synthetic priority"] })],
+    ["portfolio/core/handoff/index.json", JSON.stringify({ documentType: "clover-handoff-ledger-index", entries: [] })],
   ]);
   const calls = [];
   const fetchImpl = async (url) => {
@@ -86,7 +217,7 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
     return new Response(documents.get(relativePath), { status: 200, headers: { "content-type": "text/plain" } });
   };
 
-  const store = createGitHubContextStore({ fetchImpl, cacheTtlMs: 60000 });
+  const store = createGitHubContextStore({ sourceRef: "main", fetchImpl, cacheTtlMs: 60000 });
   const results = await store.search("RollinD");
   assert.ok(results.some((result) => result.id === "clover://project/rollindd"));
   assert.equal(calls.some((url) => url.includes("raw.githubusercontent.com/chrisdortch/first/main/")), false);
@@ -100,10 +231,18 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
   const snapshot = await store.snapshot();
   assert.equal(snapshot.source.commit, commit);
   assert.equal(snapshot.status.overallMissionCompletionEstimate, 41);
+  assert.equal(snapshot.candidateStatus.available, true);
+  assert.equal(snapshot.candidateStatus.data.asOf, "2026-08-20");
+  assert.equal(snapshot.today.available, true);
+  assert.equal(snapshot.today.data.topPriorities[0], "Synthetic priority");
+  assert.equal(snapshot.handoff.available, true);
+  assert.equal(snapshot.registryCandidate.available, false);
+  assert.equal(snapshot.registryCandidate.data, null);
 });
 
 test("remote documents fail closed instead of attributing mutable-ref bytes to a commit", async () => {
   const store = createGitHubContextStore({
+    sourceRef: "main",
     fetchImpl: async (url) => {
       if (String(url).includes("api.github.com/repos/chrisdortch/first/commits/main")) {
         return new Response(JSON.stringify({ sha: null }), {

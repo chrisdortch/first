@@ -10,11 +10,11 @@
   "priorDeploymentReceipt": "portfolio/context/evidence/0.2.0/public-remote-verification-2026-08-17.json",
   "status": "canonical-serverless-safe-public-preview-verified-chatgpt-connection-pending",
   "candidate": {
-    "version": "0.3.0",
+    "version": "0.3.1",
     "status": "draft-unmerged-undeployed",
-    "branch": "platform/clover-core-trust-slice-v0.2-20260818",
-    "document": "portfolio/context/versions/0.3.0/CANDIDATE_STATUS.md",
-    "identity": "The exact candidate source commit is the checked-out GitHub SHA recorded by validation; this pointer does not relabel the deployed 0.2.0 source."
+    "branch": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "document": "portfolio/context/versions/0.3.1/CANDIDATE_STATUS.md",
+    "identity": "Version 0.3.1 is the additive owner-session candidate on the Core trunk-activation branch. Validation and preview receipts must bind its exact GitHub SHA; this pointer does not relabel the preserved 0.3.0 preview or deployed 0.2.0 source."
   },
   "completionEstimate": 90,
   "completionEstimateAsOf": "2026-08-17",
