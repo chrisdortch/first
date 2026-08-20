@@ -3,9 +3,7 @@
   "version": 2,
   "functions": {
     "api/index.js": {
-      "includeFiles": [
-        "public/**"
-      ],
+      "includeFiles": "public/**",
       "maxDuration": 30
     }
   },
