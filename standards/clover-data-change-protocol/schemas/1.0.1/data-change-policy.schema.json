@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-data-change-policy-1.0.1.json",
+  "title": "Clover Data Change Policy 1.0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocol",
+    "project",
+    "source",
+    "execution",
+    "commands",
+    "database",
+    "authority"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.1" },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "repository", "commit"],
+      "properties": {
+        "version": { "const": "1.0.1" },
+        "repository": { "const": "chrisdortch/first" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "repository", "class", "productionBranch"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+        "class": {
+          "enum": [
+            "database-backed",
+            "payment-data",
+            "waiver-records",
+            "legal-evidence",
+            "operational-state"
+          ]
+        },
+        "productionBranch": { "type": "string", "minLength": 1 },
+        "productionUrl": { "type": "string" },
+        "vercelProjectId": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baselineCommit", "productionCommitAtEnrollment"],
+      "properties": {
+        "baselineCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "productionCommitAtEnrollment": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "requireProductionAnchorUnchanged",
+        "allowedBranchPrefixes",
+        "allowedChangePaths",
+        "sensitivePaths",
+        "forbiddenEnvironmentVariables",
+        "forbiddenCapabilities"
+      ],
+      "properties": {
+        "mode": { "const": "disposable-database-only" },
+        "requireProductionAnchorUnchanged": { "const": true },
+        "allowedBranchPrefixes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "allowedChangePaths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "sensitivePaths": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "forbiddenEnvironmentVariables": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z0-9_]+$" }
+        },
+        "forbiddenCapabilities": {
+          "type": "array",
+          "minItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "production-database-read",
+              "production-database-write",
+              "production-migration",
+              "production-backup-or-restore",
+              "merge",
+              "production-deploy-or-promotion",
+              "domain-or-dns-change",
+              "secret-change",
+              "external-message",
+              "purchase"
+            ]
+          },
+          "allOf": [
+            { "contains": { "const": "production-database-read" } },
+            { "contains": { "const": "production-database-write" } },
+            { "contains": { "const": "production-migration" } },
+            { "contains": { "const": "production-backup-or-restore" } },
+            { "contains": { "const": "merge" } },
+            { "contains": { "const": "production-deploy-or-promotion" } },
+            { "contains": { "const": "domain-or-dns-change" } },
+            { "contains": { "const": "secret-change" } },
+            { "contains": { "const": "external-message" } },
+            { "contains": { "const": "purchase" } }
+          ]
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["install", "verify"],
+      "properties": {
+        "install": { "const": "npm ci" },
+        "verify": {
+          "oneOf": [
+            { "const": "npm test" },
+            { "type": "string", "pattern": "^npm run [A-Za-z0-9:_-]+$" }
+          ]
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "majorVersion",
+        "disposableDatabaseName",
+        "allowedTablePrefixes",
+        "baselineSqlPath",
+        "seedSqlPath",
+        "forwardSqlPath",
+        "assertionsSqlPath",
+        "reconciliationSqlPath",
+        "rollbackSqlPath",
+        "postRollbackAssertionsSqlPath",
+        "requireForwardIdempotency",
+        "requireRollback",
+        "reconciliationMode",
+        "allowDropTableInRollback",
+        "rejectPsqlMetaCommands",
+        "rejectSymbolicLinkSqlPaths"
+      ],
+      "properties": {
+        "engine": { "const": "postgresql" },
+        "majorVersion": { "const": 16 },
+        "disposableDatabaseName": { "const": "clover_data" },
+        "allowedTablePrefixes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*_$" }
+        },
+        "baselineSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "seedSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "forwardSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "assertionsSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "reconciliationSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "rollbackSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "postRollbackAssertionsSqlPath": { "$ref": "#/$defs/sqlPath" },
+        "requireForwardIdempotency": { "const": true },
+        "requireRollback": { "const": true },
+        "reconciliationMode": { "const": "preserve" },
+        "allowDropTableInRollback": { "const": false },
+        "rejectPsqlMetaCommands": { "const": true },
+        "rejectSymbolicLinkSqlPaths": { "const": true }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionDatabaseReadApproved",
+        "productionDatabaseWriteApproved",
+        "productionMigrationApproved",
+        "productionBackupOrRestoreApproved",
+        "mergeApproved",
+        "productionDeploymentApproved",
+        "domainOrDnsChangeApproved",
+        "secretChangeApproved",
+        "externalMessageApproved",
+        "purchaseApproved"
+      ],
+      "properties": {
+        "productionDatabaseReadApproved": { "const": false },
+        "productionDatabaseWriteApproved": { "const": false },
+        "productionMigrationApproved": { "const": false },
+        "productionBackupOrRestoreApproved": { "const": false },
+        "mergeApproved": { "const": false },
+        "productionDeploymentApproved": { "const": false },
+        "domainOrDnsChangeApproved": { "const": false },
+        "secretChangeApproved": { "const": false },
+        "externalMessageApproved": { "const": false },
+        "purchaseApproved": { "const": false }
+      }
+    }
+  },
+  "$defs": {
+    "sqlPath": {
+      "type": "string",
+      "minLength": 5,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]+\\.sql$"
+    }
+  }
+}

@@ -80,7 +80,7 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
     if (String(url).includes("api.github.com/repos/chrisdortch/first/commits/main")) {
       return new Response(JSON.stringify({ sha: commit }), { status: 200, headers: { "content-type": "application/json" } });
     }
-    const prefix = "https://raw.githubusercontent.com/chrisdortch/first/main/";
+    const prefix = `https://raw.githubusercontent.com/chrisdortch/first/${commit}/`;
     const relativePath = String(url).slice(prefix.length);
     if (!documents.has(relativePath)) return new Response("not found", { status: 404 });
     return new Response(documents.get(relativePath), { status: 200, headers: { "content-type": "text/plain" } });
@@ -89,6 +89,7 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
   const store = createGitHubContextStore({ fetchImpl, cacheTtlMs: 60000 });
   const results = await store.search("RollinD");
   assert.ok(results.some((result) => result.id === "clover://project/rollindd"));
+  assert.equal(calls.some((url) => url.includes("raw.githubusercontent.com/chrisdortch/first/main/")), false);
   assert.equal(calls.filter((url) => url.includes("portfolio/registry/projects.json")).length, 1);
   assert.equal(calls.some((url) => url.includes("portfolio/NEXT.md")), false);
 
@@ -99,4 +100,23 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
   const snapshot = await store.snapshot();
   assert.equal(snapshot.source.commit, commit);
   assert.equal(snapshot.status.overallMissionCompletionEstimate, 41);
+});
+
+test("remote documents fail closed instead of attributing mutable-ref bytes to a commit", async () => {
+  const store = createGitHubContextStore({
+    fetchImpl: async (url) => {
+      if (String(url).includes("api.github.com/repos/chrisdortch/first/commits/main")) {
+        return new Response(JSON.stringify({ sha: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Document fetch must not run without a bound commit: ${url}`);
+    },
+  });
+
+  await assert.rejects(
+    () => store.fetch("clover://status/current"),
+    /full Git commit SHA/,
+  );
 });

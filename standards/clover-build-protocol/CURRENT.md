@@ -13,4 +13,10 @@ Read:
 
 Version 1.0.0 remains preserved in its original directory and archive branch. Version 1.1.0 is additive: it centralizes reusable execution and schemas without granting new release authority.
 
+## Unvalidated candidate
+
+Version **1.2.0** is present only as `candidate-unvalidated-awaiting-exact-head-ci`. It adds schema-first execution, centrally enrolled policy/source identity, non-shell argv commands, source-state snapshots, and evidence-based side-effect observations. It is not current and makes no exact-head CI claim.
+
+Read [`versions/1.2.0/CLOVER_BUILD_PROTOCOL.md`](versions/1.2.0/CLOVER_BUILD_PROTOCOL.md) and [`versions/1.2.0/SECURITY_MODEL.md`](versions/1.2.0/SECURITY_MODEL.md) for candidate review.
+
 **This document is process guidance, not blanket authority to merge, deploy, purchase, communicate externally, change credentials, or mutate production data.**

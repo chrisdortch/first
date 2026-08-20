@@ -28,19 +28,28 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Verify exact candidate HEAD
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24'
       - name: Install pinned schema validator
         run: npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
       - name: Validate data protocol pointer
-        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/protocol-pointer.schema.json CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json
+        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/protocol-pointer.schema.json CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json
       - name: Validate data project registry
         run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-project-registry.schema.json standards/clover-data-change-protocol/registry/projects.json
-      - name: Validate policy template
+      - name: Validate preserved 1.0.0 policy template
         run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.template.json
+      - name: Validate 1.0.1 candidate policy template
+        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.v1.0.1.template.json
+      - name: Compile and validate 1.0.1 receipt schema
+        run: node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/data-change-receipt.schema.json standards/clover-data-change-protocol/schemas/1.0.1/fixtures/data-change-receipt.failed.fixture.json
       - name: Check runtime syntax
         run: |
           node --check standards/clover-data-change-protocol/runtime/v1.0.0/verify-data-boundaries.mjs
@@ -48,5 +57,20 @@ jobs:
           node --check standards/clover-data-change-protocol/runtime/v1.0.0/data-rehearsal.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.0/assemble-data-receipt.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs
-      - name: Verify protocol invariants
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/sql-safety.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/integrity.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/capture-state.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-state.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-final-receipt.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/validate-json.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-data-boundaries.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/run-project-command.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/data-rehearsal.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/assemble-data-receipt.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/validate-data-standard.mjs
+      - name: Run 1.0.1 adversarial hardening tests
+        run: node --test standards/clover-data-change-protocol/runtime/v1.0.1/test/hardening.test.mjs
+      - name: Verify preserved 1.0.0 protocol invariants
         run: node standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs
+      - name: Verify additive 1.0.1 candidate invariants
+        run: node standards/clover-data-change-protocol/runtime/v1.0.1/validate-data-standard.mjs

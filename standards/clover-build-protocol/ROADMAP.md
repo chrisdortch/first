@@ -7,7 +7,16 @@
 - Third-project portability proof.
 - No production release authority.
 
-## Next candidate: 1.2.0
+## Security-hardening candidate: 1.2.0
+
+Status: unvalidated until exact-head CI.
+
+- Centrally enrolled policy/source identity.
+- Schema-first, non-shell command execution.
+- Tracked-tree and policy/source invariants around project commands.
+- Evidence-based side-effect observations.
+
+## Later candidates
 
 - Durable evidence storage outside expiring CI artifacts.
 - Approved visual-baseline promotion rules.

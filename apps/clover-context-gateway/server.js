@@ -21,7 +21,7 @@ const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 65536);
 const widgetHtml = readFileSync(path.join(appDir, "public", "command-center.html"), "utf8");
 const WIDGET_URI = "ui://clover/command-center.html";
 const MCP_PATH = "/mcp";
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const SERVER_INSTRUCTIONS = [
   "When the user says 'Use CloverApps to…', call prepare_clover_command before planning execution.",

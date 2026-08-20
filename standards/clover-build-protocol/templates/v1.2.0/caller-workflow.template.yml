@@ -1,0 +1,18 @@
+name: Clover preview candidate 1.2
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clover-preview:
+    uses: chrisdortch/first/.github/workflows/clover-preview-v1.2.yml@REPLACE_WITH_EXACT_40_CHARACTER_COMMIT
+    with:
+      enrollment_path: standards/clover-build-protocol/enrollments/v1.2.0/replace-me.json
+      policy_path: .clover/project-policy.json
+
+# The exact SHA in `uses`, central enrollment record, and policy hash are
+# enrollment controls. A candidate change to any of them must fail the boundary.

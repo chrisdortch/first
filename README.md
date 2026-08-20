@@ -21,7 +21,7 @@ Start with [`AI_START_HERE.md`](AI_START_HERE.md).
 - Protocol: [`standards/clover-build-protocol/CURRENT.md`](standards/clover-build-protocol/CURRENT.md)
 - Registry: [`standards/clover-build-protocol/registry/projects.json`](standards/clover-build-protocol/registry/projects.json)
 
-**Clover Data Change Protocol 1.0.0** governs schema and persisted-data changes. Its default automation uses disposable PostgreSQL with synthetic records and refuses production database credentials.
+**Clover Data Change Protocol 1.0.0** remains the validated current standard for schema and persisted-data changes. Its default automation uses disposable PostgreSQL with synthetic records and refuses production database credentials. An additive 1.0.1 security-hardening candidate is explicitly unvalidated pending exact-head CI and a new disposable pilot.
 
 - Pointer: [`CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json`](CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json)
 - Protocol: [`standards/clover-data-change-protocol/CURRENT.md`](standards/clover-data-change-protocol/CURRENT.md)

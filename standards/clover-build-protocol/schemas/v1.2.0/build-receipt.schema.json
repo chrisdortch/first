@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-build-receipt-1.2.0.json",
+  "title": "Clover Build Receipt 1.2.0 candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocolVersion", "generatedAt", "protocol", "project", "source", "enrollment", "status", "authority", "checks", "observations", "artifacts"],
+  "properties": {
+    "schemaVersion": { "const": "1.2" },
+    "protocolVersion": { "const": "1.2.0" },
+    "generatedAt": { "type": "string" },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "workflow"],
+      "properties": {
+        "repository": { "const": "chrisdortch/first" },
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "workflow": { "const": ".github/workflows/clover-preview-v1.2.yml" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "title"],
+      "properties": {
+        "id": { "type": "string" },
+        "repository": { "type": "string" },
+        "title": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree", "baselineCommit", "baselineTree", "productionCommitAtEnrollment"],
+      "properties": {
+        "commit": { "type": ["string", "null"] },
+        "tree": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "baselineCommit": { "type": ["string", "null"] },
+        "baselineTree": { "type": ["string", "null"] },
+        "productionCommitAtEnrollment": { "type": ["string", "null"] }
+      }
+    },
+    "enrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "policySha256"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "sha256": { "type": ["string", "null"] },
+        "policySha256": { "type": ["string", "null"] }
+      }
+    },
+    "status": { "enum": ["passed", "failed", "incomplete"] },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseState", "productionEligible"],
+      "properties": {
+        "releaseState": { "const": "not-authorized" },
+        "productionEligible": { "const": false }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["passed", "failed", "skipped", "unavailable"] }
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["processExecutions", "trackedTreeMutation", "policyMutation", "sourceCommitMutation", "protocolCheckoutMutation", "externalProviderSideEffects"],
+      "properties": {
+        "processExecutions": { "type": "array" },
+        "trackedTreeMutation": { "$ref": "#/$defs/observation" },
+        "policyMutation": { "$ref": "#/$defs/observation" },
+        "sourceCommitMutation": { "$ref": "#/$defs/observation" },
+        "protocolCheckoutMutation": { "$ref": "#/$defs/observation" },
+        "externalProviderSideEffects": { "$ref": "#/$defs/observation" }
+      }
+    },
+    "browser": { "type": ["object", "null"] },
+    "artifacts": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["state", "basis"],
+      "properties": {
+        "state": { "enum": ["observed", "not-observed", "unknown"] },
+        "basis": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "protocol": { "type": "object", "properties": { "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } },
+          "source": {
+            "type": "object",
+            "properties": {
+              "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "baselineCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "baselineTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "productionCommitAtEnrollment": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+            }
+          },
+          "enrollment": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "policySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

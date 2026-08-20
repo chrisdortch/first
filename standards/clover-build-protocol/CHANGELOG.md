@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 candidate — 2026-08-20 America/Chicago
+
+Status: `candidate-unvalidated-awaiting-exact-head-ci`
+
+Added without modifying 1.1.0 or earlier artifacts:
+
+- schema validation before any project command;
+- a centrally enrolled raw policy hash, baseline commit/tree, and production anchor;
+- structured package-manager executable/argv commands executed without a shell;
+- before/after tracked-tree, policy, HEAD, and committed-tree evidence;
+- receipts that report measured observations and explicit provider-side unknowns;
+- a pre-1.2 SHA-256 immutability manifest and focused hardening tests.
+
+No exact-head CI, promotion, merge, or deployment is claimed.
+
 ## 1.1.0 — 2026-08-16 America/Chicago
 
 Status: `portable-pilot-validated`
