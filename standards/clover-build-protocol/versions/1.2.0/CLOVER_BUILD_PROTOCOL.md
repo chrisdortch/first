@@ -15,11 +15,14 @@ Version 1.2.0 is an additive security-hardening candidate. Version 1.1.0 remains
 7. Snapshot candidate HEAD, Git tree, tracked working-tree bytes, policy bytes, and tracked status.
 8. Execute only schema-approved executable/argv records with `shell: false`.
 9. Compare source state after every project-command group and after the browser audit.
-10. Emit a receipt containing observed evidence and explicit unknowns, never unsupported negative-attempt claims.
+10. Emit a receipt only after the exact complete check set, all workflow outcomes, core receipts/logs/contact sheets, and every browser screenshot have matched their sealed hashes.
+11. Validate the receipt schema, then independently rehash the receipt and every artifact from a fresh exact protocol control checkout.
 
 ## Authority boundary
 
 A passing candidate run authorizes no merge, production deployment, production-data mutation, domain or DNS change, credential change, external message, or purchase. Project policy, enrollment, and receipts all encode this boundary, but owner approval remains the authority.
+
+`status: passed` is structurally unavailable to an empty or partial receipt. Candidate schemas require all 37 named checks in protocol order, 13 core artifact records, and at least one sealed browser screenshot; the runtime applies the same contract before emission and again after schema validation.
 
 ## Enrollment is the identity root
 

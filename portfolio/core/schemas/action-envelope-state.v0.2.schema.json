@@ -4,7 +4,7 @@
   "title": "Clover Action Envelope Execution State",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "envelopeId", "authorityHash", "phase", "terminal", "reservedAt", "authoritySpentAt", "sideEffectStartedAt", "sideEffectFinishedAt", "completedAt", "handlerCalls", "readbackCalls", "compensationCalls", "effect", "handlerResult", "readback", "compensation", "error"],
+  "required": ["schemaVersion", "envelopeId", "authorityHash", "phase", "terminal", "reservedAt", "authoritySpentAt", "sideEffectStartedAt", "sideEffectFinishedAt", "completedAt", "handlerCalls", "readbackCalls", "compensationCalls", "effect", "executionMode", "handlerResult", "preflightReadback", "readback", "compensation", "error"],
   "properties": {
     "schemaVersion": { "const": "0.2" },
     "envelopeId": { "type": "string", "minLength": 1 },
@@ -12,6 +12,7 @@
     "phase": {
       "enum": [
         "reserved",
+        "preflight",
         "executing",
         "compensating",
         "failed-before-side-effect",
@@ -29,15 +30,76 @@
     "sideEffectFinishedAt": { "type": ["string", "null"], "format": "date-time" },
     "completedAt": { "type": ["string", "null"], "format": "date-time" },
     "handlerCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
-    "readbackCalls": { "type": "integer", "minimum": 0 },
+    "readbackCalls": { "type": "integer", "minimum": 0, "maximum": 3 },
     "compensationCalls": { "type": "integer", "minimum": 0, "maximum": 1 },
     "effect": {
       "enum": [null, "in-progress-or-unknown", "unknown-or-partial", "rolled-back-confirmed", "applied-confirmed"]
     },
+    "executionMode": { "enum": [null, "native-conditional-write", "verified-precondition-write"] },
     "handlerResult": { "type": ["object", "null"] },
+    "preflightReadback": { "type": ["object", "null"] },
     "readback": { "type": ["object", "null"] },
     "compensation": { "type": ["object", "null"] },
     "error": { "type": ["object", "null"] }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "phase": { "const": "succeeded" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "terminal": { "const": true }, "effect": { "const": "applied-confirmed" },
+        "handlerCalls": { "const": 1 }, "readbackCalls": { "const": 2 }, "compensationCalls": { "const": 0 },
+        "executionMode": { "enum": ["native-conditional-write", "verified-precondition-write"] },
+        "sideEffectStartedAt": { "type": "string" }, "sideEffectFinishedAt": { "type": "string" }, "completedAt": { "type": "string" },
+        "handlerResult": { "type": "object" }, "preflightReadback": { "type": "object" }, "readback": { "type": "object" },
+        "compensation": { "type": "null" }, "error": { "type": "null" }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "failed-before-side-effect" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "terminal": { "const": true }, "effect": { "type": "null" }, "handlerCalls": { "const": 0 },
+        "readbackCalls": { "maximum": 1 }, "compensationCalls": { "const": 0 }, "executionMode": { "type": "null" },
+        "sideEffectStartedAt": { "type": "null" }, "sideEffectFinishedAt": { "type": "null" }, "completedAt": { "type": "string" },
+        "handlerResult": { "type": "null" }, "readback": { "type": "null" }, "compensation": { "type": "null" }, "error": { "type": "object" }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "enum": ["partial-failure-uncompensated", "compensation-failed", "rollback-unverified", "rolled-back"] } }, "required": ["phase"] },
+      "then": { "properties": {
+        "terminal": { "const": true }, "handlerCalls": { "const": 1 },
+        "executionMode": { "enum": ["native-conditional-write", "verified-precondition-write"] },
+        "sideEffectStartedAt": { "type": "string" }, "sideEffectFinishedAt": { "type": "string" }, "completedAt": { "type": "string" },
+        "preflightReadback": { "type": "object" }, "error": { "type": "object" }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "partial-failure-uncompensated" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "unknown-or-partial" }, "readbackCalls": { "minimum": 1 }, "compensationCalls": { "const": 0 },
+        "compensation": { "type": "null" }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "compensation-failed" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "unknown-or-partial" }, "readbackCalls": { "minimum": 1 }, "compensationCalls": { "const": 1 },
+        "compensation": { "type": "object" }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "rollback-unverified" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "unknown-or-partial" }, "readbackCalls": { "minimum": 1 }, "compensationCalls": { "const": 1 },
+        "readback": { "type": "object" }, "compensation": { "type": "object" }
+      } }
+    },
+    {
+      "if": { "properties": { "phase": { "const": "rolled-back" } }, "required": ["phase"] },
+      "then": { "properties": {
+        "effect": { "const": "rolled-back-confirmed" }, "readbackCalls": { "enum": [2, 3] }, "compensationCalls": { "const": 1 },
+        "readback": { "type": "object" }, "compensation": { "type": "object" }
+      } }
+    }
+  ],
   "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
 }

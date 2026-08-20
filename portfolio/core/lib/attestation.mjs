@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { canonicalize, sha256Bytes, sha256Canonical } from "./canonical-json.mjs";
 
 function publicKeyDer(publicKey) {
@@ -102,34 +104,114 @@ export function verifyAttestation(attestation, options = {}) {
 }
 
 export class ChallengeStore {
-  #challenges = new Map();
+  constructor(directory) {
+    if (typeof directory !== "string" || directory.length === 0) {
+      throw new TypeError("ChallengeStore requires a persistent directory");
+    }
+    Object.defineProperty(this, "directory", {
+      value: path.resolve(directory),
+      enumerable: true,
+      writable: false,
+      configurable: false
+    });
+    fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    Object.seal(this);
+  }
+
+  #paths(challengeId) {
+    const key = sha256Bytes(challengeId);
+    return {
+      issued: path.join(this.directory, `${key}.challenge.json`),
+      consumed: path.join(this.directory, `${key}.consumed.json`)
+    };
+  }
+
+  #syncDirectory() {
+    let descriptor;
+    try {
+      descriptor = fs.openSync(this.directory, "r");
+      fs.fsyncSync(descriptor);
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
+  }
+
+  #writeOnce(file, value, duplicateMessage) {
+    let descriptor;
+    try {
+      descriptor = fs.openSync(file, "wx", 0o600);
+      fs.writeFileSync(descriptor, `${canonicalize(value)}\n`, "utf8");
+      fs.fsyncSync(descriptor);
+    } catch (error) {
+      if (error?.code === "EEXIST") throw new Error(duplicateMessage);
+      throw error;
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
+    this.#syncDirectory();
+  }
+
+  #readIssued(challengeId) {
+    const { issued } = this.#paths(challengeId);
+    let challenge;
+    try {
+      challenge = JSON.parse(fs.readFileSync(issued, "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") throw new Error("Challenge is unknown");
+      throw error;
+    }
+    if (challenge?.schemaVersion !== "0.2" || challenge.challengeId !== challengeId ||
+        !/^[a-f0-9]{64}$/.test(challenge.nonceHash || "") ||
+        !Number.isFinite(Date.parse(challenge.expiresAt))) {
+      throw new Error("Persisted challenge record is invalid");
+    }
+    return challenge;
+  }
 
   issue({ challengeId, nonce, expiresAt }) {
     if (!challengeId || !nonce || !Number.isFinite(Date.parse(expiresAt))) {
       throw new TypeError("Challenge requires an ID, nonce, and valid expiry");
     }
-    if (this.#challenges.has(challengeId)) throw new Error("Challenge already exists");
-    this.#challenges.set(challengeId, { nonceHash: sha256Bytes(nonce), expiresAt, consumedAt: null });
+    const { issued } = this.#paths(challengeId);
+    this.#writeOnce(issued, {
+      schemaVersion: "0.2",
+      challengeId,
+      nonceHash: sha256Bytes(nonce),
+      expiresAt
+    }, "Challenge already exists");
   }
 
   verify(attestation, now = new Date().toISOString()) {
-    const challenge = this.#challenges.get(attestation.challengeId);
-    if (!challenge) throw new Error("Challenge is unknown");
-    if (challenge.consumedAt) throw new Error("Challenge was already consumed");
-    if (Date.parse(challenge.expiresAt) <= Date.parse(now)) throw new Error("Challenge expired");
+    const nowMs = Date.parse(now);
+    if (!Number.isFinite(nowMs)) throw new Error("Challenge verification time is invalid");
+    const challenge = this.#readIssued(attestation.challengeId);
+    if (fs.existsSync(this.#paths(attestation.challengeId).consumed)) throw new Error("Challenge was already consumed");
+    if (Date.parse(challenge.expiresAt) <= nowMs) throw new Error("Challenge expired");
     if (challenge.nonceHash !== attestation.nonceHash) throw new Error("Challenge nonce mismatch");
     return { consumable: true };
   }
 
   consume(attestation, now = new Date().toISOString()) {
     this.verify(attestation, now);
-    const challenge = this.#challenges.get(attestation.challengeId);
-    challenge.consumedAt = now;
+    const challenge = this.#readIssued(attestation.challengeId);
+    const { consumed } = this.#paths(attestation.challengeId);
+    this.#writeOnce(consumed, {
+      schemaVersion: "0.2",
+      challengeId: attestation.challengeId,
+      nonceHash: challenge.nonceHash,
+      consumedAt: now
+    }, "Challenge was already consumed");
     return { consumed: true, consumedAt: now };
   }
 }
 
+Object.freeze(ChallengeStore.prototype);
+
 export function authenticateAttestation(attestation, options) {
+  if (!(options?.challengeStore instanceof ChallengeStore) ||
+      Object.getPrototypeOf(options.challengeStore) !== ChallengeStore.prototype) {
+    throw new Error("Authentication requires the process-persistent atomic ChallengeStore");
+  }
   const verified = verifyAttestation(attestation, options);
   const consumed = options.challengeStore.consume(attestation, options.now);
   return { ...verified, ...consumed };

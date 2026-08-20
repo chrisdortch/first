@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { commandList, compareProtocolSnapshots, compareSnapshots, executeCommand, localStatePassed, readJson, snapshotProtocolCheckout, snapshotSource, unknownExternalObservation, writeJson } from './lib.mjs';
+import { commandList, compareProtocolSnapshots, compareSnapshots, executeCommand, localStatePassed, readJson, sha256, snapshotProtocolCheckout, snapshotSource, unknownExternalObservation, writeJson } from './lib.mjs';
 
 const [policyArg, commandKey, outputDirArg] = process.argv.slice(2);
 if (!policyArg || !['install', 'verify'].includes(commandKey) || !outputDirArg) {
@@ -55,5 +55,6 @@ const receipt = {
   authority: { releaseState: 'not-authorized', productionEligible: false }
 };
 writeJson(path.join(outputDir, `${commandKey}.json`), receipt);
+if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `${commandKey}_log_sha256=${sha256(fs.readFileSync(logPath))}\n`);
 console.log(`Clover command group ${commandKey}: ${receipt.status}`);
 if (!passed) process.exit(1);

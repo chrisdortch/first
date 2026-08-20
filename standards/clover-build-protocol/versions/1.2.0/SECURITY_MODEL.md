@@ -25,6 +25,8 @@ The protocol checkout does not trust an input supplied by the candidate caller. 
 
 Receipts distinguish `observed`, `not-observed`, and `unknown`. `not-observed` requires a named local measurement and before/after evidence. Lack of provider telemetry is `unknown`; it is never rewritten as `Attempted: false`.
 
+A passed receipt has a closed evidence contract: all 37 stage, runner-outcome, and artifact-integrity checks; 13 core artifacts including command logs, browser log, contact sheets, and final state; and one or more browser screenshots sealed transitively by the browser receipt. Empty or incomplete evidence, duplicate artifact paths, reordered checks, unavailable outcomes, and hash mismatches cannot validate as passed. A fresh exact protocol control checkout independently rehashes the final receipt and each artifact before the workflow gate succeeds.
+
 ## Promotion rule
 
 Candidate code and candidate-local tests are not promotion proof. Promotion requires exact-head CI on the proposed commit, immutable evidence identifying that commit and run, review of the central enrollment model, and a separate pointer change. Until then, 1.1.0 remains current.

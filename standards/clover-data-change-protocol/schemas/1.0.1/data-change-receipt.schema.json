@@ -88,13 +88,30 @@
     "database": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "engine", "majorVersion", "hostClass", "databaseName"],
+      "required": ["mode", "engine", "majorVersion", "hostClass", "databaseName", "roleName", "roleSecurity"],
       "properties": {
         "mode": { "const": "disposable-database-only" },
         "engine": { "const": "postgresql" },
         "majorVersion": { "const": 16 },
         "hostClass": { "const": "local-ci-service" },
-        "databaseName": { "const": "clover_data" }
+        "databaseName": { "const": "clover_data" },
+        "roleName": { "const": "clover_rehearsal" },
+        "roleSecurity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["roleName", "superuser", "createDatabase", "createRole", "replication", "bypassRowLevelSecurity", "inherit", "canLogin", "memberships"],
+          "properties": {
+            "roleName": { "const": "clover_rehearsal" },
+            "superuser": { "const": false },
+            "createDatabase": { "const": false },
+            "createRole": { "const": false },
+            "replication": { "const": false },
+            "bypassRowLevelSecurity": { "const": false },
+            "inherit": { "const": false },
+            "canLogin": { "const": true },
+            "memberships": { "type": "array", "maxItems": 0 }
+          }
+        }
       }
     },
     "checks": {
@@ -112,6 +129,7 @@
         "projectVerify",
         "verifyIntegrity",
         "connectionBoundary",
+        "restrictedRehearsalRole",
         "sqlPathIntegrity",
         "psqlMetaCommandsRejected",
         "sqlScreening",
@@ -138,6 +156,7 @@
         "projectVerify": { "$ref": "#/$defs/check" },
         "verifyIntegrity": { "$ref": "#/$defs/check" },
         "connectionBoundary": { "$ref": "#/$defs/check" },
+        "restrictedRehearsalRole": { "$ref": "#/$defs/check" },
         "sqlPathIntegrity": { "$ref": "#/$defs/check" },
         "psqlMetaCommandsRejected": { "$ref": "#/$defs/check" },
         "sqlScreening": { "$ref": "#/$defs/check" },
@@ -177,6 +196,7 @@
         "preRehearsal",
         "postgresClient",
         "postgresReady",
+        "rehearsalRole",
         "rehearsal",
         "controlAfterRehearsal",
         "rehearsalIntegrity",
@@ -205,6 +225,7 @@
         "preRehearsal": { "$ref": "#/$defs/outcome" },
         "postgresClient": { "$ref": "#/$defs/outcome" },
         "postgresReady": { "$ref": "#/$defs/outcome" },
+        "rehearsalRole": { "$ref": "#/$defs/outcome" },
         "rehearsal": { "$ref": "#/$defs/outcome" },
         "controlAfterRehearsal": { "$ref": "#/$defs/outcome" },
         "rehearsalIntegrity": { "$ref": "#/$defs/outcome" },
@@ -237,6 +258,7 @@
         "productionMigrationAuthorized",
         "productionBackupOrRestoreAuthorized",
         "trustedRehearsalProductionConnectionAccepted",
+        "trustedRehearsalRoleSuperuser",
         "psqlMetaCommandsAcceptedByTrustedRehearsal",
         "symbolicLinkSqlPathsAcceptedByTrustedRehearsal",
         "disposableDatabaseEndsWithRunner"
@@ -248,6 +270,7 @@
         "productionMigrationAuthorized": { "const": false },
         "productionBackupOrRestoreAuthorized": { "const": false },
         "trustedRehearsalProductionConnectionAccepted": { "const": false },
+        "trustedRehearsalRoleSuperuser": { "const": false },
         "psqlMetaCommandsAcceptedByTrustedRehearsal": { "const": false },
         "symbolicLinkSqlPathsAcceptedByTrustedRehearsal": { "const": false },
         "disposableDatabaseEndsWithRunner": { "const": true }

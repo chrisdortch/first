@@ -45,3 +45,7 @@ jobs:
           node-version: '24'
       - name: Validate master plan, percentages, registry, and ledgers
         run: node portfolio/runtime/validate-master-plan.mjs
+      - name: Validate additive federated registry candidate
+        run: node portfolio/registry/validate-registry-v2.mjs
+      - name: Test federated registry projection and version identities
+        run: node --test portfolio/registry/test/*.test.mjs

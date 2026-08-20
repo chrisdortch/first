@@ -64,6 +64,7 @@ const outcomeNames = [
   "preRehearsal",
   "postgresClient",
   "postgresReady",
+  "rehearsalRole",
   "rehearsal",
   "controlAfterRehearsal",
   "rehearsalIntegrity",
@@ -117,6 +118,7 @@ const checks = {
   projectVerify: passed(verify) ? "passed" : "failed",
   verifyIntegrity: passed(verifyIntegrity) ? "passed" : "failed",
   connectionBoundary: rehearsal?.checks?.connectionBoundary || "failed",
+  restrictedRehearsalRole: rehearsal?.checks?.restrictedRehearsalRole || "failed",
   sqlPathIntegrity: rehearsal?.checks?.sqlPathIntegrity || "failed",
   psqlMetaCommandsRejected: rehearsal?.checks?.psqlMetaCommandsRejected || "failed",
   sqlScreening: rehearsal?.checks?.sqlScreening || "failed",
@@ -162,7 +164,9 @@ const receipt = {
     engine: "postgresql",
     majorVersion: 16,
     hostClass: "local-ci-service",
-    databaseName: "clover_data"
+    databaseName: "clover_data",
+    roleName: "clover_rehearsal",
+    roleSecurity: null
   },
   checks,
   workflowOutcomes,
@@ -185,6 +189,7 @@ const receipt = {
     productionMigrationAuthorized: false,
     productionBackupOrRestoreAuthorized: false,
     trustedRehearsalProductionConnectionAccepted: false,
+    trustedRehearsalRoleSuperuser: false,
     psqlMetaCommandsAcceptedByTrustedRehearsal: false,
     symbolicLinkSqlPathsAcceptedByTrustedRehearsal: false,
     disposableDatabaseEndsWithRunner: true

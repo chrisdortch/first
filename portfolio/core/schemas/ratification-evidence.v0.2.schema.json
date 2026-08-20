@@ -23,8 +23,9 @@
     "displayedDecision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["statement", "statementSha256"],
+      "required": ["decisionType", "statement", "statementSha256"],
       "properties": {
+        "decisionType": { "enum": ["ratify-exact-artifact", "reject", "defer"] },
         "statement": { "type": "string", "minLength": 1 },
         "statementSha256": { "$ref": "#/$defs/sha256" }
       }

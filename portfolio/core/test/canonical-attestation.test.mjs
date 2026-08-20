@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { canonicalize, sha256Canonical } from "../lib/canonical-json.mjs";
@@ -88,7 +92,7 @@ test("Ed25519 attestation binds the exact payload and an active trusted credenti
   }), /not trusted/);
 });
 
-test("expired attestations and consumed challenges fail closed", () => {
+test("expired attestations and consumed challenges fail closed", (t) => {
   const fixture = ceremonyFixture();
   const attestation = createEd25519Attestation(fixture.payload, fixture.options);
   assert.throws(() => verifyAttestation(attestation, {
@@ -96,7 +100,9 @@ test("expired attestations and consumed challenges fail closed", () => {
     now: "2026-08-18T20:06:00.000Z"
   }), /expired/);
 
-  const store = new ChallengeStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-challenge-single-use-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const store = new ChallengeStore(directory);
   store.issue({
     challengeId: fixture.options.challengeId,
     nonce: fixture.options.nonce,
@@ -115,6 +121,51 @@ test("expired attestations and consumed challenges fail closed", () => {
     challengeStore: store,
     now: "2026-08-18T20:02:00.000Z"
   }), /already consumed/);
+});
+
+test("challenge consumption remains spent across store instances", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-challenge-persistent-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const first = new ChallengeStore(directory);
+  const second = new ChallengeStore(directory);
+  const fixture = ceremonyFixture({ challengeId: "challenge_persistent_001" });
+  const attestation = createEd25519Attestation(fixture.payload, fixture.options);
+  first.issue({
+    challengeId: fixture.options.challengeId,
+    nonce: fixture.options.nonce,
+    expiresAt: fixture.options.expiresAt
+  });
+  first.consume(attestation, "2026-08-18T20:01:00.000Z");
+  assert.throws(
+    () => second.verify(attestation, "2026-08-18T20:02:00.000Z"),
+    /already consumed/
+  );
+  const moduleUrl = new URL("../lib/attestation.mjs", import.meta.url).href;
+  const subprocess = spawnSync(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    `import { ChallengeStore } from ${JSON.stringify(moduleUrl)};
+     const [directory, serialized] = process.argv.slice(1);
+     new ChallengeStore(directory).verify(JSON.parse(serialized), "2026-08-18T20:02:00.000Z");`,
+    directory,
+    JSON.stringify(attestation)
+  ], { encoding: "utf8" });
+  assert.notEqual(subprocess.status, 0);
+  assert.match(subprocess.stderr, /already consumed/);
+});
+
+test("authentication rejects a caller-supplied volatile challenge-store lookalike", () => {
+  const fixture = ceremonyFixture();
+  const attestation = createEd25519Attestation(fixture.payload, fixture.options);
+  assert.throws(() => authenticateAttestation(attestation, {
+    trustedCredentials: fixture.trustedCredentials,
+    expectedPurpose: "constitution-ratification",
+    challengeStore: {
+      verify() { return { consumable: true }; },
+      consume() { return { consumed: true }; }
+    },
+    now: "2026-08-18T20:01:00.000Z"
+  }), /process-persistent.*ChallengeStore/);
 });
 
 test("an unknown key cannot borrow a trusted credential identity", () => {

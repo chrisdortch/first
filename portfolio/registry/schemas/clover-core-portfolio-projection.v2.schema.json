@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-core-portfolio-projection-v2.json",
+  "title": "Clover Core Portfolio Projection 2.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "status",
+    "sourceRegistry",
+    "architecture",
+    "projectionPolicy",
+    "projects"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-core-portfolio-projection" },
+    "schemaVersion": { "const": "2.0.0" },
+    "status": { "const": "candidate-unmerged-undeployed" },
+    "sourceRegistry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "schemaVersion"],
+      "properties": {
+        "path": { "const": "portfolio/registry/versions/2.0.0/registry.json" },
+        "schemaVersion": { "const": "2.0.0" }
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "kernelProjectId", "ownerWindowProjectId", "contextGatewayProjectId", "knowledgeSubsystemProjectId", "rawCellDataStoredInKernel"],
+      "properties": {
+        "pattern": { "const": "federated-kernel-sovereign-cells" },
+        "kernelProjectId": { "const": "clover-core" },
+        "ownerWindowProjectId": { "const": "cloverapps-ai" },
+        "contextGatewayProjectId": { "const": "clover-context-gateway" },
+        "knowledgeSubsystemProjectId": { "const": "knowledge-hub-window-vault" },
+        "rawCellDataStoredInKernel": { "const": false }
+      }
+    },
+    "projectionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimumNecessary", "rawCellDataIncluded", "unknownsPreserved"],
+      "properties": {
+        "minimumNecessary": { "const": true },
+        "rawCellDataIncluded": { "const": false },
+        "unknownsPreserved": { "const": true }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "minItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "projectId",
+          "title",
+          "classification",
+          "lifecycle",
+          "architectureRole",
+          "verificationStatus",
+          "sourceOfTruthStatus",
+          "rawCellDataStoredInCore",
+          "projectionBoundary",
+          "relationships",
+          "identitySummary",
+          "unknowns",
+          "nextMilestone"
+        ],
+        "properties": {
+          "projectId": { "type": "string" },
+          "title": { "type": "string" },
+          "classification": { "enum": ["application", "program", "infrastructure", "content", "historical", "external", "concept"] },
+          "lifecycle": { "type": "string" },
+          "architectureRole": { "type": "string" },
+          "verificationStatus": { "type": "string" },
+          "sourceOfTruthStatus": { "type": "string" },
+          "rawCellDataStoredInCore": { "const": false },
+          "projectionBoundary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["allowed", "excluded"],
+            "properties": {
+              "allowed": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+              "excluded": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+            }
+          },
+          "relationships": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "targetProjectId", "status"],
+              "properties": {
+                "type": { "type": "string" },
+                "targetProjectId": { "type": "string" },
+                "status": { "type": "string" }
+              }
+            }
+          },
+          "identitySummary": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["identityId", "role", "release", "sitesSave", "commit", "pullRequest", "deployment", "dataSchema", "backup", "verification", "rollback"],
+              "properties": {
+                "identityId": { "type": "string" },
+                "role": { "type": "string" },
+                "release": { "$ref": "#/$defs/summaryDimension" },
+                "sitesSave": { "$ref": "#/$defs/summaryDimension" },
+                "commit": { "$ref": "#/$defs/summaryDimension" },
+                "pullRequest": { "$ref": "#/$defs/summaryDimension" },
+                "deployment": { "$ref": "#/$defs/summaryDimension" },
+                "dataSchema": { "$ref": "#/$defs/summaryDimension" },
+                "backup": { "$ref": "#/$defs/summaryDimension" },
+                "verification": { "$ref": "#/$defs/summaryDimension" },
+                "rollback": { "$ref": "#/$defs/summaryDimension" }
+              }
+            }
+          },
+          "unknowns": { "type": "array", "items": { "type": "string" } },
+          "nextMilestone": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "summaryDimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "value"],
+      "properties": {
+        "status": { "type": "string" },
+        "value": { "type": ["string", "integer", "null"] }
+      }
+    }
+  }
+}

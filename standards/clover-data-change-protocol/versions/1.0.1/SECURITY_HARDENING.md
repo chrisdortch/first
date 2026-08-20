@@ -34,6 +34,12 @@ psql can interpret backslash commands even when they appear after SQL on the sam
 
 Examples rejected include `\\!`, `\\include`, `\\connect`, and inline `\\gexec`.
 
+## Restricted database role and procedural SQL
+
+The PostgreSQL service bootstrap account is used only by the trusted setup step. Candidate SQL connects as the dedicated `clover_rehearsal` role, created with `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOREPLICATION`, and `NOBYPASSRLS`, with no role memberships. Before any candidate SQL executes, the runtime queries `pg_roles` and `pg_auth_members` through that same connection and fails unless every restricted capability and membership observation matches the receipt contract.
+
+SQL screening strips line and nested block comments while masking quoted and dollar-quoted values, then rejects `DO`, function/procedure creation or alteration, procedural languages, dynamic `EXECUTE`/`PREPARE`/`CALL`, security-definer clauses, triggers/rules, role or session-authorization switching, and server-file functions. Comment splicing does not bypass the normalized screen. This is deliberately restrictive and complements rather than replaces the database role boundary.
+
 ## Preserved boundaries
 
 The lane still supplies no production credentials and grants no production reads or writes, backups or restores, migrations, merges, production deployment, DNS or secret changes, external messages, or purchases. All authority fields remain exactly false.

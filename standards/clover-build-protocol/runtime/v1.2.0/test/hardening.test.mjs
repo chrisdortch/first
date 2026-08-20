@@ -6,7 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
-import { assertUrlOrigin, changedFilesBetween, commandList, compareProtocolSnapshots, compareSnapshots, resolveContainedPath, resolveLoopbackRoute, snapshotProtocolCheckout, snapshotSource, validateCommand } from '../lib.mjs';
+import { assertUrlOrigin, changedFilesBetween, commandList, compareProtocolSnapshots, compareSnapshots, resolveContainedPath, resolveLoopbackRoute, sha256, snapshotProtocolCheckout, snapshotSource, validateCommand } from '../lib.mjs';
+import { artifactRecord, CORE_ARTIFACT_SPECS, REQUIRED_CHECK_IDS, validatePassedReceipt } from '../receipt-contract.mjs';
 
 test('structured commands accept bounded argv and reject shell forms', () => {
   assert.deepEqual(validateCommand({ executable: 'npm', args: ['run', 'build'], timeoutSeconds: 30 }), { executable: 'npm', args: ['run', 'build'], timeoutSeconds: 30 });
@@ -105,7 +106,7 @@ test('candidate receipts do not encode unsupported Attempted false fields', () =
   }
 });
 
-test('build receipt schema compiles and requires exact identity for passed status', () => {
+test('build receipt schema rejects passed status with empty or incomplete checks and artifacts', () => {
   const runtime = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const schema = JSON.parse(fs.readFileSync(path.resolve(runtime, '..', '..', 'schemas', 'v1.2.0', 'build-receipt.schema.json'), 'utf8'));
   const validate = new Ajv2020({ allErrors: true, strict: true, validateFormats: false }).compile(schema);
@@ -132,6 +133,62 @@ test('build receipt schema compiles and requires exact identity for passed statu
     artifacts: []
   };
   assert.equal(validate(receipt), true, JSON.stringify(validate.errors));
+  receipt.protocol.commit = 'a'.repeat(40);
+  receipt.source = { commit: 'b'.repeat(40), tree: 'c'.repeat(40), branch: 'agent/test', baselineCommit: 'd'.repeat(40), baselineTree: 'e'.repeat(40), productionCommitAtEnrollment: 'd'.repeat(40) };
+  receipt.enrollment = { path: 'records/sample.json', sha256: 'f'.repeat(64), policySha256: '1'.repeat(64) };
   receipt.status = 'passed';
   assert.equal(validate(receipt), false);
+  assert.match(JSON.stringify(validate.errors), /checks|artifacts/);
+
+  receipt.checks = REQUIRED_CHECK_IDS.map((id) => ({ id, status: 'passed' }));
+  const artifact = (artifactPath, bindingSource = 'step-output') => ({ path: artifactPath, sha256: '2'.repeat(64), bytes: 1, expectedSha256: '2'.repeat(64), matched: true, bindingSource });
+  receipt.artifacts = [
+    ...CORE_ARTIFACT_SPECS.map(({ path: artifactPath }) => artifact(artifactPath)),
+    artifact('browser/screenshots/desktop__home.png', 'sealed-browser-receipt')
+  ];
+  receipt.observations = {
+    processExecutions: [{ group: 'install' }, { group: 'verify' }, { group: 'preview' }],
+    trackedTreeMutation: { state: 'not-observed', basis: 'fixture' },
+    policyMutation: { state: 'not-observed', basis: 'fixture' },
+    sourceCommitMutation: { state: 'not-observed', basis: 'fixture' },
+    protocolCheckoutMutation: { state: 'not-observed', basis: 'fixture' },
+    externalProviderSideEffects: { state: 'unknown', basis: 'fixture' }
+  };
+  receipt.browser = { total: 1, passed: 1, failed: 0 };
+  assert.equal(validate(receipt), true, JSON.stringify(validate.errors));
+  receipt.checks = receipt.checks.slice(0, -1);
+  assert.equal(validate(receipt), false);
+  receipt.checks = REQUIRED_CHECK_IDS.map((id) => ({ id, status: 'passed' }));
+  receipt.artifacts = receipt.artifacts.slice(0, -1);
+  assert.equal(validate(receipt), false);
+  receipt.artifacts = [...CORE_ARTIFACT_SPECS.map(({ path: artifactPath }) => artifact(artifactPath)), artifact('browser/screenshots/desktop__home.png', 'sealed-browser-receipt')];
+  receipt.artifacts[0] = { ...receipt.artifacts[0], matched: false };
+  assert.equal(validate(receipt), false);
+});
+
+test('final receipt contract rehashes every complete artifact and fails after tampering', () => {
+  const artifactDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clover-build-artifacts-'));
+  const write = (relative, value) => {
+    const absolute = path.join(artifactDir, relative);
+    fs.mkdirSync(path.dirname(absolute), { recursive: true });
+    fs.writeFileSync(absolute, value);
+    return sha256(Buffer.from(value));
+  };
+  const records = CORE_ARTIFACT_SPECS.map(({ path: artifactPath }) => artifactRecord(artifactDir, artifactPath, write(artifactPath, `${artifactPath}\n`), 'step-output'));
+  const screenshotPath = 'browser/screenshots/desktop__home.png';
+  records.push(artifactRecord(artifactDir, screenshotPath, write(screenshotPath, 'png-bytes'), 'sealed-browser-receipt'));
+  const environment = { CLOVER_PROTOCOL_REF: 'a'.repeat(40), CLOVER_CANDIDATE_SHA: 'b'.repeat(40) };
+  const receipt = {
+    status: 'passed',
+    protocol: { commit: environment.CLOVER_PROTOCOL_REF },
+    source: { commit: environment.CLOVER_CANDIDATE_SHA },
+    checks: REQUIRED_CHECK_IDS.map((id) => ({ id, status: 'passed' })),
+    artifacts: records
+  };
+  assert.deepEqual(validatePassedReceipt(receipt, artifactDir, environment), []);
+  fs.writeFileSync(path.join(artifactDir, 'commands', 'verify.log'), 'tampered\n');
+  assert.match(validatePassedReceipt(receipt, artifactDir, environment).join('\n'), /changed after receipt assembly/);
+  fs.writeFileSync(path.join(artifactDir, 'commands', 'verify.log'), 'commands\/verify.log\n');
+  receipt.checks.pop();
+  assert.match(validatePassedReceipt(receipt, artifactDir, environment).join('\n'), /exact required check set/);
 });

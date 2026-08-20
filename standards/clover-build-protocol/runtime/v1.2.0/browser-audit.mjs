@@ -6,7 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import { chromium, webkit } from '@playwright/test';
-import { assertUrlOrigin, commandList, compareProtocolSnapshots, compareSnapshots, localStatePassed, readJson, resolveLoopbackRoute, snapshotProtocolCheckout, snapshotSource, unknownExternalObservation, writeJson } from './lib.mjs';
+import { assertUrlOrigin, commandList, compareProtocolSnapshots, compareSnapshots, localStatePassed, readJson, resolveLoopbackRoute, sha256, snapshotProtocolCheckout, snapshotSource, unknownExternalObservation, writeJson } from './lib.mjs';
 
 const [policyArg, outputDirArg] = process.argv.slice(2);
 if (!policyArg || !outputDirArg) {
@@ -161,5 +161,15 @@ if (results.length) {
   }
 }
 writeJson(path.join(outputDir, 'browser-receipt.json'), receipt);
+if (process.env.GITHUB_OUTPUT) {
+  for (const [name, relative] of [
+    ['preview_log_sha256', 'preview-server.log'],
+    ['contact_sheet_html_sha256', 'contact-sheet.html'],
+    ['contact_sheet_png_sha256', 'contact-sheet.png']
+  ]) {
+    const absolute = path.join(outputDir, relative);
+    if (fs.existsSync(absolute)) fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${sha256(fs.readFileSync(absolute))}\n`);
+  }
+}
 console.log(`Clover browser audit: ${status}`);
 if (status !== 'passed') process.exit(1);

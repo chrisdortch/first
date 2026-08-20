@@ -13,6 +13,8 @@ Implemented additively:
 - tracked-tree, source-commit, committed-tree, and policy snapshots;
 - post-command and post-browser invariant verification;
 - evidence-based side-effect observations;
+- a closed 37-check passed-receipt contract with 13 sealed core artifacts and sealed browser screenshots;
+- independent final receipt and artifact rehashing from a fresh exact protocol control checkout;
 - candidate integrity and regression tests;
 - a SHA-256 manifest preserving every selected 1.1.0 and earlier runtime artifact byte.
 

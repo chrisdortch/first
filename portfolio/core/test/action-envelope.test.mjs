@@ -106,12 +106,19 @@ function verifierRegistry(overrides = {}) {
       toolId: "synthetic-readback",
       toolVersion: "1.0.0",
       sourceSystemId: "synthetic-authoritative-store",
-      verify: async () => ({
-        sourceSystemId: "synthetic-authoritative-store",
-        nativeResourceId: "doc_native_0001",
-        observedVersion: "v2",
-        postcondition: { applied: true, version: "v2" }
-      }),
+      verify: async ({ phase }) => phase === "before-execute"
+        ? {
+            sourceSystemId: "synthetic-authoritative-store",
+            nativeResourceId: "doc_native_0001",
+            observedVersion: "sha256-version-0001",
+            postcondition: { exists: true, version: "sha256-version-0001" }
+          }
+        : {
+            sourceSystemId: "synthetic-authoritative-store",
+            nativeResourceId: "doc_native_0001",
+            observedVersion: "v2",
+            postcondition: { applied: true, version: "v2" }
+          },
       ...overrides
     }
   });
@@ -261,7 +268,7 @@ test("closed handler registry accepts functions only and has no string/shell dis
   }), (error) => error.code === "ACTION_VERIFIER_INVALID");
 });
 
-test("Ed25519 approval is trusted and bound to the exact authority hash and nonce", () => {
+test("Ed25519 approval is trusted and bound to the exact authority hash and nonce", (t) => {
   const unsigned = envelope({ approvalRequired: true });
   const trustedKeys = crypto.generateKeyPairSync("ed25519");
   const attestation = createEd25519Attestation(actionApprovalPayload(unsigned), {
@@ -275,7 +282,9 @@ test("Ed25519 approval is trusted and bound to the exact authority hash and nonc
     expiresAt: EXPIRES_AT
   });
   const signed = withActionApproval(unsigned, attestation);
-  const challengeStore = new ChallengeStore();
+  const challengeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-challenge-"));
+  t.after(() => fs.rmSync(challengeDirectory, { recursive: true, force: true }));
+  const challengeStore = new ChallengeStore(challengeDirectory);
   challengeStore.issue({
     challengeId: attestation.challengeId,
     nonce: "approval-challenge-nonce",
@@ -340,6 +349,16 @@ test("Ed25519 approval is trusted and bound to the exact authority hash and nonc
   );
   assert.throws(
     () => validateActionEnvelope(signed, validationOptions(signed, { trustedCredentials })),
+    (error) => error.code === "ACTION_APPROVAL_CHALLENGE_REQUIRED"
+  );
+  assert.throws(
+    () => validateActionEnvelope(signed, validationOptions(signed, {
+      trustedCredentials,
+      challengeStore: {
+        verify() { return { consumable: true }; },
+        consume() { return { consumed: true }; }
+      }
+    })),
     (error) => error.code === "ACTION_APPROVAL_CHALLENGE_REQUIRED"
   );
 });
@@ -408,14 +427,20 @@ test("atomic reservation spends authority before side effect and concurrent repl
     assert.equal(state.phase, "succeeded");
     assert.equal(state.terminal, true);
     assert.equal(state.handlerCalls, 1);
-    assert.equal(state.readbackCalls, 1);
+    assert.equal(state.readbackCalls, 2);
+    assert.equal(state.preflightReadback.observedVersion, action.target.expectedVersion);
     assert.equal(state.effect, "applied-confirmed");
+    assert.equal(state.executionMode, "verified-precondition-write");
     assert.match(state.handlerResult.evidenceHash, /^[a-f0-9]{64}$/);
-    const receipt = createActionReceipt(action, state);
+    const receipt = createActionReceipt(action, stateStore);
     assert.equal(receipt.phase, "succeeded");
     assert.equal(receipt.verification.verifierId, "synthetic.authoritative-readback");
     assert.equal(receipt.stateHash, sha256Canonical(receipt.terminalState));
+    assert.equal(receipt.historyLength, stateStore.history(action.envelopeId).length);
+    assert.match(receipt.historyHash, /^[a-f0-9]{64}$/);
     assert.match(receipt.receiptHash, /^[a-f0-9]{64}$/);
+    const reopened = new LocalActionStateStore(temporaryDirectory);
+    assert.deepEqual(createActionReceipt(action, reopened), receipt);
     validateJsonSchema(readSchema("action-envelope-state.v0.2.schema.json"), state, {
       schemaDirectory: SCHEMA_DIRECTORY,
       label: "executed-action-state"
@@ -460,13 +485,65 @@ test("execution snapshots authority before asynchronous side effects", async () 
     assert.equal(result.receipt.target.expectedVersion, originalExpectedVersion);
     assert.equal(result.state.authorityHash, result.receipt.authorityHash);
     assert.throws(
-      () => createActionReceipt(mutable, result.state),
+      () => createActionReceipt(mutable, stateStore),
       /Authority binding was altered/
     );
   } finally {
     releaseHandler?.();
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+});
+
+test("schemas reject impossible compensation evidence and contradictory receipt outcomes", async (t) => {
+  const action = envelope({ envelopeId: "act_schema_outcome_0001" });
+  const impossibleCompensationFailure = {
+    schemaVersion: "0.2",
+    envelopeId: action.envelopeId,
+    authorityHash: action.authorityHash,
+    phase: "compensation-failed",
+    terminal: true,
+    reservedAt: NOW,
+    authoritySpentAt: NOW,
+    sideEffectStartedAt: NOW,
+    sideEffectFinishedAt: NOW,
+    completedAt: NOW,
+    handlerCalls: 1,
+    readbackCalls: 1,
+    compensationCalls: 0,
+    effect: "unknown-or-partial",
+    executionMode: "verified-precondition-write",
+    handlerResult: null,
+    preflightReadback: { label: "preflight", evidenceHash: "a".repeat(64) },
+    readback: null,
+    compensation: null,
+    error: { name: "Error", message: "compensation was never attempted" }
+  };
+  assert.throws(
+    () => validateJsonSchema(readSchema("action-envelope-state.v0.2.schema.json"), impossibleCompensationFailure, {
+      schemaDirectory: SCHEMA_DIRECTORY,
+      label: "impossible-compensation-failure"
+    }),
+    /compensationCalls|compensation/i
+  );
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-schema-outcome-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const result = await executeActionEnvelope(action, {
+    ...validationOptions(action),
+    stateStore: new LocalActionStateStore(directory),
+    clock: () => NOW
+  });
+  const contradictoryReceipt = structuredClone(result.receipt);
+  contradictoryReceipt.phase = "rolled-back";
+  contradictoryReceipt.effect = "rolled-back-confirmed";
+  assert.equal(contradictoryReceipt.terminalState.phase, "succeeded");
+  assert.throws(
+    () => validateJsonSchema(readSchema("action-receipt.v0.2.schema.json"), contradictoryReceipt, {
+      schemaDirectory: SCHEMA_DIRECTORY,
+      label: "contradictory-action-receipt"
+    }),
+    /terminalState|phase|const/i
+  );
 });
 
 test("partial failure compensates and records verified rollback as the precise terminal state", async () => {
@@ -485,14 +562,21 @@ test("partial failure compensates and records verified rollback as the precise t
     }
   });
   const verifiers = verifierRegistry({
-    verify: async ({ phase }) => phase === "after-compensation" && applied === false
+    verify: async ({ phase }) => phase === "before-execute"
       ? {
+          sourceSystemId: "synthetic-authoritative-store",
+          nativeResourceId: "doc_native_0001",
+          observedVersion: "sha256-version-0001",
+          postcondition: { exists: true, version: "sha256-version-0001" }
+        }
+      : phase === "after-compensation" && applied === false
+        ? {
           sourceSystemId: "synthetic-authoritative-store",
           nativeResourceId: "doc_native_0001",
           observedVersion: "sha256-version-0001",
           postcondition: { rolledBack: true, version: "sha256-version-0001" }
         }
-      : {
+        : {
           sourceSystemId: "synthetic-authoritative-store",
           nativeResourceId: "doc_native_0001",
           observedVersion: "unknown",
@@ -516,7 +600,7 @@ test("partial failure compensates and records verified rollback as the precise t
     assert.equal(state.effect, "rolled-back-confirmed");
     assert.equal(state.handlerCalls, 1);
     assert.equal(state.compensationCalls, 1);
-    assert.equal(state.readbackCalls, 1);
+    assert.equal(state.readbackCalls, 2);
     assert.match(state.error.message, /partial write/);
     assert.match(state.compensation.evidenceHash, /^[a-f0-9]{64}$/);
     assert.match(state.readback.evidenceHash, /^[a-f0-9]{64}$/);
@@ -525,18 +609,82 @@ test("partial failure compensates and records verified rollback as the precise t
   }
 });
 
+test("compensation after a failed post-write readback records the third authoritative readback", async (t) => {
+  const action = envelope({ envelopeId: "act_post_readback_rollback_0001" });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-post-readback-rollback-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const stateStore = new LocalActionStateStore(directory);
+  let applied = false;
+  const closed = registry({
+    execute: async () => { applied = true; return { applied: true }; },
+    compensate: async () => { applied = false; return { restored: true }; }
+  });
+  const verifiers = verifierRegistry({
+    verify: async ({ phase }) => {
+      if (phase === "before-execute") {
+        return {
+          sourceSystemId: "synthetic-authoritative-store",
+          nativeResourceId: "doc_native_0001",
+          observedVersion: "sha256-version-0001",
+          postcondition: { exists: true, version: "sha256-version-0001" }
+        };
+      }
+      if (phase === "after-compensation" && applied === false) {
+        return {
+          sourceSystemId: "synthetic-authoritative-store",
+          nativeResourceId: "doc_native_0001",
+          observedVersion: "sha256-version-0001",
+          postcondition: { rolledBack: true, version: "sha256-version-0001" }
+        };
+      }
+      return {
+        sourceSystemId: "synthetic-authoritative-store",
+        nativeResourceId: "doc_native_0001",
+        observedVersion: "unexpected-version",
+        postcondition: { applied: false, version: "unexpected-version" }
+      };
+    }
+  });
+
+  await assert.rejects(
+    executeActionEnvelope(action, {
+      ...validationOptions(action, { registry: closed, verifierRegistry: verifiers }),
+      stateStore,
+      clock: () => NOW
+    }),
+    (error) => error instanceof ActionExecutionError &&
+      error.state.phase === "rolled-back" &&
+      error.state.readbackCalls === 3
+  );
+  assert.equal(applied, false);
+  const state = stateStore.read(action.envelopeId);
+  assert.equal(state.effect, "rolled-back-confirmed");
+  assert.equal(state.readbackCalls, 3);
+  validateJsonSchema(readSchema("action-envelope-state.v0.2.schema.json"), state, {
+    schemaDirectory: SCHEMA_DIRECTORY,
+    label: "post-readback-rollback-state"
+  });
+});
+
 test("uncompensated readback failure is terminal and cannot be replayed", async () => {
   const action = envelope({ envelopeId: "act_unverified_0001" });
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-unverified-"));
   const stateStore = new LocalActionStateStore(temporaryDirectory);
   const closed = registry();
   const verifiers = verifierRegistry({
-    verify: async () => ({
-      sourceSystemId: "synthetic-authoritative-store",
-      nativeResourceId: "doc_native_0001",
-      observedVersion: "unexpected-version",
-      postcondition: { applied: false, version: "unexpected-version" }
-    })
+    verify: async ({ phase }) => phase === "before-execute"
+      ? {
+          sourceSystemId: "synthetic-authoritative-store",
+          nativeResourceId: "doc_native_0001",
+          observedVersion: "sha256-version-0001",
+          postcondition: { exists: true, version: "sha256-version-0001" }
+        }
+      : {
+          sourceSystemId: "synthetic-authoritative-store",
+          nativeResourceId: "doc_native_0001",
+          observedVersion: "unexpected-version",
+          postcondition: { applied: false, version: "unexpected-version" }
+        }
   });
   const options = {
     ...validationOptions(action, { registry: closed, verifierRegistry: verifiers }),
@@ -582,4 +730,120 @@ test("a non-zero cost ceiling fails closed without explicit purchase approval", 
     () => envelope({ stopConditions: ["target-version-changed", "unknown-condition"] }),
     (error) => error.code === "ACTION_STOP_CONDITION_UNSUPPORTED"
   );
+});
+
+test("caller-constructed success cannot produce an Action Receipt", async () => {
+  const action = envelope({ envelopeId: "act_forged_success_0001" });
+  const forged = {
+    schemaVersion: "0.2",
+    envelopeId: action.envelopeId,
+    authorityHash: action.authorityHash,
+    phase: "succeeded",
+    terminal: true,
+    reservedAt: NOW,
+    authoritySpentAt: NOW,
+    sideEffectStartedAt: NOW,
+    sideEffectFinishedAt: NOW,
+    completedAt: NOW,
+    handlerCalls: 1,
+    readbackCalls: 1,
+    compensationCalls: 0,
+    effect: "applied-confirmed",
+    handlerResult: { label: "forged", evidenceHash: "a".repeat(64) },
+    readback: { label: "forged", evidenceHash: "b".repeat(64) },
+    compensation: null,
+    error: null
+  };
+  assert.throws(
+    () => createActionReceipt(action, forged),
+    /persisted|trusted execution history|state store/i
+  );
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-forged-store-"));
+  try {
+    const store = new LocalActionStateStore(directory);
+    assert.throws(
+      () => store.reserve(action, NOW),
+      (error) => error.code === "ACTION_STATE_TRANSITION_DENIED"
+    );
+    class CallerStateStore extends LocalActionStateStore {}
+    await assert.rejects(
+      executeActionEnvelope(action, {
+        ...validationOptions(action, { registry: registry() }),
+        stateStore: new CallerStateStore(path.join(directory, "caller-subclass")),
+        clock: () => NOW
+      }),
+      /native persisted LocalActionStateStore/
+    );
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("target version and expiry are rechecked immediately before the side effect", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-pre-effect-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const staleTargetAction = envelope({ envelopeId: "act_pre_effect_target_0001" });
+  let staleTargetHandlerCalls = 0;
+  await assert.rejects(
+    executeActionEnvelope(staleTargetAction, {
+      ...validationOptions(staleTargetAction, {
+        registry: registry({ execute: async () => { staleTargetHandlerCalls += 1; return { applied: true }; } }),
+        verifierRegistry: verifierRegistry({
+          verify: async () => ({
+            sourceSystemId: "synthetic-authoritative-store",
+            nativeResourceId: "doc_native_0001",
+            observedVersion: "changed-after-validation",
+            postcondition: { applied: false, version: "changed-after-validation" }
+          })
+        })
+      }),
+      stateStore: new LocalActionStateStore(path.join(root, "stale-target")),
+      clock: () => NOW
+    }),
+    (error) => error instanceof ActionExecutionError && error.state.phase === "failed-before-side-effect"
+  );
+  assert.equal(staleTargetHandlerCalls, 0);
+
+  const expiredAction = envelope({ envelopeId: "act_pre_effect_expiry_0001" });
+  let expiredHandlerCalls = 0;
+  let clockCalls = 0;
+  await assert.rejects(
+    executeActionEnvelope(expiredAction, {
+      ...validationOptions(expiredAction, {
+        registry: registry({ execute: async () => { expiredHandlerCalls += 1; return { applied: true }; } })
+      }),
+      stateStore: new LocalActionStateStore(path.join(root, "expired")),
+      clock: () => (clockCalls++ === 0 ? NOW : EXPIRES_AT)
+    }),
+    (error) => error instanceof ActionExecutionError && error.state.phase === "failed-before-side-effect"
+  );
+  assert.equal(expiredHandlerCalls, 0);
+});
+
+test("a closed handler uses its native conditional-write path when available", async (t) => {
+  const action = envelope({ envelopeId: "act_native_cas_0001" });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action-native-cas-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  let ordinaryCalls = 0;
+  let conditionalCalls = 0;
+  const closed = registry({
+    execute: async () => { ordinaryCalls += 1; throw new Error("ordinary write path must not run"); },
+    executeConditional: async ({ precondition }) => {
+      conditionalCalls += 1;
+      assert.equal(precondition.expectedVersion, action.target.expectedVersion);
+      assert.equal(precondition.nativeResourceId, action.target.nativeResourceId);
+      assert.equal(precondition.nativeConditionalWriteRequired, true);
+      return { applied: true, compareAndSwapMatched: true };
+    }
+  });
+  const result = await executeActionEnvelope(action, {
+    ...validationOptions(action, { registry: closed }),
+    stateStore: new LocalActionStateStore(directory),
+    clock: () => NOW
+  });
+  assert.equal(ordinaryCalls, 0);
+  assert.equal(conditionalCalls, 1);
+  assert.equal(result.state.executionMode, "native-conditional-write");
+  assert.equal(result.receipt.phase, "succeeded");
 });

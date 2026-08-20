@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { canonicalize, cloneJson, sha256Bytes, sha256Canonical } from "./canonical-json.mjs";
-import { verifyAttestation } from "./attestation.mjs";
+import { ChallengeStore, verifyAttestation } from "./attestation.mjs";
 import { validateJsonSchema } from "./validators.mjs";
 
 const PURPOSE = "clover-constitution-ratification";
+const AFFIRMATIVE_DECISION = "ratify-exact-artifact";
+const DECISION_TYPES = new Set([AFFIRMATIVE_DECISION, "reject", "defer"]);
 const VALIDATION_RECEIPT_KEYS = [
   "documentType", "schemaVersion", "result", "policyValidation", "artifactSha256",
   "validatorId", "validatedAt", "authorityGranted"
@@ -116,12 +118,17 @@ export function createRatificationPayload({
   version,
   artifactPath,
   artifactBytes,
+  decisionType,
   displayedDecision,
   validationReceipt
 }) {
   assertNonemptyString(ceremonyId, "ceremonyId");
   assertNonemptyString(version, "version");
   assertSafeRepositoryPath(artifactPath);
+  assertNonemptyString(decisionType, "decisionType");
+  if (!DECISION_TYPES.has(decisionType)) {
+    throw new Error("decisionType must be ratify-exact-artifact, reject, or defer");
+  }
   assertNonemptyString(displayedDecision, "displayedDecision");
   const bytes = Buffer.isBuffer(artifactBytes) ? artifactBytes : Buffer.from(artifactBytes);
   const artifactSha256 = sha256Bytes(bytes);
@@ -137,6 +144,7 @@ export function createRatificationPayload({
       sha256: artifactSha256
     },
     displayedDecision: {
+      decisionType,
       statement: displayedDecision,
       statementSha256: sha256Bytes(displayedDecision)
     },
@@ -183,6 +191,9 @@ export function inspectRatificationEvidence(evidence, options) {
   if (sha256Bytes(evidence.displayedDecision.statement) !== evidence.displayedDecision.statementSha256) {
     throw new Error("Displayed ratification decision was altered");
   }
+  if (!DECISION_TYPES.has(evidence.displayedDecision.decisionType)) {
+    throw new Error("Displayed ratification decision type is unsupported");
+  }
   const validationReceipt = validatePolicyReceipt(evidence.validationReceipt, evidence.artifact.sha256);
   if (sha256Canonical(validationReceipt) !== evidence.validationReceiptHash) {
     throw new Error("Ratification policy validation receipt hash mismatch");
@@ -207,8 +218,9 @@ export function inspectRatificationEvidence(evidence, options) {
     expectedPurpose: PURPOSE,
     now: options.now
   });
-  if (!options.challengeStore || typeof options.challengeStore.verify !== "function") {
-    throw new Error("Ratification requires an unconsumed challenge store");
+  if (!(options.challengeStore instanceof ChallengeStore) ||
+      Object.getPrototypeOf(options.challengeStore) !== ChallengeStore.prototype) {
+    throw new Error("Ratification requires the native process-persistent ChallengeStore");
   }
   options.challengeStore.verify(evidence.attestation, options.now);
   return {
@@ -216,6 +228,7 @@ export function inspectRatificationEvidence(evidence, options) {
     ceremonyId: evidence.ceremonyId,
     version: evidence.artifact.version,
     artifactSha256: evidence.artifact.sha256,
+    decisionType: evidence.displayedDecision.decisionType,
     displayedDecisionSha256: evidence.displayedDecision.statementSha256,
     principalId: verification.principalId,
     challenge: { consumable: true, consumed: false }
@@ -260,8 +273,12 @@ export function verifyRatificationEvidence(evidence, options) {
     ...options,
     trustedCredentials: trustRegistry.trustedCredentials
   });
+  if (inspected.decisionType !== AFFIRMATIVE_DECISION) {
+    throw new Error("Constitution activation requires an affirmative ratify-exact-artifact decision");
+  }
   const challenge = options.challengeStore.consume(evidence.attestation, options.now);
   return { ...inspected, ...registryVerification, challenge, activationEligible: true };
 }
 
 export const ratificationPurpose = PURPOSE;
+export const affirmativeRatificationDecision = AFFIRMATIVE_DECISION;

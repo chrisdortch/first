@@ -11,7 +11,7 @@
   ],
   "trustedCredentials": [],
   "minimumAssuranceForRatification": "phishing-resistant-owner-authentication",
-  "activationRule": "Constitution 0.2 cannot become ratified-active until a separate authenticated ceremony enrolls an active phishing-resistant owner credential and verifies an unconsumed challenge-bound attestation over the exact artifact and displayed decision.",
+  "activationRule": "Constitution 0.2 cannot become ratified-active until a separate authenticated ceremony enrolls an active phishing-resistant owner credential and verifies a process-persistent unconsumed challenge-bound attestation over the exact artifact, displayed statement, and typed ratify-exact-artifact decision. Signed reject or defer decisions are never activation-eligible.",
   "privateKeyPolicy": "Private signing keys and recovery material must never be stored in this public repository.",
   "authorityGrantedByCandidate": []
 }

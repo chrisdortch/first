@@ -4,6 +4,8 @@ Status: `security-hardening-candidate-unvalidated`
 
 A successful 1.0.1 rehearsal means only that the exact candidate and exact protocol commits passed the recorded checks in a disposable PostgreSQL 16 service using the exact bound candidate seed SQL.
 
+It additionally means candidate SQL executed through the recorded restricted rehearsal role rather than the service bootstrap superuser, and the static screen observed none of the prohibited procedural/dynamic forms. It does not turn that narrow disposable-database control into production authority.
+
 It also means that the workflow observed no mutation of its bounded candidate, protocol, policy/SQL inputs, or pre-existing evidence across the measured phases. It does not mean project-controlled code was sandboxed. External effects from npm lifecycle and verification code remain `unknown`, and success does not prove that arbitrary same-user code made no external connection or side effect.
 
 Seed-data provenance also remains `unknown`. The receipt binds seed SQL identity but does not attest that its literal records are synthetic, invented, or free of copied real data.

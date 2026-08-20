@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { canonicalize, cloneJson, sha256Bytes, sha256Canonical } from "./canonical-json.mjs";
-import { verifyAttestation } from "./attestation.mjs";
+import { ChallengeStore, verifyAttestation } from "./attestation.mjs";
 
 const ENVELOPE_KEYS = [
   "schemaVersion",
@@ -61,13 +61,19 @@ const COST_KEYS = ["currency", "maxUsd", "purchaseApproved"];
 const ROLLBACK_KEYS = ["required", "strategyId", "rollbackAnchor"];
 const CONTEXT_KEYS = ["accountId", "projectId", "environment"];
 const CURRENT_TARGET_KEYS = ["resourceType", "nativeResourceId", "version"];
-const HANDLER_ENTRY_KEYS = ["toolId", "toolVersion", "execute", "compensate"];
+const HANDLER_ENTRY_KEYS = ["toolId", "toolVersion", "execute", "executeConditional", "compensate"];
 const VERIFIER_ENTRY_KEYS = ["toolId", "toolVersion", "sourceSystemId", "verify"];
 const STATE_KEYS = [
   "schemaVersion", "envelopeId", "authorityHash", "phase", "terminal", "reservedAt", "authoritySpentAt",
   "sideEffectStartedAt", "sideEffectFinishedAt", "completedAt", "handlerCalls", "readbackCalls",
-  "compensationCalls", "effect", "handlerResult", "readback", "compensation", "error"
+  "compensationCalls", "effect", "executionMode", "handlerResult", "preflightReadback", "readback",
+  "compensation", "error"
 ];
+const HISTORY_RECORD_KEYS = [
+  "documentType", "schemaVersion", "sequence", "envelopeId", "authorityHash", "recordedAt",
+  "previousRecordHash", "stateHash", "state", "recordHash"
+];
+const TRUSTED_STATE_TRANSITION = Symbol("clover-trusted-action-state-transition");
 const TERMINAL_PHASE_EFFECT = new Map([
   ["failed-before-side-effect", null],
   ["partial-failure-uncompensated", "unknown-or-partial"],
@@ -193,7 +199,14 @@ function authoritativeReadbackEvidence(envelope, value, phase) {
     fail("Authoritative readback source or target was substituted", "ACTION_VERIFIER_SUBSTITUTION");
   }
   const postconditionHash = sha256Canonical(value.postcondition);
-  if (phase === "after-execute") {
+  if (phase === "before-execute") {
+    if (value.observedVersion !== envelope.target.expectedVersion) {
+      fail("Authoritative target version changed before side effect", "ACTION_STALE_TARGET", {
+        expectedVersion: envelope.target.expectedVersion,
+        currentVersion: value.observedVersion
+      });
+    }
+  } else if (phase === "after-execute") {
     if (value.observedVersion !== envelope.expectedPostcondition.version ||
         postconditionHash !== envelope.expectedPostconditionHash) {
       fail("Authoritative readback does not match the bound postcondition", "ACTION_POSTCONDITION_MISMATCH");
@@ -271,18 +284,145 @@ function assertSelfBinding(envelope) {
   if (sha256Canonical(authorityRecord(envelope)) !== envelope.authorityHash) fail("Authority binding was altered");
 }
 
-function validateTerminalState(state) {
-  assertExactKeys(state, STATE_KEYS, "terminal action state");
-  if (state.schemaVersion !== "0.2" || state.terminal !== true) fail("Action state is not terminal", "ACTION_STATE_NOT_TERMINAL");
-  timestampMs(state.completedAt, "state.completedAt");
-  if (!TERMINAL_PHASE_EFFECT.has(state.phase) || state.effect !== TERMINAL_PHASE_EFFECT.get(state.phase)) {
-    fail("Action state has an invalid terminal phase or effect", "ACTION_STATE_INVALID");
+function assertNullableTimestamp(value, label) {
+  if (value !== null) timestampMs(value, label);
+}
+
+function assertNullableObject(value, label) {
+  if (value !== null) assertPlainObject(value, label);
+}
+
+function validateStateShape(state, label = "action state") {
+  assertExactKeys(state, STATE_KEYS, label);
+  if (state.schemaVersion !== "0.2") fail("Action state schema is unsupported", "ACTION_STATE_INVALID");
+  assertIdentifier(state.envelopeId, `${label}.envelopeId`);
+  if (!/^[a-f0-9]{64}$/.test(state.authorityHash || "")) fail("Action state authorityHash is invalid", "ACTION_STATE_INVALID");
+  if (!["reserved", "preflight", "executing", "compensating", ...TERMINAL_PHASE_EFFECT.keys()].includes(state.phase)) {
+    fail("Action state phase is invalid", "ACTION_STATE_INVALID");
   }
-  for (const [field, maximum] of [["handlerCalls", 1], ["readbackCalls", Infinity], ["compensationCalls", 1]]) {
+  if (typeof state.terminal !== "boolean") fail("Action state terminal flag is invalid", "ACTION_STATE_INVALID");
+  timestampMs(state.reservedAt, `${label}.reservedAt`);
+  timestampMs(state.authoritySpentAt, `${label}.authoritySpentAt`);
+  for (const field of ["sideEffectStartedAt", "sideEffectFinishedAt", "completedAt"]) {
+    assertNullableTimestamp(state[field], `${label}.${field}`);
+  }
+  for (const [field, maximum] of [["handlerCalls", 1], ["readbackCalls", 3], ["compensationCalls", 1]]) {
     if (!Number.isInteger(state[field]) || state[field] < 0 || state[field] > maximum) {
       fail(`Action state has an invalid ${field}`, "ACTION_STATE_INVALID");
     }
   }
+  if (![null, "in-progress-or-unknown", "unknown-or-partial", "rolled-back-confirmed", "applied-confirmed"].includes(state.effect)) {
+    fail("Action state effect is invalid", "ACTION_STATE_INVALID");
+  }
+  if (![null, "native-conditional-write", "verified-precondition-write"].includes(state.executionMode)) {
+    fail("Action state executionMode is invalid", "ACTION_STATE_INVALID");
+  }
+  for (const field of ["handlerResult", "preflightReadback", "readback", "compensation", "error"]) {
+    assertNullableObject(state[field], `${label}.${field}`);
+  }
+}
+
+function requireState(condition, message) {
+  if (!condition) fail(message, "ACTION_STATE_INVALID");
+}
+
+function validatePhaseInvariants(state) {
+  validateStateShape(state);
+  if (state.phase === "reserved") {
+    requireState(state.terminal === false && state.handlerCalls === 0 && state.readbackCalls === 0 &&
+      state.compensationCalls === 0 && state.effect === null && state.executionMode === null &&
+      state.sideEffectStartedAt === null && state.sideEffectFinishedAt === null && state.completedAt === null &&
+      state.handlerResult === null && state.preflightReadback === null && state.readback === null &&
+      state.compensation === null && state.error === null,
+    "Reserved action state contains execution evidence");
+    return;
+  }
+  if (state.phase === "preflight") {
+    requireState(state.terminal === false && state.handlerCalls === 0 && state.readbackCalls === 1 &&
+      state.compensationCalls === 0 && state.effect === null && state.executionMode === null &&
+      state.sideEffectStartedAt === null && state.sideEffectFinishedAt === null && state.completedAt === null &&
+      state.handlerResult === null && state.readback === null && state.compensation === null && state.error === null,
+    "Preflight action state has invalid phase evidence");
+    return;
+  }
+  if (state.phase === "executing") {
+    requireState(state.terminal === false && state.handlerCalls === 1 && state.readbackCalls >= 1 &&
+      state.compensationCalls === 0 && state.effect === "in-progress-or-unknown" && state.executionMode !== null &&
+      state.sideEffectStartedAt !== null && state.completedAt === null && state.preflightReadback !== null &&
+      state.compensation === null && state.error === null,
+    "Executing action state has invalid phase evidence");
+    return;
+  }
+  if (state.phase === "compensating") {
+    requireState(state.terminal === false && state.handlerCalls === 1 && state.readbackCalls >= 1 &&
+      state.compensationCalls === 1 && state.effect === "unknown-or-partial" && state.executionMode !== null &&
+      state.sideEffectStartedAt !== null && state.sideEffectFinishedAt !== null && state.completedAt === null &&
+      state.preflightReadback !== null && state.error !== null,
+    "Compensating action state has invalid phase evidence");
+    return;
+  }
+  validateTerminalState(state);
+}
+
+function validateTerminalState(state) {
+  validateStateShape(state, "terminal action state");
+  if (state.terminal !== true) fail("Action state is not terminal", "ACTION_STATE_NOT_TERMINAL");
+  timestampMs(state.completedAt, "state.completedAt");
+  if (!TERMINAL_PHASE_EFFECT.has(state.phase) || state.effect !== TERMINAL_PHASE_EFFECT.get(state.phase)) {
+    fail("Action state has an invalid terminal phase or effect", "ACTION_STATE_INVALID");
+  }
+  if (state.phase === "failed-before-side-effect") {
+    requireState(state.handlerCalls === 0 && state.compensationCalls === 0 && state.readbackCalls <= 1 &&
+      state.executionMode === null && state.sideEffectStartedAt === null && state.sideEffectFinishedAt === null &&
+      state.handlerResult === null && state.readback === null && state.compensation === null && state.error !== null,
+    "Failed-before-side-effect state claims execution evidence");
+  } else if (state.phase === "succeeded") {
+    requireState(state.handlerCalls === 1 && state.readbackCalls === 2 && state.compensationCalls === 0 &&
+      state.executionMode !== null && state.sideEffectStartedAt !== null && state.sideEffectFinishedAt !== null &&
+      state.handlerResult !== null && state.preflightReadback !== null && state.readback !== null &&
+      state.compensation === null && state.error === null,
+    "Successful action state lacks required execution or readback evidence");
+  } else if (state.phase === "partial-failure-uncompensated") {
+    requireState(state.handlerCalls === 1 && state.readbackCalls >= 1 && state.compensationCalls === 0 &&
+      state.executionMode !== null && state.sideEffectStartedAt !== null && state.sideEffectFinishedAt !== null &&
+      state.preflightReadback !== null && state.compensation === null && state.error !== null,
+    "Uncompensated partial-failure state lacks required evidence");
+  } else if (state.phase === "compensation-failed") {
+    requireState(state.handlerCalls === 1 && state.readbackCalls >= 1 && state.compensationCalls === 1 &&
+      state.executionMode !== null && state.sideEffectStartedAt !== null && state.sideEffectFinishedAt !== null &&
+      state.preflightReadback !== null && state.compensation !== null && state.error !== null,
+    "Compensation-failed state lacks required evidence");
+  } else if (state.phase === "rollback-unverified") {
+    requireState(state.handlerCalls === 1 && state.readbackCalls >= 1 && state.compensationCalls === 1 &&
+      state.executionMode !== null && state.sideEffectStartedAt !== null && state.sideEffectFinishedAt !== null &&
+      state.preflightReadback !== null && state.compensation !== null && state.readback !== null && state.error !== null,
+    "Rollback-unverified state lacks required evidence");
+  } else if (state.phase === "rolled-back") {
+    requireState(state.handlerCalls === 1 && [2, 3].includes(state.readbackCalls) && state.compensationCalls === 1 &&
+      state.executionMode !== null && state.sideEffectStartedAt !== null && state.sideEffectFinishedAt !== null &&
+      state.preflightReadback !== null && state.readback !== null && state.compensation !== null && state.error !== null,
+    "Rolled-back state lacks required compensation and readback evidence");
+  }
+}
+
+function validateStateTransition(previous, next) {
+  validatePhaseInvariants(previous);
+  validatePhaseInvariants(next);
+  for (const field of ["schemaVersion", "envelopeId", "authorityHash", "reservedAt", "authoritySpentAt"]) {
+    requireState(canonicalize(previous[field]) === canonicalize(next[field]), `Action transition changed immutable field ${field}`);
+  }
+  for (const field of ["handlerCalls", "readbackCalls", "compensationCalls"]) {
+    requireState(next[field] >= previous[field] && next[field] - previous[field] <= 1,
+      `Action transition has an invalid ${field} delta`);
+  }
+  const allowed = {
+    reserved: new Set(["preflight", "failed-before-side-effect"]),
+    preflight: new Set(["preflight", "executing", "failed-before-side-effect"]),
+    executing: new Set(["executing", "compensating", "partial-failure-uncompensated", "succeeded"]),
+    compensating: new Set(["compensating", "compensation-failed", "rollback-unverified", "rolled-back"])
+  };
+  requireState(previous.terminal === false && allowed[previous.phase]?.has(next.phase),
+    `Invalid action phase transition ${previous.phase} -> ${next.phase}`);
 }
 
 function validatePolicy(policy) {
@@ -422,9 +562,15 @@ export class ActionExecutionError extends ActionEnvelopeError {
   }
 }
 
-export function createActionReceipt(envelope, state) {
+export function createActionReceipt(envelope, stateStore) {
   validateStructure(envelope);
   assertSelfBinding(envelope);
+  if (!(stateStore instanceof LocalActionStateStore) || Object.getPrototypeOf(stateStore) !== LocalActionStateStore.prototype) {
+    fail("An Action Receipt requires a trusted persisted execution history state store", "ACTION_HISTORY_REQUIRED");
+  }
+  const history = LocalActionStateStore.prototype.history.call(stateStore, envelope.envelopeId);
+  if (history.length === 0) fail("Persisted execution history is empty", "ACTION_HISTORY_REQUIRED");
+  const state = history.at(-1).state;
   validateTerminalState(state);
   if (state.envelopeId !== envelope.envelopeId || state.authorityHash !== envelope.authorityHash) {
     fail("Terminal state does not match the Action Envelope", "ACTION_STATE_MISMATCH");
@@ -452,6 +598,8 @@ export function createActionReceipt(envelope, state) {
     readbackCalls: state.readbackCalls,
     compensationCalls: state.compensationCalls,
     stateHash: sha256Canonical(state),
+    historyLength: history.length,
+    historyHash: sha256Canonical(history),
     terminalState: cloneJson(state),
     receiptHash: null
   };
@@ -471,7 +619,7 @@ export class ClosedHandlerRegistry {
     assertPlainObject(entries, "handler registry");
     for (const [handlerId, entry] of Object.entries(entries)) {
       assertIdentifier(handlerId, "handlerId");
-      assertExactKeys(entry, HANDLER_ENTRY_KEYS, `handler ${handlerId}`);
+      assertAllowedKeys(entry, HANDLER_ENTRY_KEYS, ["toolId", "toolVersion", "execute", "compensate"], `handler ${handlerId}`);
       assertIdentifier(entry.toolId, `handler ${handlerId} toolId`);
       assertIdentifier(entry.toolVersion, `handler ${handlerId} toolVersion`);
       if (typeof entry.execute !== "function") {
@@ -480,7 +628,11 @@ export class ClosedHandlerRegistry {
       if (entry.compensate !== null && typeof entry.compensate !== "function") {
         fail(`handler ${handlerId} compensation must be a function or null`, "ACTION_HANDLER_INVALID");
       }
-      this.#handlers.set(handlerId, Object.freeze({ ...entry }));
+      if (entry.executeConditional !== undefined && entry.executeConditional !== null &&
+          typeof entry.executeConditional !== "function") {
+        fail(`handler ${handlerId} conditional execute must be a function or null`, "ACTION_HANDLER_INVALID");
+      }
+      this.#handlers.set(handlerId, Object.freeze({ ...entry, executeConditional: entry.executeConditional ?? null }));
     }
     Object.freeze(this);
   }
@@ -712,8 +864,12 @@ export function validateActionEnvelope(envelope, options) {
     if (canonicalize(envelope.approval.payload) !== canonicalize(approvalPayload(envelope))) {
       fail("Approval is not bound to this exact authority", "ACTION_APPROVAL_MISMATCH");
     }
-    if (!options.challengeStore || typeof options.challengeStore.verify !== "function") {
-      fail("An unconsumed approval challenge store is required", "ACTION_APPROVAL_CHALLENGE_REQUIRED");
+    if (!(options.challengeStore instanceof ChallengeStore) ||
+        Object.getPrototypeOf(options.challengeStore) !== ChallengeStore.prototype) {
+      fail(
+        "The native process-persistent ChallengeStore is required for approval",
+        "ACTION_APPROVAL_CHALLENGE_REQUIRED",
+      );
     }
     options.challengeStore.verify(envelope.approval, now);
   }
@@ -733,16 +889,39 @@ export function validateActionEnvelope(envelope, options) {
 export class LocalActionStateStore {
   constructor(directory) {
     assertNonemptyString(directory, "state store directory", 2000);
-    this.directory = path.resolve(directory);
+    Object.defineProperty(this, "directory", {
+      value: path.resolve(directory),
+      enumerable: true,
+      writable: false,
+      configurable: false
+    });
     fs.mkdirSync(this.directory, { recursive: true, mode: 0o700 });
+    Object.seal(this);
   }
 
   #paths(envelopeId) {
     const key = sha256Bytes(envelopeId);
     return {
       spent: path.join(this.directory, `${key}.spent`),
-      state: path.join(this.directory, `${key}.state.json`)
+      state: path.join(this.directory, `${key}.state.json`),
+      history: path.join(this.directory, `${key}.history`)
     };
+  }
+
+  #requireTrustedTransition(authority) {
+    if (authority !== TRUSTED_STATE_TRANSITION) {
+      fail("Action state transitions are restricted to the trusted executor", "ACTION_STATE_TRANSITION_DENIED");
+    }
+  }
+
+  #syncDirectory(directory) {
+    let descriptor;
+    try {
+      descriptor = fs.openSync(directory, "r");
+      fs.fsyncSync(descriptor);
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
   }
 
   #writeState(statePath, state) {
@@ -758,20 +937,52 @@ export class LocalActionStateStore {
     }
     try {
       fs.renameSync(temporaryPath, statePath);
-      let directoryDescriptor;
-      try {
-        directoryDescriptor = fs.openSync(this.directory, "r");
-        fs.fsyncSync(directoryDescriptor);
-      } finally {
-        if (directoryDescriptor !== undefined) fs.closeSync(directoryDescriptor);
-      }
+      this.#syncDirectory(this.directory);
     } catch (error) {
       try { fs.unlinkSync(temporaryPath); } catch {}
       throw error;
     }
   }
 
-  reserve(envelope, now) {
+  #appendHistory(envelope, state, recordedAt) {
+    validatePhaseInvariants(state);
+    timestampMs(recordedAt, "history recordedAt");
+    const paths = this.#paths(envelope.envelopeId);
+    const existing = this.history(envelope.envelopeId);
+    const sequence = existing.length;
+    const record = {
+      documentType: "clover-action-state-transition",
+      schemaVersion: "0.2",
+      sequence,
+      envelopeId: envelope.envelopeId,
+      authorityHash: envelope.authorityHash,
+      recordedAt,
+      previousRecordHash: sequence === 0 ? null : existing.at(-1).recordHash,
+      stateHash: sha256Canonical(state),
+      state: cloneJson(state),
+      recordHash: null
+    };
+    const { recordHash: _recordHash, ...unsigned } = record;
+    record.recordHash = sha256Canonical(unsigned);
+    const recordPath = path.join(paths.history, `${String(sequence).padStart(8, "0")}.json`);
+    let descriptor;
+    try {
+      descriptor = fs.openSync(recordPath, "wx", 0o600);
+      fs.writeFileSync(descriptor, `${canonicalize(record)}\n`, "utf8");
+      fs.fsyncSync(descriptor);
+    } catch (error) {
+      if (error?.code === "EEXIST") fail("Action history compare-and-swap failed", "ACTION_STATE_RACE");
+      throw error;
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
+    this.#syncDirectory(paths.history);
+    this.#writeState(paths.state, state);
+    return cloneJson(record);
+  }
+
+  reserve(envelope, now, authority) {
+    this.#requireTrustedTransition(authority);
     const paths = this.#paths(envelope.envelopeId);
     const reservation = {
       schemaVersion: "0.2",
@@ -790,6 +1001,9 @@ export class LocalActionStateStore {
     } finally {
       if (fileDescriptor !== undefined) fs.closeSync(fileDescriptor);
     }
+    this.#syncDirectory(this.directory);
+    fs.mkdirSync(paths.history, { mode: 0o700 });
+    this.#syncDirectory(this.directory);
 
     const state = {
       schemaVersion: "0.2",
@@ -806,51 +1020,99 @@ export class LocalActionStateStore {
       readbackCalls: 0,
       compensationCalls: 0,
       effect: null,
+      executionMode: null,
       handlerResult: null,
+      preflightReadback: null,
       readback: null,
       compensation: null,
       error: null
     };
-    this.#writeState(paths.state, state);
+    this.#appendHistory(envelope, state, now);
     return cloneJson(state);
   }
 
   read(envelopeId) {
-    const { state } = this.#paths(envelopeId);
-    return JSON.parse(fs.readFileSync(state, "utf8"));
+    const history = this.history(envelopeId);
+    if (history.length === 0) fail("Persisted action history is missing", "ACTION_HISTORY_REQUIRED");
+    return cloneJson(history.at(-1).state);
   }
 
-  transition(envelope, patch) {
-    const paths = this.#paths(envelope.envelopeId);
+  history(envelopeId) {
+    const { history } = this.#paths(envelopeId);
+    let names;
+    try {
+      names = fs.readdirSync(history).filter((name) => /^\d{8}\.json$/.test(name)).sort();
+    } catch (error) {
+      if (error?.code === "ENOENT") return [];
+      throw error;
+    }
+    const records = [];
+    for (const [sequence, name] of names.entries()) {
+      const record = JSON.parse(fs.readFileSync(path.join(history, name), "utf8"));
+      assertExactKeys(record, HISTORY_RECORD_KEYS, "action history record");
+      if (record.documentType !== "clover-action-state-transition" || record.schemaVersion !== "0.2" ||
+          record.sequence !== sequence || name !== `${String(sequence).padStart(8, "0")}.json` ||
+          record.envelopeId !== envelopeId || !/^[a-f0-9]{64}$/.test(record.authorityHash || "")) {
+        fail("Persisted action history identity or sequence is invalid", "ACTION_HISTORY_INVALID");
+      }
+      timestampMs(record.recordedAt, "history.recordedAt");
+      const expectedPrevious = sequence === 0 ? null : records.at(-1).recordHash;
+      if (record.previousRecordHash !== expectedPrevious || record.stateHash !== sha256Canonical(record.state)) {
+        fail("Persisted action history chain or state hash is invalid", "ACTION_HISTORY_INVALID");
+      }
+      const { recordHash: _recordHash, ...unsigned } = record;
+      if (record.recordHash !== sha256Canonical(unsigned)) {
+        fail("Persisted action history record hash is invalid", "ACTION_HISTORY_INVALID");
+      }
+      if (record.state.envelopeId !== record.envelopeId || record.state.authorityHash !== record.authorityHash) {
+        fail("Persisted action history state identity is invalid", "ACTION_HISTORY_INVALID");
+      }
+      validatePhaseInvariants(record.state);
+      if (sequence > 0) validateStateTransition(records.at(-1).state, record.state);
+      records.push(record);
+    }
+    if (records.length > 0 && records[0].state.phase !== "reserved") {
+      fail("Persisted action history does not begin with reservation", "ACTION_HISTORY_INVALID");
+    }
+    return cloneJson(records);
+  }
+
+  transition(envelope, patch, recordedAt, authority) {
+    this.#requireTrustedTransition(authority);
     const current = this.read(envelope.envelopeId);
     if (current.envelopeId !== envelope.envelopeId || current.authorityHash !== envelope.authorityHash) {
       fail("Persisted action state does not match authority", "ACTION_STATE_MISMATCH");
     }
     if (current.terminal) fail("Terminal action state cannot transition", "ACTION_STATE_TERMINAL");
     const next = { ...current, ...cloneJson(patch) };
-    this.#writeState(paths.state, next);
+    validateStateTransition(current, next);
+    this.#appendHistory(envelope, next, recordedAt);
     return cloneJson(next);
   }
 }
 
+Object.freeze(LocalActionStateStore.prototype);
+
 async function finishFailure({ envelope, handler, verifier, stateStore, context, cause, result, clock }) {
   const failure = errorRecord(cause);
   if (handler.compensate === null) {
-    const state = stateStore.transition(envelope, terminalPatch("partial-failure-uncompensated", clock(), {
-      sideEffectFinishedAt: clock(),
+    const finishedAt = clock();
+    const state = stateStore.transition(envelope, terminalPatch("partial-failure-uncompensated", finishedAt, {
+      sideEffectFinishedAt: finishedAt,
       effect: "unknown-or-partial",
       error: failure
-    }));
-    throw new ActionExecutionError("Action may be partial and has no compensation handler", state, cause, createActionReceipt(envelope, state));
+    }), finishedAt, TRUSTED_STATE_TRANSITION);
+    throw new ActionExecutionError("Action may be partial and has no compensation handler", state, cause, createActionReceipt(envelope, stateStore));
   }
 
+  const compensationStartedAt = clock();
   stateStore.transition(envelope, {
     phase: "compensating",
-    sideEffectFinishedAt: clock(),
+    sideEffectFinishedAt: compensationStartedAt,
     effect: "unknown-or-partial",
     error: failure,
     compensationCalls: 1
-  });
+  }, compensationStartedAt, TRUSTED_STATE_TRANSITION);
 
   let compensationResult;
   try {
@@ -861,16 +1123,19 @@ async function finishFailure({ envelope, handler, verifier, stateStore, context,
       result
     });
     const compensation = evidenceRecord(compensationResult, "compensation-result");
-    stateStore.transition(envelope, { compensation });
+    stateStore.transition(envelope, { compensation }, clock(), TRUSTED_STATE_TRANSITION);
   } catch (compensationError) {
-    const state = stateStore.transition(envelope, terminalPatch("compensation-failed", clock(), {
+    const completedAt = clock();
+    const state = stateStore.transition(envelope, terminalPatch("compensation-failed", completedAt, {
       compensation: { ...errorRecord(compensationError), status: "failed" }
-    }));
-    throw new ActionExecutionError("Action failed and compensation also failed", state, cause, createActionReceipt(envelope, state));
+    }), completedAt, TRUSTED_STATE_TRANSITION);
+    throw new ActionExecutionError("Action failed and compensation also failed", state, cause, createActionReceipt(envelope, stateStore));
   }
 
   let rollbackReadback;
   try {
+    const beforeReadback = stateStore.read(envelope.envelopeId);
+    stateStore.transition(envelope, { readbackCalls: beforeReadback.readbackCalls + 1 }, clock(), TRUSTED_STATE_TRANSITION);
     rollbackReadback = await verifier.verify({
       ...context,
       phase: "after-compensation",
@@ -879,19 +1144,20 @@ async function finishFailure({ envelope, handler, verifier, stateStore, context,
       compensationResult
     });
     const evidence = authoritativeReadbackEvidence(envelope, rollbackReadback, "after-compensation");
-    const prior = stateStore.read(envelope.envelopeId);
-    stateStore.transition(envelope, { readbackCalls: prior.readbackCalls + 1, readback: evidence });
+    stateStore.transition(envelope, { readback: evidence }, clock(), TRUSTED_STATE_TRANSITION);
   } catch (readbackError) {
-    const state = stateStore.transition(envelope, terminalPatch("rollback-unverified", clock(), {
+    const completedAt = clock();
+    const state = stateStore.transition(envelope, terminalPatch("rollback-unverified", completedAt, {
       readback: { ...errorRecord(readbackError), status: "unverified" }
-    }));
-    throw new ActionExecutionError("Compensation ran but rollback could not be verified", state, cause, createActionReceipt(envelope, state));
+    }), completedAt, TRUSTED_STATE_TRANSITION);
+    throw new ActionExecutionError("Compensation ran but rollback could not be verified", state, cause, createActionReceipt(envelope, stateStore));
   }
 
-  const state = stateStore.transition(envelope, terminalPatch("rolled-back", clock(), {
+  const completedAt = clock();
+  const state = stateStore.transition(envelope, terminalPatch("rolled-back", completedAt, {
     effect: "rolled-back-confirmed"
-  }));
-  throw new ActionExecutionError("Action failed and was rolled back", state, cause, createActionReceipt(envelope, state));
+  }), completedAt, TRUSTED_STATE_TRANSITION);
+  throw new ActionExecutionError("Action failed and was rolled back", state, cause, createActionReceipt(envelope, stateStore));
 }
 
 /**
@@ -902,7 +1168,10 @@ async function finishFailure({ envelope, handler, verifier, stateStore, context,
 export async function executeActionEnvelope(envelope, options) {
   assertPlainObject(options, "execution options");
   envelope = deepFreeze(cloneJson(envelope));
-  if (!(options.stateStore instanceof LocalActionStateStore)) fail("stateStore must be a LocalActionStateStore");
+  if (!(options.stateStore instanceof LocalActionStateStore) ||
+      Object.getPrototypeOf(options.stateStore) !== LocalActionStateStore.prototype) {
+    fail("stateStore must be the native persisted LocalActionStateStore");
+  }
   if (!(options.registry instanceof ClosedHandlerRegistry)) fail("registry must be a ClosedHandlerRegistry");
   if (!(options.verifierRegistry instanceof ClosedVerifierRegistry)) fail("verifierRegistry must be a ClosedVerifierRegistry");
   const clock = options.clock ?? (() => new Date().toISOString());
@@ -913,15 +1182,16 @@ export async function executeActionEnvelope(envelope, options) {
   const verifier = validation.verifier;
   const stateStore = options.stateStore;
 
-  stateStore.reserve(envelope, clock());
+  stateStore.reserve(envelope, clock(), TRUSTED_STATE_TRANSITION);
   if (envelope.approval !== null) {
     try {
-      options.challengeStore.consume(envelope.approval, validationNow);
+      options.challengeStore.consume(envelope.approval, clock());
     } catch (error) {
-      const state = stateStore.transition(envelope, terminalPatch("failed-before-side-effect", clock(), {
+      const completedAt = clock();
+      const state = stateStore.transition(envelope, terminalPatch("failed-before-side-effect", completedAt, {
         error: errorRecord(error)
-      }));
-      throw new ActionExecutionError("Approval challenge could not be consumed", state, error, createActionReceipt(envelope, state));
+      }), completedAt, TRUSTED_STATE_TRANSITION);
+      throw new ActionExecutionError("Approval challenge could not be consumed", state, error, createActionReceipt(envelope, stateStore));
     }
   }
 
@@ -948,36 +1218,88 @@ export async function executeActionEnvelope(envelope, options) {
   });
 
   stateStore.transition(envelope, {
-    phase: "executing",
-    sideEffectStartedAt: clock(),
-    handlerCalls: 1,
-    effect: "in-progress-or-unknown"
+    phase: "preflight",
+    readbackCalls: 1
+  }, clock(), TRUSTED_STATE_TRANSITION);
+
+  let preflightReadback;
+  try {
+    preflightReadback = await verifier.verify({ ...context, phase: "before-execute" });
+    const evidence = authoritativeReadbackEvidence(envelope, preflightReadback, "before-execute");
+    stateStore.transition(envelope, { preflightReadback: evidence }, clock(), TRUSTED_STATE_TRANSITION);
+  } catch (error) {
+    const completedAt = clock();
+    const state = stateStore.transition(envelope, terminalPatch("failed-before-side-effect", completedAt, {
+      preflightReadback: { ...errorRecord(error), status: "unverified" },
+      error: errorRecord(error)
+    }), completedAt, TRUSTED_STATE_TRANSITION);
+    throw new ActionExecutionError("Authoritative target preflight failed before side effect", state, error, createActionReceipt(envelope, stateStore));
+  }
+
+  const preEffectNow = clock();
+  try {
+    const preEffectMs = timestampMs(preEffectNow, "pre-effect now");
+    if (timestampMs(envelope.expiresAt, "expiresAt") <= preEffectMs) {
+      fail("Action envelope expired immediately before side effect", "ACTION_EXPIRED");
+    }
+    if (preEffectMs - timestampMs(envelope.createdAt, "createdAt") > (options.maxAgeMs ?? DEFAULT_MAX_AGE_MS)) {
+      fail("Action envelope became stale immediately before side effect", "ACTION_STALE");
+    }
+    if (envelope.approval !== null && timestampMs(envelope.approval.expiresAt, "approval.expiresAt") <= preEffectMs) {
+      fail("Action approval expired immediately before side effect", "ACTION_EXPIRED");
+    }
+  } catch (error) {
+    const state = stateStore.transition(envelope, terminalPatch("failed-before-side-effect", preEffectNow, {
+      error: errorRecord(error)
+    }), preEffectNow, TRUSTED_STATE_TRANSITION);
+    throw new ActionExecutionError("Action authority was no longer fresh before side effect", state, error, createActionReceipt(envelope, stateStore));
+  }
+
+  const conditionalWrite = typeof handler.executeConditional === "function";
+  const execute = conditionalWrite ? handler.executeConditional : handler.execute;
+  const executionMode = conditionalWrite ? "native-conditional-write" : "verified-precondition-write";
+  const precondition = deepFreeze({
+    sourceSystemId: envelope.readbackSource.systemId,
+    nativeResourceId: envelope.target.nativeResourceId,
+    expectedVersion: envelope.target.expectedVersion,
+    authoritativeReadbackHash: sha256Canonical(preflightReadback),
+    nativeConditionalWriteRequired: conditionalWrite
   });
+
+  stateStore.transition(envelope, {
+    phase: "executing",
+    sideEffectStartedAt: preEffectNow,
+    handlerCalls: 1,
+    effect: "in-progress-or-unknown",
+    executionMode
+  }, preEffectNow, TRUSTED_STATE_TRANSITION);
 
   let result;
   try {
-    result = await handler.execute({ ...context, phase: "execute" });
+    result = await execute({ ...context, phase: "execute", precondition });
     const handlerResult = evidenceRecord(result, "handler-result");
-    stateStore.transition(envelope, { handlerResult });
+    stateStore.transition(envelope, { handlerResult }, clock(), TRUSTED_STATE_TRANSITION);
   } catch (error) {
     return finishFailure({ envelope, handler, verifier, stateStore, context, cause: error, result: null, clock });
   }
 
   let readback;
   try {
+    stateStore.transition(envelope, { readbackCalls: 2 }, clock(), TRUSTED_STATE_TRANSITION);
     readback = await verifier.verify({ ...context, phase: "after-execute", result });
     const evidence = authoritativeReadbackEvidence(envelope, readback, "after-execute");
+    const finishedAt = clock();
     stateStore.transition(envelope, {
-      readbackCalls: 1,
       readback: evidence,
-      sideEffectFinishedAt: clock()
-    });
+      sideEffectFinishedAt: finishedAt
+    }, finishedAt, TRUSTED_STATE_TRANSITION);
   } catch (error) {
     return finishFailure({ envelope, handler, verifier, stateStore, context, cause: error, result, clock });
   }
 
-  const state = stateStore.transition(envelope, terminalPatch("succeeded", clock(), {
+  const completedAt = clock();
+  const state = stateStore.transition(envelope, terminalPatch("succeeded", completedAt, {
     effect: "applied-confirmed"
-  }));
-  return { result, readback, state, receipt: createActionReceipt(envelope, state) };
+  }), completedAt, TRUSTED_STATE_TRANSITION);
+  return { result, readback, state, receipt: createActionReceipt(envelope, stateStore) };
 }

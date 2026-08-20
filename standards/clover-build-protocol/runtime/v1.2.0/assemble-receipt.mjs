@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { compareSnapshots, readJson, unknownExternalObservation, writeJson } from './lib.mjs';
+import { artifactRecord, CORE_ARTIFACT_SPECS, exactRequiredCheckSet, RUNNER_OUTCOME_SPECS, screenshotArtifactSpecs } from './receipt-contract.mjs';
 
 const [policyArg, artifactDirArg] = process.argv.slice(2);
 if (!policyArg || !artifactDirArg) {
@@ -21,16 +21,7 @@ const install = safeRead('commands/install.json');
 const verify = safeRead('commands/verify.json');
 const browser = safeRead('browser/browser-receipt.json');
 const finalState = safeRead('final-state.json');
-const runnerOutcomes = {
-  schemas: process.env.CLOVER_OUTCOME_SCHEMAS,
-  boundary: process.env.CLOVER_OUTCOME_BOUNDARY,
-  'pre-state': process.env.CLOVER_OUTCOME_PRE_STATE,
-  install: process.env.CLOVER_OUTCOME_INSTALL,
-  verify: process.env.CLOVER_OUTCOME_VERIFY,
-  browsers: process.env.CLOVER_OUTCOME_BROWSERS,
-  browser: process.env.CLOVER_OUTCOME_BROWSER,
-  'final-state': process.env.CLOVER_OUTCOME_FINAL_STATE
-};
+
 const checks = [
   { id: 'enrollment-schema', status: enrollmentSchema?.status || 'unavailable' },
   { id: 'policy-schema', status: policySchema?.status || 'unavailable' },
@@ -40,24 +31,31 @@ const checks = [
   { id: 'browser', status: browser?.status || 'unavailable' },
   { id: 'final-state', status: finalState?.status || 'unavailable' }
 ];
-for (const [id, outcome] of Object.entries(runnerOutcomes)) if (outcome) checks.push({ id: `runner-${id}`, status: outcome === 'success' ? 'passed' : outcome === 'failure' || outcome === 'cancelled' ? 'failed' : 'skipped', detail: outcome });
-const hashSpecs = [
-  ['enrollment-schema.json', process.env.CLOVER_EXPECTED_ENROLLMENT_SCHEMA_SHA],
-  ['policy-schema.json', process.env.CLOVER_EXPECTED_POLICY_SCHEMA_SHA],
-  ['boundary.json', process.env.CLOVER_EXPECTED_BOUNDARY_SHA],
-  ['pre-state.json', process.env.CLOVER_EXPECTED_PRE_STATE_SHA],
-  ['commands/install.json', process.env.CLOVER_EXPECTED_INSTALL_SHA],
-  ['commands/verify.json', process.env.CLOVER_EXPECTED_VERIFY_SHA],
-  ['browser/browser-receipt.json', process.env.CLOVER_EXPECTED_BROWSER_RECEIPT_SHA],
-  ['final-state.json', process.env.CLOVER_EXPECTED_FINAL_STATE_SHA]
-];
-for (const [relative, expected] of hashSpecs) {
-  const absolute = path.join(artifactDir, relative);
-  const observed = fs.existsSync(absolute) ? crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') : null;
-  const expectedIsSealed = /^[0-9a-f]{64}$/.test(expected || '');
-  checks.push({ id: `artifact-integrity:${relative}`, status: expectedIsSealed && observed === expected ? 'passed' : 'failed', detail: { expected: expected || null, expectedIsSealed, observed } });
+for (const { id, environment } of RUNNER_OUTCOME_SPECS) {
+  const outcome = process.env[environment] || null;
+  const status = outcome === 'success' ? 'passed' : outcome === 'failure' || outcome === 'cancelled' ? 'failed' : 'unavailable';
+  checks.push({ id: `runner-${id}`, status, detail: { outcome } });
 }
-const status = checks.every((check) => check.status === 'passed') ? 'passed' : checks.some((check) => check.status === 'failed') ? 'failed' : 'incomplete';
+
+const coreArtifacts = CORE_ARTIFACT_SPECS.map((spec) => artifactRecord(artifactDir, spec.path, process.env[spec.environment], 'step-output'));
+for (const artifact of coreArtifacts) checks.push({
+  id: `artifact-integrity:${artifact.path}`,
+  status: artifact.matched ? 'passed' : 'failed',
+  detail: { expected: artifact.expectedSha256, observed: artifact.sha256, bytes: artifact.bytes, bindingSource: artifact.bindingSource }
+});
+const screenshotSpecs = screenshotArtifactSpecs(browser);
+const screenshotArtifacts = screenshotSpecs.map((spec) => artifactRecord(artifactDir, spec.path, spec.expectedSha256, spec.bindingSource));
+const artifacts = [...coreArtifacts, ...screenshotArtifacts];
+const screenshotEvidenceComplete = Array.isArray(browser?.results) && browser.results.length > 0 && screenshotSpecs.length === browser.results.length;
+const uniqueArtifactPaths = new Set(artifacts.map((artifact) => artifact.path)).size === artifacts.length;
+const artifactsPassed = screenshotEvidenceComplete && uniqueArtifactPaths && artifacts.every((artifact) => artifact.matched === true);
+const checksComplete = exactRequiredCheckSet(checks);
+const status = checksComplete && checks.every((check) => check.status === 'passed') && artifactsPassed
+  ? 'passed'
+  : checks.some((check) => check.status === 'failed') || artifacts.some((artifact) => artifact.matched === false)
+    ? 'failed'
+    : 'incomplete';
+
 const pre = finalState?.before || safeRead('pre-state.json');
 const post = finalState?.after || null;
 const observations = pre && post ? compareSnapshots(pre, post) : {
@@ -76,7 +74,6 @@ const protocolCheckoutMutation = protocolEvidence.some((item) => item.state === 
   : protocolEvidence.length === 3 && protocolEvidence.every((item) => item.state === 'not-observed')
     ? { state: 'not-observed', basis: 'Install, verification, and browser receipts each compared tracked protocol and installed-tooling state before and after execution.', evidence: protocolEvidence }
     : { state: 'unknown', basis: 'A complete set of protocol checkout observations was unavailable.', evidence: protocolEvidence };
-const artifacts = ['enrollment-schema.json', 'policy-schema.json', 'boundary.json', 'pre-state.json', 'commands/install.json', 'commands/verify.json', 'browser/browser-receipt.json', 'browser/contact-sheet.png', 'final-state.json'].filter((relative) => fs.existsSync(path.join(artifactDir, relative)));
 const receipt = {
   schemaVersion: '1.2',
   protocolVersion: '1.2.0',

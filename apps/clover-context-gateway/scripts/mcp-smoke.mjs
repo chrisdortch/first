@@ -20,7 +20,7 @@ try {
   assert.equal(command.isError, undefined);
   assert.equal(command.structuredContent.packet.project.projectId, "rollindd");
   assert.equal(command.structuredContent.packet.authority.productionDeploymentApproved, false);
-  assert.equal(command.structuredContent.packet.schemaVersion, "1.1");
+  assert.equal(command.structuredContent.packet.schemaVersion, "1.2");
 
   const search = await client.callTool({ name: "search", arguments: { query: "RollinD" } });
   assert.ok(search.structuredContent.results.some((item) => item.id === "clover://project/rollindd"));

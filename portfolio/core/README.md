@@ -82,11 +82,12 @@ The Truth Loop is read-only with respect to source systems. It can operate today
 
 1. Convert an accepted recommendation into an Action Envelope.
 2. Bind exact target resources, environment, operations, cost, duration, data classes, rollback anchor, and expiration.
-3. Obtain every required version-bound approval.
-4. Execute through the least-privileged tool.
-5. Independently read back the exact result.
-6. append a receipt, including failures and partial completion.
-7. Consume or revoke the envelope so it cannot silently become standing authority.
+3. Obtain every required version-bound approval and atomically consume its persistent challenge.
+4. Recheck expiry and the authoritative target version immediately before execution; use a native conditional write when the closed handler supports it.
+5. Execute through the least-privileged tool.
+6. Independently read back the exact result.
+7. Append a receipt from persisted, phase-valid state-machine history, including failures and partial completion.
+8. Consume or revoke the envelope so it cannot silently become standing authority.
 
 Production, secrets, disclosure, money movement, external messages, domain changes, and private-data movement are always explicit gates.
 

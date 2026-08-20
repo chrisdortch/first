@@ -6,6 +6,7 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { resolveSqlFile, screenSqlFile } from "./sql-safety.mjs";
 import { seedDataProvenanceObservation, writeJson } from "./integrity.mjs";
+import { REHEARSAL_ROLE_NAME, validateRestrictedRoleObservation } from "./role-safety.mjs";
 
 const [policyArgument, outputDirectoryArgument] = process.argv.slice(2);
 if (!policyArgument || !outputDirectoryArgument) {
@@ -29,6 +30,7 @@ const fileHash = (file) => hash(fs.readFileSync(file));
 const databaseUrl = process.env.CLOVER_TEST_DATABASE_URL || "";
 let currentStage = "initialization";
 let sqlFiles = {};
+let roleObservation = null;
 
 function fail(message) {
   throw new Error(message);
@@ -89,6 +91,35 @@ function psqlQuery(query, logName) {
   return run("psql", ["--no-psqlrc", "-X", "-A", "-t", "-q", "--set", "ON_ERROR_STOP=on", "--dbname", databaseUrl, "--command", query], logName, { capture: true });
 }
 
+function observeRestrictedRole() {
+  const raw = psqlQuery(`
+    SELECT json_build_object(
+      'roleName', current_user,
+      'superuser', role.rolsuper,
+      'createDatabase', role.rolcreatedb,
+      'createRole', role.rolcreaterole,
+      'replication', role.rolreplication,
+      'bypassRowLevelSecurity', role.rolbypassrls,
+      'inherit', role.rolinherit,
+      'canLogin', role.rolcanlogin,
+      'memberships', COALESCE((
+        SELECT json_agg(parent.rolname ORDER BY parent.rolname)
+        FROM pg_auth_members membership
+        JOIN pg_roles parent ON parent.oid = membership.roleid
+        WHERE membership.member = role.oid
+      ), '[]'::json)
+    )::text
+    FROM pg_roles role
+    WHERE role.rolname = current_user;
+  `, "restricted-role.json.log");
+  let observation;
+  try { observation = JSON.parse(raw); }
+  catch { fail("Could not parse restricted rehearsal role observation"); }
+  const failures = validateRestrictedRoleObservation(observation);
+  if (failures.length) fail(failures.join("; "));
+  return observation;
+}
+
 function normalizeDump(raw) {
   return raw
     .split(/\r?\n/)
@@ -145,12 +176,15 @@ const receipt = {
     engine: "postgresql",
     majorVersion: 16,
     hostClass: "local-ci-service",
-    databaseName: policy.database.disposableDatabaseName
+    databaseName: policy.database.disposableDatabaseName,
+    roleName: REHEARSAL_ROLE_NAME,
+    roleSecurity: null
   },
   sqlArtifacts: {},
   stages: {},
   checks: {
     connectionBoundary: "failed",
+    restrictedRehearsalRole: "failed",
     sqlPathIntegrity: "failed",
     psqlMetaCommandsRejected: "failed",
     sqlScreening: "failed",
@@ -182,6 +216,11 @@ try {
   currentStage = "connection-boundary";
   checkConnectionBoundary();
   receipt.checks.connectionBoundary = "passed";
+
+  currentStage = "restricted-rehearsal-role";
+  roleObservation = observeRestrictedRole();
+  receipt.database.roleSecurity = roleObservation;
+  receipt.checks.restrictedRehearsalRole = "passed";
 
   currentStage = "sql-path-integrity";
   sqlFiles = resolveSqlFiles();

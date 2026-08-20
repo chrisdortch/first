@@ -10,6 +10,7 @@ Security order:
 4. `run-command.mjs` executes structured argv without a shell and verifies state after each group.
 5. `browser-audit.mjs` starts the structured preview command without a shell and verifies state.
 6. `verify-state.mjs` compares the final source state to the initial snapshot.
-7. `assemble-receipt.mjs` reports measured observations and explicit unknowns.
+7. `assemble-receipt.mjs` requires the complete fixed check set, sealed core artifacts, and sealed browser screenshots before it can emit `passed`.
+8. `verify-final-receipt.mjs`, loaded from an independent exact protocol checkout, rehashes the final receipt and every recorded artifact after schema validation.
 
 None of these programs grants release authority.

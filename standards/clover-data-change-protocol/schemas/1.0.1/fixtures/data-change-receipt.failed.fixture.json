@@ -27,7 +27,19 @@
     "engine": "postgresql",
     "majorVersion": 16,
     "hostClass": "local-ci-service",
-    "databaseName": "clover_data"
+    "databaseName": "clover_data",
+    "roleName": "clover_rehearsal",
+    "roleSecurity": {
+      "roleName": "clover_rehearsal",
+      "superuser": false,
+      "createDatabase": false,
+      "createRole": false,
+      "replication": false,
+      "bypassRowLevelSecurity": false,
+      "inherit": false,
+      "canLogin": true,
+      "memberships": []
+    }
   },
   "checks": {
     "policySchema": "failed",
@@ -41,6 +53,7 @@
     "projectVerify": "failed",
     "verifyIntegrity": "failed",
     "connectionBoundary": "failed",
+    "restrictedRehearsalRole": "failed",
     "sqlPathIntegrity": "failed",
     "psqlMetaCommandsRejected": "failed",
     "sqlScreening": "failed",
@@ -76,6 +89,7 @@
     "preRehearsal": "unknown",
     "postgresClient": "unknown",
     "postgresReady": "unknown",
+    "rehearsalRole": "unknown",
     "rehearsal": "unknown",
     "controlAfterRehearsal": "unknown",
     "rehearsalIntegrity": "unknown",
@@ -105,6 +119,7 @@
     "productionMigrationAuthorized": false,
     "productionBackupOrRestoreAuthorized": false,
     "trustedRehearsalProductionConnectionAccepted": false,
+    "trustedRehearsalRoleSuperuser": false,
     "psqlMetaCommandsAcceptedByTrustedRehearsal": false,
     "symbolicLinkSqlPathsAcceptedByTrustedRehearsal": false,
     "disposableDatabaseEndsWithRunner": true

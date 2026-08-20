@@ -20,13 +20,13 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: clover
-          POSTGRES_PASSWORD: clover
+          POSTGRES_USER: clover_admin
+          POSTGRES_PASSWORD: clover_admin
           POSTGRES_DB: clover_data
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U clover -d clover_data"
+          --health-cmd "pg_isready -U clover_admin -d clover_data"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -41,7 +41,7 @@ jobs:
       CLOVER_DATA_SCHEMA_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-data-change-protocol/schemas/1.0.1
       CLOVER_POLICY_PATH: ${{ inputs.policy_path }}
       CLOVER_CANDIDATE_REF: ${{ github.event.pull_request.head.sha || github.sha }}
-      CLOVER_TEST_DATABASE_URL: postgresql://clover:clover@127.0.0.1:5432/clover_data
+      CLOVER_TEST_DATABASE_URL: postgresql://clover_rehearsal:clover_rehearsal@127.0.0.1:5432/clover_data
 
     steps:
       - name: Check out exact candidate commit
@@ -266,16 +266,32 @@ jobs:
         shell: bash
         run: |
           for attempt in $(seq 1 30); do
-            if pg_isready -h 127.0.0.1 -p 5432 -U clover -d clover_data; then
+            if pg_isready -h 127.0.0.1 -p 5432 -U clover_admin -d clover_data; then
               exit 0
             fi
             sleep 1
           done
           exit 1
 
+      - name: Provision dedicated restricted rehearsal role
+        id: rehearsal_role
+        if: steps.postgres_ready.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          PGPASSWORD: clover_admin
+        run: |
+          psql --no-psqlrc -X --set ON_ERROR_STOP=on --host 127.0.0.1 --port 5432 --username clover_admin --dbname clover_data <<'SQL'
+          REVOKE ALL ON DATABASE clover_data FROM PUBLIC;
+          REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+          CREATE ROLE clover_rehearsal LOGIN PASSWORD 'clover_rehearsal' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          GRANT CONNECT, TEMPORARY ON DATABASE clover_data TO clover_rehearsal;
+          GRANT USAGE, CREATE ON SCHEMA public TO clover_rehearsal;
+          SQL
+
       - name: Run forward, idempotency, reconciliation, and rollback rehearsal
         id: rehearsal
-        if: steps.postgres_ready.outcome == 'success'
+        if: steps.rehearsal_role.outcome == 'success'
         continue-on-error: true
         working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_DATA_PROTOCOL_ROOT/data-rehearsal.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_DATA_ARTIFACT_DIR/database"
@@ -364,6 +380,7 @@ jobs:
           CLOVER_OUTCOME_PRE_REHEARSAL: ${{ steps.pre_rehearsal.outcome }}
           CLOVER_OUTCOME_POSTGRES_CLIENT: ${{ steps.postgres_client.outcome }}
           CLOVER_OUTCOME_POSTGRES_READY: ${{ steps.postgres_ready.outcome }}
+          CLOVER_OUTCOME_REHEARSAL_ROLE: ${{ steps.rehearsal_role.outcome }}
           CLOVER_OUTCOME_REHEARSAL: ${{ steps.rehearsal.outcome }}
           CLOVER_OUTCOME_CONTROL_AFTER_REHEARSAL: ${{ steps.control_after_rehearsal.outcome }}
           CLOVER_OUTCOME_REHEARSAL_INTEGRITY: ${{ steps.rehearsal_integrity.outcome }}
@@ -456,6 +473,7 @@ jobs:
           test "${{ steps.pre_rehearsal.outcome }}" = success
           test "${{ steps.postgres_client.outcome }}" = success
           test "${{ steps.postgres_ready.outcome }}" = success
+          test "${{ steps.rehearsal_role.outcome }}" = success
           test "${{ steps.rehearsal.outcome }}" = success
           test "${{ steps.control_after_rehearsal.outcome }}" = success
           test "${{ steps.rehearsal_integrity.outcome }}" = success

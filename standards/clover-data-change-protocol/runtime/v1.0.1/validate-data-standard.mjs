@@ -63,6 +63,7 @@ const required = [
   "standards/clover-data-change-protocol/versions/1.0.1/RELEASE_BOUNDARIES.md",
   "standards/clover-data-change-protocol/versions/1.0.1/V1_0_0_IMMUTABILITY_MANIFEST.json",
   "standards/clover-data-change-protocol/runtime/v1.0.1/sql-safety.mjs",
+  "standards/clover-data-change-protocol/runtime/v1.0.1/role-safety.mjs",
   "standards/clover-data-change-protocol/runtime/v1.0.1/integrity.mjs",
   "standards/clover-data-change-protocol/runtime/v1.0.1/capture-state.mjs",
   "standards/clover-data-change-protocol/runtime/v1.0.1/verify-state.mjs",
@@ -107,12 +108,15 @@ if (workflow.includes("inputs.protocol_ref")) failures.push("Reusable workflow m
 if (!workflow.includes("CLOVER_CONTROL_CHECKOUT") || !workflow.includes("verify-state.mjs")) failures.push("Reusable workflow lacks an independent post-command integrity control");
 if (!workflow.includes("RUNNER_TEMP") || !workflow.includes("CLOVER_DATA_ARTIFACT_DIR")) failures.push("Reusable workflow does not isolate evidence outside the candidate checkout");
 if (!workflow.includes("Recheck final receipt and every bound artifact")) failures.push("Reusable workflow lacks the final evidence recheck");
+if (!workflow.includes("NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS") || !workflow.includes("CLOVER_OUTCOME_REHEARSAL_ROLE")) failures.push("Reusable workflow lacks a dedicated fail-closed restricted rehearsal role");
 
 const receiptRuntime = fs.readFileSync(path.join(root, "standards/clover-data-change-protocol/runtime/v1.0.1/assemble-data-receipt.mjs"), "utf8");
 if (!receiptRuntime.includes('state: "unknown"') || !receiptRuntime.includes("productionCredentialsSuppliedByWorkflow") || !receiptRuntime.includes("seedDataProvenanceObservation")) failures.push("Candidate receipt must report precise same-user-runner and seed-provenance semantics");
 for (const unsupportedClaim of ["productionDatabaseConnected", "productionDataRead", "productionDataWritten", "syntheticDataOnly", "trustedRehearsalSyntheticSeedOnly"]) {
   if (receiptRuntime.includes(`${unsupportedClaim}:`)) failures.push(`Candidate receipt makes an unsupported absence claim: ${unsupportedClaim}`);
 }
+const sqlSafetyRuntime = fs.readFileSync(path.join(root, "standards/clover-data-change-protocol/runtime/v1.0.1/sql-safety.mjs"), "utf8");
+for (const marker of ["FUNCTION|PROCEDURE", "EXECUTE|PREPARE|DEALLOCATE|CALL", "normalizeSqlForSecurityScreening"]) if (!sqlSafetyRuntime.includes(marker)) failures.push(`Candidate SQL screening lacks dynamic-procedure marker: ${marker}`);
 
 const buildPointer = read("CLOVER_BUILD_PROTOCOL_POINTER.json");
 if (buildPointer.currentVersion !== "1.1.0") failures.push("Clover Build Protocol 1.1.0 pointer changed unexpectedly");

@@ -21,9 +21,11 @@ Permit repeatable migration rehearsals against a local PostgreSQL 16 service wit
 9. Restore the exact protocol commit and pinned tooling after each project-controlled phase before continuing.
 10. Resolve every SQL path inside the repository, reject every symbolic-link path segment, and confirm realpath containment.
 11. Reject every backslash byte in candidate SQL so psql meta-commands cannot reach `psql`.
-12. Create a disposable local database, load the exact bound candidate seed SQL, and run baseline, forward, assertions, idempotency, rollback, schema-equivalence, namespace, and reconciliation checks. Record seed-data provenance as unknown unless a separate provenance mechanism is introduced.
-13. Produce and schema-validate a receipt binding workflow outcomes, exact source identities, integrity observations, and SHA-256 identities for every gate artifact.
-14. Recheck the receipt and every bound artifact, then stop before production access, release, merge, or deployment.
+12. Reject dynamic procedural execution, function/procedure creation, role switching, triggers/rules, server-file functions, and comment-spliced bypass forms before `psql` runs.
+13. Provision a dedicated `clover_rehearsal` login with no superuser, database-creation, role-creation, inheritance, replication, row-security bypass, or membership capability; observe and validate those flags through that exact connection.
+14. Create a disposable local database, load the exact bound candidate seed SQL through the restricted role, and run baseline, forward, assertions, idempotency, rollback, schema-equivalence, namespace, and reconciliation checks. Record seed-data provenance as unknown unless a separate provenance mechanism is introduced.
+15. Produce and schema-validate a receipt binding workflow outcomes, exact source identities, restricted-role observations, integrity observations, and SHA-256 identities for every gate artifact.
+16. Recheck the receipt and every bound artifact, then stop before production access, release, merge, or deployment.
 
 ## Runner security model
 

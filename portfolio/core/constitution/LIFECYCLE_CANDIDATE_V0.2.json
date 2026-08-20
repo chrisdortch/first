@@ -40,9 +40,9 @@
   ],
   "activationRequirements": [
     "exact artifact hash",
-    "authenticated owner attestation bound to the displayed decision",
+    "authenticated owner attestation bound to a typed ratify-exact-artifact decision and displayed statement",
     "trusted active credential",
-    "unconsumed challenge",
+    "unconsumed challenge in a process-persistent atomic store",
     "canonical repository record",
     "policy validation receipt",
     "explicit runtime-enforcement status kept separate from owner adoption"

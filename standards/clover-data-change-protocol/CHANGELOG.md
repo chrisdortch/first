@@ -14,6 +14,8 @@ Added without changing any 1.0.0 file:
 - exact receipt/log hash binding, trusted protocol restoration, and a final artifact recheck;
 - accurate same-user-runner semantics: project-command external effects are `unknown`, not asserted absent;
 - accurate seed semantics: seed SQL bytes are bound, while source-record provenance and synthetic classification remain `unknown`;
+- a dedicated `clover_rehearsal` login created with `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOREPLICATION`, `NOBYPASSRLS`, and no role memberships;
+- observed role-capability evidence before SQL execution and fail-closed rejection of dynamic procedural SQL, function/procedure creation, role switching, triggers, and server-file functions;
 - lexical, `lstat`, realpath, and regular-file checks for every SQL path;
 - rejection of every psql backslash command or escape, including inline meta-commands;
 - strict 1.0.1 policy, receipt, and pointer schemas;

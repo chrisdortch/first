@@ -26,6 +26,7 @@ jobs:
       CLOVER_CANDIDATE_ROOT: ${{ github.workspace }}/_clover_candidate
       CLOVER_PROTOCOL_CHECKOUT: ${{ github.workspace }}/_clover_protocol
       CLOVER_PROTOCOL_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-build-protocol/runtime/v1.2.0
+      CLOVER_RECEIPT_CONTROL_ROOT: ${{ github.workspace }}/_clover_receipt_control/standards/clover-build-protocol/runtime/v1.2.0
       CLOVER_SCHEMA_ROOT: ${{ github.workspace }}/_clover_protocol/standards/clover-build-protocol/schemas/v1.2.0
       CLOVER_POLICY_PATH: ${{ inputs.policy_path }}
       CLOVER_ENROLLMENT_PATH: ${{ inputs.enrollment_path }}
@@ -49,6 +50,7 @@ jobs:
           persist-credentials: false
 
       - name: Verify exact source checkouts
+        id: identity
         env:
           CLOVER_PROTOCOL_REPOSITORY: ${{ job.workflow_repository }}
           CLOVER_PROTOCOL_REF: ${{ job.workflow_sha }}
@@ -200,29 +202,54 @@ jobs:
         working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_PROTOCOL_ROOT/verify-state.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR/pre-state.json" "$CLOVER_ARTIFACT_DIR/final-state.json"
 
+      - name: Check out independent final receipt control
+        id: receipt_control
+        if: always()
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: _clover_receipt_control
+          persist-credentials: false
+
       - name: Assemble evidence-based build receipt
         id: receipt
-        if: always() && (steps.protocol_after_browser.outcome == 'success' || steps.pre_state.outcome != 'success')
+        if: always() && steps.receipt_control.outcome == 'success'
         continue-on-error: true
         working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         env:
+          CLOVER_OUTCOME_IDENTITY: ${{ steps.identity.outcome }}
+          CLOVER_OUTCOME_TOOLING: ${{ steps.tooling.outcome }}
           CLOVER_OUTCOME_SCHEMAS: ${{ steps.schemas.outcome }}
           CLOVER_OUTCOME_BOUNDARY: ${{ steps.boundary.outcome }}
           CLOVER_OUTCOME_PRE_STATE: ${{ steps.pre_state.outcome }}
           CLOVER_OUTCOME_INSTALL: ${{ steps.install.outcome }}
+          CLOVER_OUTCOME_PROTOCOL_AFTER_INSTALL: ${{ steps.protocol_after_install.outcome }}
+          CLOVER_OUTCOME_TOOLING_AFTER_INSTALL: ${{ steps.tooling_after_install.outcome }}
           CLOVER_OUTCOME_VERIFY: ${{ steps.verify.outcome }}
+          CLOVER_OUTCOME_PROTOCOL_AFTER_VERIFY: ${{ steps.protocol_after_verify.outcome }}
+          CLOVER_OUTCOME_TOOLING_AFTER_VERIFY: ${{ steps.tooling_after_verify.outcome }}
           CLOVER_OUTCOME_BROWSERS: ${{ steps.browsers.outcome }}
           CLOVER_OUTCOME_BROWSER: ${{ steps.browser.outcome }}
+          CLOVER_OUTCOME_PROTOCOL_AFTER_BROWSER: ${{ steps.protocol_after_browser.outcome }}
+          CLOVER_OUTCOME_TOOLING_AFTER_BROWSER: ${{ steps.tooling_after_browser.outcome }}
           CLOVER_OUTCOME_FINAL_STATE: ${{ steps.final_state.outcome }}
+          CLOVER_OUTCOME_RECEIPT_CONTROL: ${{ steps.receipt_control.outcome }}
           CLOVER_EXPECTED_ENROLLMENT_SCHEMA_SHA: ${{ steps.schemas.outputs.enrollment_schema_sha256 }}
           CLOVER_EXPECTED_POLICY_SCHEMA_SHA: ${{ steps.schemas.outputs.policy_schema_sha256 }}
           CLOVER_EXPECTED_BOUNDARY_SHA: ${{ steps.boundary.outputs.boundary_sha256 }}
           CLOVER_EXPECTED_PRE_STATE_SHA: ${{ steps.pre_state.outputs.pre_state_sha256 }}
           CLOVER_EXPECTED_INSTALL_SHA: ${{ steps.install.outputs.install_sha256 }}
+          CLOVER_EXPECTED_INSTALL_LOG_SHA: ${{ steps.install.outputs.install_log_sha256 }}
           CLOVER_EXPECTED_VERIFY_SHA: ${{ steps.verify.outputs.verify_sha256 }}
+          CLOVER_EXPECTED_VERIFY_LOG_SHA: ${{ steps.verify.outputs.verify_log_sha256 }}
           CLOVER_EXPECTED_BROWSER_RECEIPT_SHA: ${{ steps.browser.outputs.browser_receipt_sha256 }}
+          CLOVER_EXPECTED_PREVIEW_LOG_SHA: ${{ steps.browser.outputs.preview_log_sha256 }}
+          CLOVER_EXPECTED_CONTACT_SHEET_HTML_SHA: ${{ steps.browser.outputs.contact_sheet_html_sha256 }}
+          CLOVER_EXPECTED_CONTACT_SHEET_PNG_SHA: ${{ steps.browser.outputs.contact_sheet_png_sha256 }}
           CLOVER_EXPECTED_FINAL_STATE_SHA: ${{ steps.final_state.outputs.final_state_sha256 }}
-        run: node "$CLOVER_PROTOCOL_ROOT/assemble-receipt.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR"
+        run: node "$CLOVER_RECEIPT_CONTROL_ROOT/assemble-receipt.mjs" "$CLOVER_POLICY_PATH" "$CLOVER_ARTIFACT_DIR"
 
       - name: Validate final build receipt schema
         id: receipt_schema
@@ -230,6 +257,16 @@ jobs:
         continue-on-error: true
         working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
         run: node "$CLOVER_PROTOCOL_ROOT/validate-json.mjs" "$CLOVER_SCHEMA_ROOT/build-receipt.schema.json" "$CLOVER_ARTIFACT_DIR/build-receipt.json" "$CLOVER_ARTIFACT_DIR/build-receipt-schema.json"
+
+      - name: Independently revalidate final receipt and artifact hashes
+        id: final_receipt
+        if: always() && steps.receipt.outcome == 'success' && steps.receipt_control.outcome == 'success'
+        continue-on-error: true
+        working-directory: ${{ env.CLOVER_CANDIDATE_ROOT }}
+        env:
+          CLOVER_PROTOCOL_REF: ${{ job.workflow_sha }}
+          CLOVER_EXPECTED_RECEIPT_SHA: ${{ steps.receipt.outputs.build_receipt_sha256 }}
+        run: node "$CLOVER_RECEIPT_CONTROL_ROOT/verify-final-receipt.mjs" "$CLOVER_ARTIFACT_DIR/build-receipt.json" "$CLOVER_ARTIFACT_DIR"
 
       - name: Publish compact candidate summary
         if: always()
@@ -264,6 +301,7 @@ jobs:
           test -f "$CLOVER_ARTIFACT_DIR/build-receipt.json"
           test "$(jq -r .status "$CLOVER_ARTIFACT_DIR/build-receipt.json")" = passed
           test "${{ steps.tooling.outcome }}" = success
+          test "${{ steps.identity.outcome }}" = success
           test "${{ steps.schemas.outcome }}" = success
           test "${{ steps.boundary.outcome }}" = success
           test "${{ steps.pre_state.outcome }}" = success
@@ -280,3 +318,5 @@ jobs:
           test "${{ steps.receipt.outcome }}" = success
           test "${{ steps.receipt_schema.outcome }}" = success
           test "${{ steps.final_state.outcome }}" = success
+          test "${{ steps.receipt_control.outcome }}" = success
+          test "${{ steps.final_receipt.outcome }}" = success

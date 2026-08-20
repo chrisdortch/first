@@ -58,6 +58,7 @@ jobs:
           node --check standards/clover-data-change-protocol/runtime/v1.0.0/assemble-data-receipt.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.1/sql-safety.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/role-safety.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.1/integrity.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.1/capture-state.mjs
           node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-state.mjs

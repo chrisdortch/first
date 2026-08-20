@@ -15,6 +15,8 @@ exact candidate
 → symlink-safe SQL path resolution
 → psql meta-command rejection
 → disposable PostgreSQL service
+→ dedicated NOSUPERUSER rehearsal role with no inherited memberships
+→ dynamic procedural SQL rejection
 → baseline schema + candidate seed with bound identity and unknown provenance
 → forward migration
 → assertions and reconciliation

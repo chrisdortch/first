@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-command-packet-1.2.json",
+  "title": "Clover Command Packet 1.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "commandId",
+    "createdAt",
+    "originalRequest",
+    "requestBody",
+    "intent",
+    "resolution",
+    "state",
+    "canonicalContext",
+    "contextBudget",
+    "freshness",
+    "cost",
+    "executionPlan",
+    "ownerActionCards",
+    "authority",
+    "stopConditions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.2" },
+    "commandId": { "type": "string", "pattern": "^clover-[0-9a-f]{16}$" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "originalRequest": { "type": "string", "minLength": 1 },
+    "requestBody": { "type": "string", "minLength": 1 },
+    "normalizedRequest": { "type": "string" },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "requiresProject"],
+      "properties": {
+        "id": {
+          "enum": [
+            "portfolio_operating_loop",
+            "launch_project",
+            "evolve_project",
+            "diagnose_project",
+            "inspect_status",
+            "backup_project",
+            "restore_test",
+            "review_preview",
+            "release_candidate",
+            "update_openai_site",
+            "research"
+          ]
+        },
+        "requiresProject": { "type": "boolean" },
+        "mode": {
+          "enum": [
+            "brief",
+            "explain_priority",
+            "recommend_next",
+            "execute_safe_parts",
+            "report_activity"
+          ]
+        }
+      }
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "confidence", "candidates"],
+      "properties": {
+        "state": { "enum": ["resolved", "ambiguous", "unresolved"] },
+        "confidence": { "type": "string" },
+        "candidates": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "project": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "projectId",
+            "title",
+            "repository",
+            "publicUrl",
+            "priority",
+            "completionEstimate",
+            "estimateAsOf",
+            "verificationStatus",
+            "nextMilestone",
+            "resolutionConfidence"
+          ],
+          "properties": {
+            "projectId": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1 },
+            "repository": { "type": ["string", "null"] },
+            "publicUrl": { "type": ["string", "null"] },
+            "priority": { "type": ["string", "null"] },
+            "completionEstimate": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+            "estimateAsOf": { "type": ["string", "null"] },
+            "verificationStatus": { "type": ["string", "null"] },
+            "nextMilestone": { "type": ["string", "null"] },
+            "resolutionConfidence": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "state": { "enum": ["needs-project-resolution", "refresh-required-before-execution"] },
+    "canonicalContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "masterPlanVersion",
+        "statusAsOf",
+        "overallMissionCompletionEstimate",
+        "sourceRepository",
+        "sourceRef",
+        "sourceCommit"
+      ],
+      "properties": {
+        "masterPlanVersion": { "type": ["string", "null"] },
+        "statusAsOf": { "type": ["string", "null"] },
+        "overallMissionCompletionEstimate": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "sourceRepository": { "type": "string", "minLength": 1 },
+        "sourceRef": { "type": "string", "minLength": 1 },
+        "sourceCommit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "contextBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "firstPassItems", "instruction"],
+      "properties": {
+        "strategy": { "const": "pointer-first-target-only" },
+        "firstPassItems": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "instruction": { "type": "string", "minLength": 1 }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy", "requiredSources", "sourcePlan", "rule"],
+      "properties": {
+        "policy": { "const": "live-readback-before-mutation" },
+        "requiredSources": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+        "sourcePlan": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceId", "connector", "action", "freshness"],
+            "properties": {
+              "sourceId": { "type": "string" },
+              "connector": { "type": "string" },
+              "action": { "type": "string" },
+              "freshness": { "type": "string" }
+            }
+          }
+        },
+        "rule": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultLane", "additionalPurchaseExpected", "purchaseTrigger", "explanation"],
+      "properties": {
+        "defaultLane": { "type": "string", "minLength": 1 },
+        "additionalPurchaseExpected": { "enum": [false, "conditional"] },
+        "purchaseTrigger": { "type": ["string", "null"] },
+        "explanation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "executionPlan": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "ownerActionCards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "required", "cost", "title", "instruction"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" },
+          "cost": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "instruction": { "type": "string", "minLength": 1 },
+          "exactPrompt": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previewOnlyByDefault",
+        "mergeApproved",
+        "productionDeploymentApproved",
+        "productionDataAccessApproved",
+        "domainOrDnsChangeApproved",
+        "secretChangeApproved",
+        "purchaseApproved",
+        "externalMessageApproved"
+      ],
+      "properties": {
+        "previewOnlyByDefault": { "const": true },
+        "mergeApproved": { "const": false },
+        "productionDeploymentApproved": { "const": false },
+        "productionDataAccessApproved": { "const": false },
+        "domainOrDnsChangeApproved": { "const": false },
+        "secretChangeApproved": { "const": false },
+        "purchaseApproved": { "const": false },
+        "externalMessageApproved": { "const": false }
+      }
+    },
+    "stopConditions": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "intent": {
+            "properties": {
+              "id": { "const": "portfolio_operating_loop" }
+            },
+            "required": ["id"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "intent": { "required": ["mode"] },
+          "resolution": {
+            "properties": {
+              "state": { "const": "resolved" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

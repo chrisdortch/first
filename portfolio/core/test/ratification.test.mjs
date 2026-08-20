@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { ChallengeStore, createEd25519Attestation } from "../lib/attestation.mjs";
 import { sha256Bytes, sha256Canonical } from "../lib/canonical-json.mjs";
 import {
+  affirmativeRatificationDecision,
   assembleRatificationEvidence,
   createRatificationPayload,
   inspectRatificationEvidence,
@@ -21,15 +23,22 @@ const ARTIFACT_PATH = "portfolio/core/constitution/versions/0.2.md";
 const ISSUED_AT = "2026-08-18T22:00:00-05:00";
 const EXPIRES_AT = "2026-08-18T22:10:00-05:00";
 const NOW = "2026-08-18T22:05:00-05:00";
+const CHALLENGE_DIRECTORIES = [];
+after(() => {
+  for (const directory of CHALLENGE_DIRECTORIES) fs.rmSync(directory, { recursive: true, force: true });
+});
 
-function fixture() {
+function fixture(decisionType = affirmativeRatificationDecision) {
   const artifactBytes = fs.readFileSync(path.join(REPOSITORY_ROOT, ARTIFACT_PATH));
   const payload = createRatificationPayload({
     ceremonyId: "ceremony_synthetic_ratification_001",
     version: "0.2",
     artifactPath: ARTIFACT_PATH,
     artifactBytes,
-    displayedDecision: "Synthetic test only: ratify the exact displayed Constitution 0.2 artifact.",
+    decisionType,
+    displayedDecision: decisionType === affirmativeRatificationDecision
+      ? "Synthetic test only: ratify the exact displayed Constitution 0.2 artifact."
+      : `Synthetic test only: ${decisionType} the exact displayed Constitution 0.2 artifact.`,
     validationReceipt: {
       documentType: "clover-constitution-validation-receipt",
       schemaVersion: "0.2",
@@ -61,7 +70,9 @@ function fixture() {
     roles: ["constitution-ratifier"],
     assurance: "phishing-resistant-owner-authentication"
   }];
-  const challengeStore = new ChallengeStore();
+  const challengeDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "clover-ratification-challenge-"));
+  CHALLENGE_DIRECTORIES.push(challengeDirectory);
+  const challengeStore = new ChallengeStore(challengeDirectory);
   challengeStore.issue({
     challengeId: attestation.challengeId,
     nonce: "synthetic-ratification-challenge-nonce",
@@ -107,6 +118,8 @@ test("ratification verification binds artifact bytes, displayed decision, truste
   const verified = verifyRatificationEvidence(value.evidence, activationOptions(value));
   assert.equal(verified.valid, true);
   assert.equal(verified.version, "0.2");
+  assert.equal(verified.decisionType, affirmativeRatificationDecision);
+  assert.equal(verified.activationEligible, true);
   assert.equal(verified.challenge.consumed, true);
   assert.throws(() => verifyRatificationEvidence(value.evidence, activationOptions(value)), /already consumed/);
 });
@@ -201,4 +214,46 @@ test("validation receipt and exact evidence shape are signed and fail closed", (
     }),
     /Schema violation/
   );
+});
+
+test("a signed rejection or other non-affirmative statement can never activate a Constitution", () => {
+  for (const decisionType of ["reject", "defer"]) {
+    const value = fixture(decisionType);
+    assert.throws(
+      () => verifyRatificationEvidence(value.evidence, activationOptions(value)),
+      /affirmative|ratif(?:y|ication)/i
+    );
+    assert.equal(value.challengeStore.verify(value.evidence.attestation, NOW).consumable, true);
+  }
+  const artifactBytes = fs.readFileSync(path.join(REPOSITORY_ROOT, ARTIFACT_PATH));
+  assert.throws(() => createRatificationPayload({
+    ceremonyId: "ceremony_missing_decision_type",
+    version: "0.2",
+    artifactPath: ARTIFACT_PATH,
+    artifactBytes,
+    displayedDecision: "Ambiguous untyped statement.",
+    validationReceipt: {
+      documentType: "clover-constitution-validation-receipt",
+      schemaVersion: "0.2",
+      result: "passed",
+      policyValidation: "passed",
+      artifactSha256: sha256Bytes(artifactBytes),
+      validatorId: "synthetic-constitution-validator",
+      validatedAt: "2026-08-18T21:59:59-05:00",
+      authorityGranted: []
+    }
+  }), /decisionType/);
+});
+
+test("ratification rejects a caller-supplied volatile challenge-store lookalike", () => {
+  const value = fixture();
+  assert.throws(() => inspectRatificationEvidence(value.evidence, {
+    repositoryRoot: REPOSITORY_ROOT,
+    trustedCredentials: value.trustedCredentials,
+    challengeStore: {
+      verify() { return { consumable: true }; },
+      consume() { return { consumed: true }; }
+    },
+    now: NOW
+  }), /native process-persistent ChallengeStore/);
 });

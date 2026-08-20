@@ -6,10 +6,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { resolveSqlFile, screenSqlText } from "../sql-safety.mjs";
+import { normalizeSqlForSecurityScreening, resolveSqlFile, screenSqlText } from "../sql-safety.mjs";
 import { verifyDataBoundaries } from "../verify-data-boundaries.mjs";
 import { compareState, parseArtifactBindings, seedDataProvenanceObservation, sha256, snapshotState } from "../integrity.mjs";
 import { parseNpmCommand, projectEnvironment } from "../run-project-command.mjs";
+import { REHEARSAL_ROLE_NAME, validateRestrictedRoleObservation } from "../role-safety.mjs";
 
 const assembleReceiptScript = fileURLToPath(new URL("../assemble-data-receipt.mjs", import.meta.url));
 
@@ -44,6 +45,37 @@ test("SQL screening rejects psql meta-commands anywhere in candidate text", () =
     "SELECT pg_read_binary_file('/tmp/input');\n",
     "SELECT lo_import('/tmp/input');\n"
   ]) assert.throws(() => screenSqlText("seed", serverFileRead), /prohibited operation/);
+  const proceduralBypasses = [
+    "DO $$ BEGIN EXECUTE 'DROP TABLE example_items'; END $$;\n",
+    "CREATE/* nested /* comment */ still */FUNCTION attack() RETURNS void LANGUAGE plpgsql AS $$ BEGIN NULL; END $$;\n",
+    "SELECT '-- string, not a comment'; CREATE/**/PROCEDURE attack() LANGUAGE plpgsql AS $$ BEGIN NULL; END $$;\n",
+    "PREPARE attack AS DELETE FROM example_items; EXECUTE attack;\n",
+    "SET ROLE clover_admin;\n",
+    "CREATE TRIGGER attack BEFORE INSERT ON example_items EXECUTE FUNCTION existing_function();\n"
+  ];
+  for (const candidate of proceduralBypasses) assert.throws(() => screenSqlText("seed", candidate), /prohibited operation/);
+  assert.equal(screenSqlText("forward", "INSERT INTO example_items(id) VALUES (1) ON CONFLICT DO NOTHING;\n"), true);
+  assert.match(normalizeSqlForSecurityScreening("SELECT '-- literal'; CREATE/**/FUNCTION attack() RETURNS void;"), /CREATE\s+FUNCTION/);
+});
+
+test("restricted rehearsal role rejects superuser, inherited, and membership privilege escalation", () => {
+  const restricted = {
+    roleName: REHEARSAL_ROLE_NAME,
+    superuser: false,
+    createDatabase: false,
+    createRole: false,
+    replication: false,
+    bypassRowLevelSecurity: false,
+    inherit: false,
+    canLogin: true,
+    memberships: []
+  };
+  assert.deepEqual(validateRestrictedRoleObservation(restricted), []);
+  for (const capability of ["superuser", "createDatabase", "createRole", "replication", "bypassRowLevelSecurity", "inherit"]) {
+    assert.match(validateRestrictedRoleObservation({ ...restricted, [capability]: true }).join("\n"), new RegExp(capability));
+  }
+  assert.match(validateRestrictedRoleObservation({ ...restricted, memberships: ["pg_read_server_files"] }).join("\n"), /memberships/);
+  assert.match(validateRestrictedRoleObservation({ ...restricted, roleName: "clover_admin" }).join("\n"), /expected clover_rehearsal/);
 });
 
 test("accepted candidate seed SQL retains unknown provenance and cannot become synthetic attestation", () => {
@@ -401,7 +433,7 @@ test("final receipt rejects source substitution and any artifact changed after i
       checks: { productionAnchorUnchanged: true, candidateBasedOnProduction: true, protocolCommitBound: true }
     };
     const rehearsalChecks = Object.fromEntries([
-      "connectionBoundary", "sqlPathIntegrity", "psqlMetaCommandsRejected", "sqlScreening", "baseline", "forward", "forwardIdempotency", "rollback", "schemaRestored", "reconciliationPreserved", "namespace"
+      "connectionBoundary", "restrictedRehearsalRole", "sqlPathIntegrity", "psqlMetaCommandsRejected", "sqlScreening", "baseline", "forward", "forwardIdempotency", "rollback", "schemaRestored", "reconciliationPreserved", "namespace"
     ].map((name) => [name, "passed"]));
     const values = {
       "policy-schema.json": { status: "passed" },
@@ -417,7 +449,25 @@ test("final receipt rejects source substitution and any artifact changed after i
       "integrity/pre-rehearsal.json": { status: "passed" },
       "database/database-rehearsal.json": {
         status: "passed",
-        database: { mode: "disposable-database-only", engine: "postgresql", majorVersion: 16, hostClass: "local-ci-service", databaseName: "clover_data" },
+        database: {
+          mode: "disposable-database-only",
+          engine: "postgresql",
+          majorVersion: 16,
+          hostClass: "local-ci-service",
+          databaseName: "clover_data",
+          roleName: "clover_rehearsal",
+          roleSecurity: {
+            roleName: "clover_rehearsal",
+            superuser: false,
+            createDatabase: false,
+            createRole: false,
+            replication: false,
+            bypassRowLevelSecurity: false,
+            inherit: false,
+            canLogin: true,
+            memberships: []
+          }
+        },
         checks: rehearsalChecks,
         stages: {},
         sqlArtifacts: {}
@@ -453,7 +503,7 @@ test("final receipt rejects source substitution and any artifact changed after i
     };
     for (const [relative, value] of Object.entries(values)) environment[environmentNames[relative]] = writeArtifact(relative, value);
     for (const name of [
-      "IDENTITY", "TOOLING", "HARDENING", "POLICY_SCHEMA", "BOUNDARY", "PRE_INSTALL", "INSTALL", "CONTROL_AFTER_INSTALL", "INSTALL_INTEGRITY", "RESTORE_AFTER_INSTALL", "TOOLING_AFTER_INSTALL", "PRE_VERIFY", "VERIFY", "CONTROL_AFTER_VERIFY", "VERIFY_INTEGRITY", "RESTORE_AFTER_VERIFY", "TOOLING_AFTER_VERIFY", "PRE_REHEARSAL", "POSTGRES_CLIENT", "POSTGRES_READY", "REHEARSAL", "CONTROL_AFTER_REHEARSAL", "REHEARSAL_INTEGRITY", "RESTORE_AFTER_REHEARSAL", "TOOLING_AFTER_REHEARSAL", "FINAL_CONTROL"
+      "IDENTITY", "TOOLING", "HARDENING", "POLICY_SCHEMA", "BOUNDARY", "PRE_INSTALL", "INSTALL", "CONTROL_AFTER_INSTALL", "INSTALL_INTEGRITY", "RESTORE_AFTER_INSTALL", "TOOLING_AFTER_INSTALL", "PRE_VERIFY", "VERIFY", "CONTROL_AFTER_VERIFY", "VERIFY_INTEGRITY", "RESTORE_AFTER_VERIFY", "TOOLING_AFTER_VERIFY", "PRE_REHEARSAL", "POSTGRES_CLIENT", "POSTGRES_READY", "REHEARSAL_ROLE", "REHEARSAL", "CONTROL_AFTER_REHEARSAL", "REHEARSAL_INTEGRITY", "RESTORE_AFTER_REHEARSAL", "TOOLING_AFTER_REHEARSAL", "FINAL_CONTROL"
     ]) environment[`CLOVER_OUTCOME_${name}`] = "success";
     const policyPath = path.join(root, "policy.json");
     fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`);
