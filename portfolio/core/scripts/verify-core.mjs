@@ -10,6 +10,7 @@ import { verifyConstitutionState } from "../lib/constitution.mjs";
 import { createPreparedAnchor, decodeLedger } from "../lib/ledger.mjs";
 import { runTrustSlice } from "../lib/trust-slice.mjs";
 import { validateJsonSchema, verifyJsonCatalog, verifySchemaCatalog } from "../lib/validators.mjs";
+import { validateCoreActivation } from "../../runtime/validate-core-activation.mjs";
 
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "../../..");
@@ -109,6 +110,7 @@ const schemaCatalog = verifySchemaCatalog(path.join(CORE_DIRECTORY, "schemas"));
 const action = verifyActionFixture();
 const ledger = verifyCandidateLedger();
 const trustSlice = verifyDeterministicTrustSlice();
+const coreActivation = validateCoreActivation();
 const reconciliation = readJson("portfolio/core/evidence/ratification-reconciliation.2026-08-18.json");
 for (const [artifact, schema] of [
   [readJson("portfolio/core/constitution/LIFECYCLE_CANDIDATE_V0.2.json"), readJson("portfolio/core/schemas/constitution-lifecycle.v0.2.schema.json")],
@@ -146,6 +148,7 @@ process.stdout.write(`${JSON.stringify({
     localAbsenceVerified: trustSlice.postDeletion.localAbsenceVerified,
     externalCopiesUnknown: trustSlice.postDeletion.externalCopiesUnknown
   },
+  coreActivation,
   authorityGranted: [],
   mergePerformed: false,
   deploymentPerformed: false

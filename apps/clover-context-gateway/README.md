@@ -1,10 +1,15 @@
-# Clover Context Gateway 0.3.0 Candidate
+# Clover Context Gateway 0.3.1 Candidate
 
 A read-only MCP app and standalone command interface that lets the owner say **“Use CloverApps to…”** without pasting the master plan into every prompt.
 
-Version 0.3.0 is an unmerged, undeployed candidate. The separately identified
-0.2.0 preview remains the latest deployed gateway until an exact 0.3.0 commit is
-validated and separately approved for deployment.
+Version 0.3.1 is an unmerged candidate. Its reviewed implementation head
+`2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334` has an exact, verified,
+target-null preview recorded by the additive publication readback. The later
+source container that first includes the publication records and this Gateway
+wrapper must receive its own post-commit source readback; it must never be
+misidentified as the reviewed implementation head. The exact 0.3.0
+Core/Gateway preview and the separately identified 0.2.0 canonical preview
+remain preserved. None is a production release.
 
 ## Archetype
 
@@ -19,6 +24,11 @@ validated and separately approved for deployment.
 - Uses a pointer-first, target-only context budget so the model does not ingest the whole portfolio on every request.
 - Provides a standalone/browser widget with optional browser speech recognition and ChatGPT follow-up messaging.
 - Returns exact conditional owner action cards when an official Sites or other owner-only gate is required.
+- Exposes the dated, sanitized Minimum Useful Core session as a sibling to Command Packet 1.2 when every required candidate artifact is present and source-bound.
+- Exposes a later publication-evidence sibling only after its stable root,
+  immutable numbered index, connector map, record hashes, source bindings, and
+  non-authority boundaries all validate. This sibling can supersede only the
+  dated session's exact-head CI and preview claims; it never rewrites Today.
 
 It does **not** modify projects, merge code, deploy production, access production data, change domains, change secrets, purchase anything, or send messages.
 
@@ -27,10 +37,11 @@ It does **not** modify projects, merge code, deploy production, access productio
 ### Local monorepo mode
 
 When `CLOVER_MASTER_PLAN_POINTER.json` exists two levels above the app, the gateway reads that exact checkout. This is used by CI and local development.
+Publication paths additionally reject symlinks and filesystem-root escapes.
 
 ### Public GitHub mode
 
-When the canonical files are not locally available, the gateway reads the public `chrisdortch/first` repository at `CONTEXT_SOURCE_REF` and caches results briefly. Search loads only the registry and lightweight document metadata; full documents are fetched only when requested. The gateway attempts to bind results to the current Git commit.
+When the canonical files are not locally available, the gateway reads the public `chrisdortch/first` repository at an exact `CONTEXT_SOURCE_COMMIT`, the exact Vercel Git commit when available, or finally `CONTEXT_SOURCE_REF`, in that order. Exact commit inputs must be full lowercase Git SHAs. Search loads only the registry and lightweight document metadata; full documents are fetched only when requested. A candidate preview is accepted only when runtime readback reports the exact source commit.
 
 Private material is intentionally excluded. Private context requires a separately authenticated relay.
 
@@ -41,7 +52,26 @@ Private material is intentionally excluded. Private context requires a separatel
 - `prepare_clover_command(request)` — creates a non-authorizing command packet, freshness plan, cost lane, and exact owner-only action cards.
 - `render_clover_command_center(request?)` — renders the optional command-center widget.
 
+The publication relay exposes the validated root as
+`clover://publication/index` and exactly five index-bound artifact fetch IDs:
+
+- `clover://publication/report`
+- `clover://publication/receipt`
+- `clover://publication/review-prompt`
+- `clover://publication/review-decision`
+- `clover://publication/readback`
+
+Mirrored report, receipt, and review-prompt hashes cover their raw bytes.
+Structured review/readback hashes cover canonical JSON after removing only the
+declared self-hash field. The stable index must be self-hashed and byte-identical
+to its immutable numbered snapshot. A missing or malformed publication layer
+fails closed without hiding the immutable dated Today session or canonical v1
+context. Arbitrary repository paths and unbound connector aliases are never
+fetchable.
+
 ## HTTP interface
+
+The HTTP and MCP transport is an unauthenticated public compiler over records intentionally committed as sanitized public governance metadata. It is not the protected owner boundary. The private ChatGPT Project and CloverApps owner window provide owner context; raw private Cell data, credentials, approval secrets, and authority-bearing values must never enter this public Gateway. Local filesystem roots are not serialized in public source metadata.
 
 - `/` — health, source mode, and authority state.
 - `/mcp` — stateless Streamable HTTP MCP endpoint.

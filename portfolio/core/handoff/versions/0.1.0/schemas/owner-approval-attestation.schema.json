@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core/handoff/0.1.0/owner-approval-attestation.schema.json",
+  "title": "Clover Handoff Owner Approval Attestation 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "attestationId",
+    "actionId",
+    "envelopeId",
+    "envelopeHash",
+    "ownerId",
+    "decision",
+    "approvalStatement",
+    "statementHash",
+    "approvedAt",
+    "validUntil",
+    "recordingLane",
+    "recordingAuthorizationEvidenceHash",
+    "assurance",
+    "authority",
+    "attestationHash"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-handoff-owner-approval-attestation" },
+    "schemaVersion": { "const": "0.1.0" },
+    "attestationId": { "$ref": "#/$defs/identifier" },
+    "actionId": { "$ref": "#/$defs/actionId" },
+    "envelopeId": { "$ref": "#/$defs/identifier" },
+    "envelopeHash": { "$ref": "#/$defs/sha256" },
+    "ownerId": { "$ref": "#/$defs/identifier" },
+    "decision": { "const": "approve" },
+    "approvalStatement": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "statementHash": { "$ref": "#/$defs/sha256" },
+    "approvedAt": { "$ref": "#/$defs/timestamp" },
+    "validUntil": { "$ref": "#/$defs/timestamp" },
+    "recordingLane": { "enum": ["codex-bounded-approval-recording", "chatgpt-github-bounded-approval-recording"] },
+    "recordingAuthorizationEvidenceHash": { "$ref": "#/$defs/sha256" },
+    "assurance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identityBasis", "cryptographicOwnerIdentityVerified", "nonProductionCandidateAuthorityOnly"],
+      "properties": {
+        "identityBasis": { "const": "owner-provided-exact-authorization-record" },
+        "cryptographicOwnerIdentityVerified": { "const": false },
+        "nonProductionCandidateAuthorityOnly": { "const": true }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recordsApprovalOnly",
+        "standingWriteAuthority",
+        "mergeAuthority",
+        "productionDeploymentAuthority",
+        "productionDataAuthority"
+      ],
+      "properties": {
+        "recordsApprovalOnly": { "const": true },
+        "standingWriteAuthority": { "const": false },
+        "mergeAuthority": { "const": false },
+        "productionDeploymentAuthority": { "const": false },
+        "productionDataAuthority": { "const": false }
+      }
+    },
+    "attestationHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "actionId": { "type": "string", "pattern": "^CLOVER-\\d{4}-\\d{2}-\\d{2}-\\d{3}$" },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

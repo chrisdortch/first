@@ -1,0 +1,74 @@
+{
+  "documentType": "clover-core-publication-review-pointer",
+  "schemaVersion": "0.1.0",
+  "reviewPointerId": "core-trunk-activation-review-pointer:2026-08-20:0.1.0",
+  "recordedAt": "2026-08-21T00:23:15Z",
+  "reviewedImplementation": {
+    "repository": "chrisdortch/first",
+    "branch": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "tree": "a027db19d8b177fe52d45fc0c0153ca1189f728e",
+    "directParent": "9006dcb78ee9412b57321cbd0fbdfa617d7bf96c",
+    "baseBranch": "platform/clover-core-trust-slice-v0.2-20260818",
+    "baseCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "pullRequest": {
+      "number": 17,
+      "url": "https://github.com/chrisdortch/first/pull/17",
+      "state": "open",
+      "draft": true,
+      "merged": false
+    }
+  },
+  "reviewTarget": {
+    "artifactType": "mirrored-source-bound-receipt",
+    "recordId": "external-source-bound-receipt:2026-08-20",
+    "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Source_Bound_Receipt_2026-08-20.json",
+    "hash": "293188db70f99b738ecb58fec232702079e10ab8234db816d4a28c4e83fae603",
+    "hashMode": "sha256-bytes",
+    "mediaType": "application/json"
+  },
+  "reviewEvidence": {
+    "reviewPrompt": {
+      "artifactType": "mirrored-review-prompt",
+      "recordId": "external-review-prompt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Chat_Pro_Core_Trunk_Activation_Review_Prompt_2026-08-20.md",
+      "hash": "a8207c4e0b0e615ef129f4a8bb38a2e22a238d3abc1dd1682f1b970ec8a6efb9",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "finalReport": {
+      "artifactType": "mirrored-final-report",
+      "recordId": "external-final-report:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Report_2026-08-20.md",
+      "hash": "37b8b8e247c524117c525a71afacbe2e557198ca04ac88b4c0e397b3f2085c50",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    }
+  },
+  "decision": {
+    "verdict": "AMEND",
+    "assurance": "owner-provided-noncryptographic-independent-review",
+    "bindingApproval": false,
+    "source": "owner-provided-chatgpt-personal-pro-output",
+    "decisionEvidenceStatus": "owner-reported-in-chat-not-preserved",
+    "evidencePath": null,
+    "evidenceHash": null,
+    "findingsNormalization": "normalized-summary",
+    "findings": [
+      {
+        "findingId": "external-only-final-evidence",
+        "summary": "The final report, source-bound receipt, and review prompt existed only as external issuance artifacts and needed exact byte-preserved repository mirrors."
+      },
+      {
+        "findingId": "committed-prepublication-staleness",
+        "summary": "The committed Today and status artifacts accurately describe their earlier candidate moment but do not carry the later exact-head CI, preview, and publication readback; an additive precedence overlay is required."
+      }
+    ]
+  },
+  "authority": {
+    "mergeApproved": false,
+    "productionApproved": false,
+    "action002Approved": false
+  },
+  "reviewPointerHash": "e7e8b46886353c8d0c71d4412cae1521d420ccd59e925b81b4627b343198041d"
+}

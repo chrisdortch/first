@@ -1,0 +1,328 @@
+{
+  "documentType": "clover-master-status-candidate",
+  "schemaVersion": "0.2-candidate",
+  "candidateVersion": "2026-08-20.0.1",
+  "statusHash": "sha256:4c7300f46253ea64027ad1c475f0683aaeddf9927848aafb975635cdd0937f90",
+  "status": "candidate-unmerged-undeployed",
+  "asOf": "2026-08-20",
+  "timezone": "America/Chicago",
+  "scope": "Clover Core Trunk Activation and Handoff Gate 0.1 and its relationship to the complete Clover mission.",
+  "methodology": "portfolio/PROGRESS_METHODOLOGY_V0.2_CANDIDATE.md",
+  "historicalPreservation": {
+    "path": "portfolio/status/snapshots/2026-08-17.json",
+    "sha256": "d3ae732ac055b64904890c8d6085bdc4a22553381f3fb7d7af58ba301d701eea",
+    "overallMissionCompletionEstimate": 41,
+    "weightedRawCompletion": 40.55,
+    "stateClass": "historical",
+    "modifiedByThisCandidate": false
+  },
+  "stateDefinitions": {
+    "live": "Externally running production state actually read back.",
+    "current": "Adopted or governing version; not synonymous with production deployment.",
+    "candidate": "Isolated, unmerged, undeployed, or awaiting a separate promotion decision.",
+    "historical": "Immutable prior evidence retained for comparison.",
+    "reported": "A source asserts the fact, but independent exact readback is absent.",
+    "partially-verified": "Some material dimensions were read back exactly while others remain unverified or unknown.",
+    "unverified": "A candidate or assertion exists without sufficient exact evidence for the claimed state.",
+    "unknown": "The fact was not established and receives no inferred value."
+  },
+  "metrics": [
+    {
+      "id": "broad-mission-completion",
+      "label": "Broad mission completion",
+      "asOf": "2026-08-20",
+      "scope": "Complete Clover mission across canonical knowledge, portfolio truth, backup and portability, safe build, safe data change, control plane, application value, and continuous operations.",
+      "stateClass": "candidate",
+      "completionEstimate": 45,
+      "weightedRawCompletion": 45.4,
+      "weightingMethod": "The eight August 17 program-area weights total 100; each area was re-evaluated against the preserved percentage anchors and current exact evidence.",
+      "confidence": "medium-low",
+      "sourceFreshness": {
+        "label": "mixed",
+        "newestObservedAt": "2026-08-20",
+        "oldestMaterialEvidenceAt": "2026-08-02",
+        "notes": "Exact same-day candidate anchors coexist with historical application estimates and 28 unverified Registry 2.0 records."
+      },
+      "exclusions": [
+        "No private connector or production-data readback.",
+        "No inference that candidate CI equals project-pilot completion.",
+        "No inferred progress for unknown portfolio identities.",
+        "No promotion, merge, or production credit."
+      ],
+      "components": [
+        {
+          "id": "canonical-knowledge-and-vault",
+          "title": "Canonical Knowledge Hub, Window, and Vault",
+          "weight": 20,
+          "completionEstimate": 18,
+          "contribution": 3.6,
+          "evidenceClass": "historical-retained",
+          "evidenceBasis": ["historical-status-2026-08-17"],
+          "reason": "No same-day evidence proves a first private restore-tested ingest Cell, so the preserved milestone remains unchanged."
+        },
+        {
+          "id": "portfolio-inventory-and-truth",
+          "title": "Portfolio Inventory and Verified Truth",
+          "weight": 10,
+          "completionEstimate": 62,
+          "contribution": 6.2,
+          "evidenceClass": "candidate-partially-verified",
+          "evidenceBasis": ["registry-current-1.0", "registry-candidate-2.0.0"],
+          "reason": "Registry 1.0 remains current with 28 records; Registry 2.0 adds 45 reconciled candidate identities, but 28 remain unverified."
+        },
+        {
+          "id": "backup-restore-and-portability",
+          "title": "Backups, Restore Tests, and Portability",
+          "weight": 15,
+          "completionEstimate": 20,
+          "contribution": 3,
+          "evidenceClass": "historical-retained",
+          "evidenceBasis": ["historical-status-2026-08-17", "cloverapps-sites81-source-readback"],
+          "reason": "A saved source archive is evidence, but it is not broad clean-room restore coverage, so the portfolio milestone does not move."
+        },
+        {
+          "id": "safe-build-and-release",
+          "title": "Safe Build, Visual QA, and Owner-Controlled Release",
+          "weight": 10,
+          "completionEstimate": 78,
+          "contribution": 7.8,
+          "evidenceClass": "current-and-candidate",
+          "evidenceBasis": ["github-actions-build-1.2-standard", "rollindd-reconciliation-preview-readback"],
+          "reason": "Build Protocol 1.1 remains current; 1.2 standard exact-head CI passed, while its enrolled project pilot remains pending."
+        },
+        {
+          "id": "safe-data-change",
+          "title": "Safe Database and Persisted-Data Changes",
+          "weight": 10,
+          "completionEstimate": 55,
+          "contribution": 5.5,
+          "evidenceClass": "current-and-candidate",
+          "evidenceBasis": ["github-actions-data-1.0.1-standard"],
+          "reason": "Data Protocol 1.0.0 remains current; 1.0.1 standard exact-head CI passed, while its synthetic disposable project pilot remains pending."
+        },
+        {
+          "id": "cloverapps-core-control-plane",
+          "title": "CloverApps, Clover Core, and WarRoom Control Plane",
+          "weight": 15,
+          "completionEstimate": 58,
+          "contribution": 8.7,
+          "evidenceClass": "candidate-verified-with-owner-surface-gap",
+          "evidenceBasis": ["github-pr16-readback-2026-08-20", "gateway-0.3-vercel-readback", "cloverapps-live-readback-2026-08-20", "cloverapps-sites81-source-readback"],
+          "reason": "Core and Gateway candidates are exact and read-only; CloverApps 7.4.2 is live and Sites 81 is saved, but the integrated owner window has no source-bound preview readback."
+        },
+        {
+          "id": "application-portfolio-delivery",
+          "title": "Application Portfolio Delivery and Business Value",
+          "weight": 15,
+          "completionEstimate": 60,
+          "contribution": 9,
+          "evidenceClass": "historical-retained",
+          "evidenceBasis": ["historical-status-2026-08-17", "registry-candidate-2.0.0"],
+          "reason": "Targeted same-day readbacks do not constitute a live audit of all applications, so the historical planning score is retained without inferred movement."
+        },
+        {
+          "id": "continuous-monitoring-and-action-center",
+          "title": "Continuous Monitoring, Action Center, and Assisted Operations",
+          "weight": 5,
+          "completionEstimate": 32,
+          "contribution": 1.6,
+          "evidenceClass": "candidate-partially-verified",
+          "evidenceBasis": ["gateway-0.3-vercel-readback", "github-pr16-readback-2026-08-20"],
+          "reason": "Read-only brief and command preparation exist as exact candidate capabilities, but no continuous monitor is claimed."
+        }
+      ]
+    },
+    {
+      "id": "owner-usable-operating-loop-completion",
+      "label": "Owner-usable operating-loop completion",
+      "asOf": "2026-08-20",
+      "scope": "What Chris can use through the current owner path today; candidate-only surfaces are excluded from owner-accessible credit above the implemented threshold.",
+      "stateClass": "current",
+      "completionEstimate": 25,
+      "weightedRawCompletion": 25,
+      "weightingMethod": "Seven operating-loop stages use weights 15/15/15/10/20/15/10 and milestone anchors 0, 25, 50, 75, and 100.",
+      "confidence": "medium",
+      "sourceFreshness": {
+        "label": "mixed",
+        "newestObservedAt": "2026-08-20",
+        "oldestMaterialEvidenceAt": "2026-08-17",
+        "notes": "Live CloverApps and the prior candidate Gateway were read back separately; the installed canonical Gateway source remains unknown and candidate capability receives no current-use credit."
+      },
+      "exclusions": [
+        "Gateway 0.3 candidate features are not counted as live owner-window features.",
+        "Sites 81 is saved source only and has no preview URL.",
+        "Manual expert work is not counted as an integrated owner experience.",
+        "No production or private-data capability is implied."
+      ],
+      "components": [
+        {"id": "observe", "title": "Observe", "weight": 15, "completionEstimate": 25, "contribution": 3.75, "evidenceClass": "defined-manual-current", "evidenceBasis": ["cloverapps-live-readback-2026-08-20"]},
+        {"id": "understand", "title": "Understand", "weight": 15, "completionEstimate": 25, "contribution": 3.75, "evidenceClass": "defined-manual-current", "evidenceBasis": ["historical-status-2026-08-17"]},
+        {"id": "recommend", "title": "Recommend", "weight": 15, "completionEstimate": 25, "contribution": 3.75, "evidenceClass": "defined-manual-current", "evidenceBasis": ["historical-status-2026-08-17"]},
+        {"id": "approve", "title": "Approve", "weight": 10, "completionEstimate": 25, "contribution": 2.5, "evidenceClass": "defined-manual-current", "evidenceBasis": ["constitution-0.1-ratification"]},
+        {"id": "execute-safe-parts", "title": "Execute safe parts", "weight": 20, "completionEstimate": 25, "contribution": 5, "evidenceClass": "defined-manual-handoff", "evidenceBasis": ["github-pr16-readback-2026-08-20"]},
+        {"id": "verify", "title": "Verify", "weight": 15, "completionEstimate": 25, "contribution": 3.75, "evidenceClass": "defined-manual-handoff", "evidenceBasis": ["github-actions-build-1.2-standard", "github-actions-data-1.0.1-standard"]},
+        {"id": "return-and-report", "title": "Return and report", "weight": 10, "completionEstimate": 25, "contribution": 2.5, "evidenceClass": "defined-manual-handoff", "evidenceBasis": ["github-pr16-readback-2026-08-20"]}
+      ]
+    },
+    {
+      "id": "live-production-completion",
+      "label": "Live production completion",
+      "asOf": "2026-08-20",
+      "scope": "The live Clover Today owner experience at CloverApps 7.4.2 and the current installed connection, excluding every isolated candidate and preview.",
+      "stateClass": "live",
+      "completionEstimate": 35,
+      "weightedRawCompletion": 35,
+      "weightingMethod": "The eight existing project dimensions use weights 10/25/15/10/10/10/10/10 and milestone anchors 0, 25, 50, 75, and 100.",
+      "confidence": "medium-low",
+      "sourceFreshness": {
+        "label": "mixed",
+        "newestObservedAt": "2026-08-20",
+        "oldestMaterialEvidenceAt": "unknown",
+        "notes": "The live CloverApps version was read back, but exact installed Gateway source and broader production source bindings remain unknown or partially verified."
+      },
+      "exclusions": [
+        "CloverApps Sites 80 and Sites 81 source checkpoints.",
+        "Gateway 0.3 target-null preview.",
+        "Core PR 15, PR 16, Registry 2.0, protocol candidates, and Command Packet 1.2.",
+        "Any production identity not independently read back."
+      ],
+      "components": [
+        {"id": "product-definition-and-scope", "title": "Product definition and scope", "weight": 10, "completionEstimate": 100, "contribution": 10, "evidenceClass": "current-verified", "evidenceBasis": ["historical-status-2026-08-17", "constitution-0.1-ratification"]},
+        {"id": "core-user-journeys", "title": "Core user journeys", "weight": 25, "completionEstimate": 25, "contribution": 6.25, "evidenceClass": "live-partially-verified", "evidenceBasis": ["cloverapps-live-readback-2026-08-20"]},
+        {"id": "data-and-integrations", "title": "Data and integrations", "weight": 15, "completionEstimate": 25, "contribution": 3.75, "evidenceClass": "current-source-unknown", "evidenceBasis": ["cloverapps-live-readback-2026-08-20"]},
+        {"id": "ux-and-accessibility", "title": "UX and accessibility", "weight": 10, "completionEstimate": 25, "contribution": 2.5, "evidenceClass": "live-partially-verified", "evidenceBasis": ["cloverapps-live-readback-2026-08-20"]},
+        {"id": "security-privacy-and-legal-controls", "title": "Security, privacy, and legal controls", "weight": 10, "completionEstimate": 50, "contribution": 5, "evidenceClass": "current-implemented", "evidenceBasis": ["constitution-0.1-ratification"]},
+        {"id": "build-deployment-and-production-verification", "title": "Build, deployment, and production verification", "weight": 10, "completionEstimate": 25, "contribution": 2.5, "evidenceClass": "live-partially-verified", "evidenceBasis": ["cloverapps-live-readback-2026-08-20"]},
+        {"id": "backup-restore-and-portability", "title": "Backup, restore, and portability", "weight": 10, "completionEstimate": 25, "contribution": 2.5, "evidenceClass": "current-partially-verified", "evidenceBasis": ["cloverapps-sites81-source-readback"]},
+        {"id": "monitoring-documentation-and-operations", "title": "Monitoring, documentation, and operations", "weight": 10, "completionEstimate": 25, "contribution": 2.5, "evidenceClass": "defined-manual", "evidenceBasis": ["historical-status-2026-08-17"]}
+      ]
+    },
+    {
+      "id": "verified-candidate-completion",
+      "label": "Verified candidate completion",
+      "asOf": "2026-08-20",
+      "scope": "The exact August 20 Core, Gateway, CloverApps source, and protocol candidate stack; production promotion and pending pilots are excluded.",
+      "stateClass": "candidate",
+      "completionEstimate": 70,
+      "weightedRawCompletion": 70,
+      "weightingMethod": "The eight existing project dimensions use weights 10/25/15/10/10/10/10/10 and milestone anchors 0, 25, 50, 75, and 100.",
+      "confidence": "medium",
+      "sourceFreshness": {
+        "label": "same-day",
+        "newestObservedAt": "2026-08-20",
+        "oldestMaterialEvidenceAt": "2026-08-18",
+        "notes": "Exact PR, CI, deployment, and source checkpoint identities are available; integrated owner-window visual readback remains pending."
+      },
+      "exclusions": [
+        "No merge, production deployment, alias, domain, or environment mutation.",
+        "Build Protocol 1.2 project pilot and Data Protocol 1.0.1 disposable pilot remain pending.",
+        "No credit for unavailable owner-window desktop, mobile, or browser-console readback.",
+        "No candidate is described as current or live."
+      ],
+      "components": [
+        {"id": "product-definition-and-scope", "title": "Product definition and scope", "weight": 10, "completionEstimate": 100, "contribution": 10, "evidenceClass": "candidate-verified", "evidenceBasis": ["github-pr16-readback-2026-08-20"]},
+        {"id": "core-user-journeys", "title": "Core user journeys", "weight": 25, "completionEstimate": 75, "contribution": 18.75, "evidenceClass": "candidate-exact-readback", "evidenceBasis": ["github-pr16-readback-2026-08-20", "gateway-0.3-vercel-readback"]},
+        {"id": "data-and-integrations", "title": "Data and integrations", "weight": 15, "completionEstimate": 75, "contribution": 11.25, "evidenceClass": "candidate-exact-readback", "evidenceBasis": ["gateway-0.3-vercel-readback", "registry-candidate-2.0.0"]},
+        {"id": "ux-and-accessibility", "title": "UX and accessibility", "weight": 10, "completionEstimate": 50, "contribution": 5, "evidenceClass": "candidate-source-only", "evidenceBasis": ["cloverapps-sites81-source-readback"]},
+        {"id": "security-privacy-and-legal-controls", "title": "Security, privacy, and legal controls", "weight": 10, "completionEstimate": 75, "contribution": 7.5, "evidenceClass": "candidate-verified", "evidenceBasis": ["gateway-0.3-vercel-readback", "constitution-0.1-ratification"]},
+        {"id": "build-deployment-and-production-verification", "title": "Build, deployment, and production verification", "weight": 10, "completionEstimate": 75, "contribution": 7.5, "evidenceClass": "candidate-exact-readback", "evidenceBasis": ["github-actions-build-1.2-standard", "github-actions-data-1.0.1-standard", "gateway-0.3-vercel-readback"]},
+        {"id": "backup-restore-and-portability", "title": "Backup, restore, and portability", "weight": 10, "completionEstimate": 50, "contribution": 5, "evidenceClass": "candidate-partially-verified", "evidenceBasis": ["cloverapps-sites81-source-readback"]},
+        {"id": "monitoring-documentation-and-operations", "title": "Monitoring, documentation, and operations", "weight": 10, "completionEstimate": 50, "contribution": 5, "evidenceClass": "candidate-implemented", "evidenceBasis": ["github-pr16-readback-2026-08-20"]}
+      ]
+    }
+  ],
+  "reconciliation": {
+    "registries": {
+      "current": {"stateClass": "current", "version": "1.0", "records": 28, "sha256": "2aeb1d6ec42e89d95c6c78180242b78818d2274bf5c5f2f0e1d0fedccdab1821"},
+      "candidate": {"stateClass": "candidate", "version": "2.0.0", "records": 45, "partiallyVerified": 14, "reported": 3, "unverified": 28, "sha256": "4f2f7c02b878db23b02b68ced0c61c9ca7e3d891b611757ae320a0e59b9725e2"}
+    },
+    "buildProtocol": {
+      "current": {"stateClass": "current", "version": "1.1.0", "status": "portable-pilot-validated"},
+      "candidate": {"stateClass": "candidate", "version": "1.2.0", "standardCI": "success", "runId": 32376233048, "exactHead": "364a9a96829f323aa00a679804fdd7ed879043b5", "projectPilot": "pending", "storedPointerStandardCI": "not-run", "evidencePrecedence": "Same-day GitHub run readback overrides only the stale standard-CI field; it does not promote the protocol or satisfy the project pilot."}
+    },
+    "dataProtocol": {
+      "current": {"stateClass": "current", "version": "1.0.0", "status": "disposable-pilot-validated"},
+      "candidate": {"stateClass": "candidate", "version": "1.0.1", "standardCI": "success", "runId": 32376232998, "exactHead": "364a9a96829f323aa00a679804fdd7ed879043b5", "disposableProjectPilot": "pending", "storedPointerStandardCI": "not-run", "evidencePrecedence": "Same-day GitHub run readback overrides only the stale standard-CI field; it does not promote the protocol or satisfy the disposable project pilot."}
+    },
+    "commandPacket": {
+      "current": {"stateClass": "current", "version": "1.1"},
+      "candidate": {"stateClass": "candidate", "version": "1.2"}
+    },
+    "constitution": {
+      "current": {"stateClass": "current", "version": "0.1", "status": "ratified-active", "sha256": "82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e"},
+      "candidate": {"stateClass": "candidate", "version": "0.2", "status": "unratified-candidate"}
+    },
+    "core": {
+      "candidate": {"stateClass": "candidate", "repository": "chrisdortch/first", "pullRequest": 16, "exactHead": "364a9a96829f323aa00a679804fdd7ed879043b5", "status": "open-draft-unmerged-unchanged-at-start"}
+    },
+    "gateway": {
+      "baselineCandidate": {"stateClass": "candidate", "version": "0.3.0", "deploymentId": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4", "contextSourceCommit": "364a9a96829f323aa00a679804fdd7ed879043b5", "target": null, "aliases": [], "readOnly": true, "writeToolsDisabled": true, "standingProductionAuthority": false},
+      "trunkActivationCandidate": {"stateClass": "candidate", "version": "0.3.1", "status": "unmerged-undeployed", "exactFinalHead": null, "previewDeploymentId": null, "notes": "This gate changes Gateway source. The 0.3.0 deployment is baseline evidence and is not relabeled as 0.3.1."}
+    },
+    "cloverApps": {
+      "live": {"stateClass": "live", "version": "7.4.2", "location": "cloverapps.ai"},
+      "baseCheckpoint": {"stateClass": "historical", "sitesVersion": 80, "sourceCommit": "b7f6bf19d410cfbbc080bdd58f35fd6881535e38"},
+      "savedCandidate": {"stateClass": "candidate", "version": "7.4.3", "sitesVersion": 81, "sourceCommit": "029a4a1a18443277bd1e19804d1544ed798e6de8", "preview": null, "deployed": false}
+    },
+    "serenity": {
+      "evidenceOnly": true,
+      "modifiedByThisGate": false,
+      "candidate": {"stateClass": "candidate", "repository": "chrisdortch/serenity-stores", "pullRequest": 22, "exactHead": "0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03", "tree": "37fcabb90c3accbeff63173a270a30d5002b87ab", "exactHeadRunId": 32392241490, "primaryPreview": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi", "duplicatePreview": "dpl_6Z12gTVTzQKnvQQRMR6SGdpdqsV5", "targets": [null, null], "status": "unchanged-draft-unmerged"}
+    },
+    "rollindd": {
+      "modifiedByThisGate": false,
+      "production": {"stateClass": "live", "branch": "main", "exactHead": "6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09", "deploymentId": "dpl_Bsudbp7aV4G2sbqJUEDQqcRS8mpQ", "unchanged": true},
+      "pr3": {"stateClass": "candidate", "pullRequest": 3, "branch": "chatpro/rollindd-clean-collection-v2-preview-20260817", "exactHead": "8db83f9c526915d2d58385b78da71ff344b18c99", "status": "open-draft-unmerged-unchanged"},
+      "pr6Reconciliation": {"stateClass": "candidate", "pullRequest": 6, "branch": "reconciliation/rollindd-pr3-ci-boundary-20260820", "exactHead": "ae2f1b0d2a649e645b1d2445b482f539670c6275", "tree": "1dd58bb2259f48341bbef94c048f22dcb68c8545", "exactHeadRunId": 32409106490, "deploymentId": "dpl_9jvysecyBL91t6bUg91k6sdSe67g", "target": null, "status": "open-draft-unmerged", "buildProtocol1_2EnrollmentPerformed": false, "deployedPageReadback": "unavailable-existing-sso"}
+    }
+  },
+  "evidence": [
+    {"sourceId": "historical-status-2026-08-17", "claimClass": "source-fact", "stateClass": "historical", "observedAt": "2026-08-17", "freshness": "historical", "exactIdentity": "sha256:d3ae732ac055b64904890c8d6085bdc4a22553381f3fb7d7af58ba301d701eea", "status": "verified"},
+    {"sourceId": "registry-current-1.0", "claimClass": "source-fact", "stateClass": "current", "observedAt": "2026-08-20", "freshness": "same-day", "exactIdentity": "sha256:2aeb1d6ec42e89d95c6c78180242b78818d2274bf5c5f2f0e1d0fedccdab1821", "status": "verified"},
+    {"sourceId": "registry-candidate-2.0.0", "claimClass": "source-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "same-day", "exactIdentity": "sha256:4f2f7c02b878db23b02b68ced0c61c9ca7e3d891b611757ae320a0e59b9725e2", "status": "partially-verified"},
+    {"sourceId": "github-pr16-readback-2026-08-20", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "github:chrisdortch/first@364a9a96829f323aa00a679804fdd7ed879043b5", "status": "verified"},
+    {"sourceId": "github-actions-build-1.2-standard", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "github-actions:32376233048@364a9a96829f323aa00a679804fdd7ed879043b5", "status": "verified"},
+    {"sourceId": "github-actions-data-1.0.1-standard", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "github-actions:32376232998@364a9a96829f323aa00a679804fdd7ed879043b5", "status": "verified"},
+    {"sourceId": "gateway-0.3-vercel-readback", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "vercel:dpl_6wXMqgh3NETEy35BMpJWFXetESi4@364a9a96829f323aa00a679804fdd7ed879043b5", "status": "verified"},
+    {"sourceId": "cloverapps-live-readback-2026-08-20", "claimClass": "connector-fact", "stateClass": "live", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "cloverapps.ai@7.4.2", "status": "verified"},
+    {"sourceId": "cloverapps-sites81-source-readback", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "sites:81@029a4a1a18443277bd1e19804d1544ed798e6de8", "status": "verified"},
+    {"sourceId": "serenity-pr22-readback", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "github:chrisdortch/serenity-stores@0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03;tree:37fcabb90c3accbeff63173a270a30d5002b87ab;run:32392241490", "status": "verified"},
+    {"sourceId": "rollindd-pr3-readback", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "github:chrisdortch/rollindd-platform#3@8db83f9c526915d2d58385b78da71ff344b18c99", "status": "verified"},
+    {"sourceId": "rollindd-pr6-readback", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "github:chrisdortch/rollindd-platform#6@ae2f1b0d2a649e645b1d2445b482f539670c6275;tree:1dd58bb2259f48341bbef94c048f22dcb68c8545;run:32409106490", "status": "verified"},
+    {"sourceId": "rollindd-reconciliation-preview-readback", "claimClass": "connector-fact", "stateClass": "candidate", "observedAt": "2026-08-20", "freshness": "current-task", "exactIdentity": "vercel:dpl_9jvysecyBL91t6bUg91k6sdSe67g@ae2f1b0d2a649e645b1d2445b482f539670c6275", "status": "verified"},
+    {"sourceId": "constitution-0.1-ratification", "claimClass": "ratification-receipt", "stateClass": "current", "observedAt": "2026-08-18", "freshness": "historical", "exactIdentity": "sha256:82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e", "status": "verified"}
+  ],
+  "priorityArtifacts": {
+    "input": "portfolio/status/candidates/2026-08-20/priority-input.json",
+    "output": "portfolio/status/candidates/2026-08-20/priority-output.json",
+    "model": "0.1-candidate",
+    "recommendedNextTargetId": "clover-warroom",
+    "recommendationBoundary": "Read-only identity and receipt-integrity reconciliation only; affiliated branch execution remains blocked until exact source identity and rollback are resolved.",
+    "priorityInputHash": "sha256:9137e2b4b106472c052d578f4cee50234fc1d63041b788617b17f2d0b31fd867",
+    "priorityOutputHash": "sha256:edf73217a96d571652cd5eba5e2c8237875eaf77a602833d7713abc67b8e95e2",
+    "wip": {"coreTrunk": 1, "affiliatedBranch": 1},
+    "activeByLane": {"coreTrunk": ["clover-core"], "affiliatedBranch": []},
+    "reservedByLane": {"coreTrunk": [], "affiliatedBranch": ["clover-warroom"]}
+  },
+  "unknowns": [
+    {"id": "installed-canonical-gateway-exact-source", "status": "unknown", "impact": "The installed connection must not be represented as Gateway 0.3 candidate state."},
+    {"id": "sites81-owner-window-preview-readback", "status": "unknown", "impact": "No desktop, mobile, or browser-console owner-window candidate claim can be made."},
+    {"id": "registry-v2-unverified-records", "status": "known-gap", "impact": "Twenty-eight candidate identities remain unverified and receive no inferred state."},
+    {"id": "build-1.2-enrolled-project-pilot", "status": "pending", "impact": "Passing standard CI alone cannot promote Build Protocol 1.2."},
+    {"id": "data-1.0.1-disposable-project-pilot", "status": "pending", "impact": "Passing standard CI alone cannot promote Data Protocol 1.0.1."},
+    {"id": "private-source-coverage", "status": "not-checked-by-policy", "impact": "Private source freshness is outside this gate and must not be inferred."}
+  ],
+  "authority": {
+    "standingProductionAuthority": false,
+    "mergeApproved": false,
+    "productionDeploymentApproved": false,
+    "productionPromotionApproved": false,
+    "productionDataAccessApproved": false,
+    "privateDataAccessApproved": false,
+    "secretMutationApproved": false,
+    "domainOrAliasMutationApproved": false,
+    "persistentEnvironmentMutationApproved": false,
+    "externalMessageApproved": false,
+    "purchaseOrSpendApproved": false
+  }
+}

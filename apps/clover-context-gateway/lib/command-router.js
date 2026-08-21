@@ -8,6 +8,7 @@ const INTENTS = [
     patterns: [
       "what should i know",
       "what do i need to know",
+      "what matters today",
       "across my current priorities",
       "daily brief",
       "morning brief",

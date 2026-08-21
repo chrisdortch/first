@@ -1,0 +1,1012 @@
+{
+  "schemaVersion": "0.1",
+  "modelVersion": "0.1-candidate",
+  "asOf": "2026-08-20",
+  "priorityInputHash": "sha256:9137e2b4b106472c052d578f4cee50234fc1d63041b788617b17f2d0b31fd867",
+  "timezone": "America/Chicago",
+  "scope": "clover-core-trunk-activation-and-handoff-gate-0.1",
+  "sourceFreshness": {
+    "label": "current-task",
+    "observedAt": "2026-08-20"
+  },
+  "weights": {
+    "deadlineSafetyContinuityRisk": 30,
+    "ownerCollaboratorWorkloadReduction": 25,
+    "revenueFinancialStability": 20,
+    "portfolioSynergyUnblockingValue": 15,
+    "readinessAndCostToFinish": 10
+  },
+  "wipLimits": {
+    "coreTrunk": 1,
+    "affiliatedBranch": 1
+  },
+  "ranking": [
+    {
+      "targetId": "clover-core",
+      "priority": "P0",
+      "lane": "coreTrunk",
+      "eligibility": "eligible",
+      "eligibilityReason": "authorized-active-trunk-gate",
+      "requestedState": "active",
+      "weightedScore": 81.5,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "current-task",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0",
+        "github-pr16-readback-2026-08-20",
+        "gateway-0.3-vercel-readback"
+      ],
+      "unknowns": [
+        "integrated-owner-acceptance-pending"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 28.5,
+        "ownerCollaboratorWorkloadReduction": 22.5,
+        "revenueFinancialStability": 7,
+        "portfolioSynergyUnblockingValue": 15,
+        "readinessAndCostToFinish": 8.5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Finishing the bounded trunk gate reduces policy and handoff ambiguity across the active stack.",
+        "ownerCollaboratorWorkloadReduction": "A deterministic kernel and handoff boundary reduce repeated owner and model coordination.",
+        "revenueFinancialStability": "The contribution is indirect portfolio stability rather than a direct revenue event.",
+        "portfolioSynergyUnblockingValue": "Core is the governed kernel used by the Gateway, owner window, protocols, and Cells.",
+        "readinessAndCostToFinish": "Exact source and preview anchors exist and the active work is bounded to this candidate gate."
+      },
+      "rank": 1,
+      "selected": true,
+      "laneReservation": false,
+      "status": "active"
+    },
+    {
+      "targetId": "lakeside-essentials",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "production-holds-and-identity-anomaly",
+      "requestedState": "not-started",
+      "weightedScore": 79.5,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "current-task",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0",
+        "serenity-pr22-readback"
+      ],
+      "unknowns": [
+        "production-holds-preserved",
+        "duplicate-project-anomaly",
+        "production-change-not-authorized"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 27,
+        "ownerCollaboratorWorkloadReduction": 18.75,
+        "revenueFinancialStability": 18,
+        "portfolioSynergyUnblockingValue": 11.25,
+        "readinessAndCostToFinish": 4.5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Commerce and reservation hold points create high operational risk if boundaries are wrong.",
+        "ownerCollaboratorWorkloadReduction": "Reliable isolated commerce operations could reduce significant manual work.",
+        "revenueFinancialStability": "The registered commerce role makes financial stability directly material.",
+        "portfolioSynergyUnblockingValue": "The Cell exercises shared commerce, reservation, and release boundaries.",
+        "readinessAndCostToFinish": "An exact PR exists, but documented hold points and duplicate deployment wiring remain."
+      },
+      "rank": 2,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked"
+    },
+    {
+      "targetId": "boat-rentals",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "production-and-data-holds",
+      "requestedState": "not-started",
+      "weightedScore": 75,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "exact-production-source-unknown",
+        "production-data-boundary-unknown",
+        "production-change-not-authorized"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 27,
+        "ownerCollaboratorWorkloadReduction": 17.5,
+        "revenueFinancialStability": 15,
+        "portfolioSynergyUnblockingValue": 10.5,
+        "readinessAndCostToFinish": 5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Reservation and waiver integrity make continuity risk high.",
+        "ownerCollaboratorWorkloadReduction": "Reliable synthetic rehearsal and operations could reduce manual reconciliation.",
+        "revenueFinancialStability": "The registered rental role has direct commercial relevance without claiming a current outcome.",
+        "portfolioSynergyUnblockingValue": "The Cell is a useful data and release-boundary exemplar.",
+        "readinessAndCostToFinish": "A disposable pilot exists, but exact production and candidate configuration remain unresolved."
+      },
+      "rank": 3,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked"
+    },
+    {
+      "targetId": "clover-warroom",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "eligible",
+      "eligibilityReason": "read-only-identity-reconciliation-eligible",
+      "requestedState": "not-started",
+      "weightedScore": 67.75,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "current-task",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "exact-source-identity-unknown",
+        "exact-deployment-identity-unknown",
+        "exact-rollback-anchor-unknown",
+        "reported-newer-line-unverified",
+        "raw-records-excluded"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 25.5,
+        "ownerCollaboratorWorkloadReduction": 18.75,
+        "revenueFinancialStability": 8,
+        "portfolioSynergyUnblockingValue": 13.5,
+        "readinessAndCostToFinish": 2
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Unreconciled deadline and matter-state identities create high continuity risk.",
+        "ownerCollaboratorWorkloadReduction": "A trustworthy receipt and identity boundary would reduce repeated manual reconciliation.",
+        "revenueFinancialStability": "The Cell supports stability indirectly; no direct cash outcome is claimed.",
+        "portfolioSynergyUnblockingValue": "A verified Cell boundary is important to Core handoff and high-risk portfolio operations.",
+        "readinessAndCostToFinish": "Only historical 1.8.0 and reported 1.9 identities exist; exact source, deployment, and rollback are unresolved."
+      },
+      "rank": 4,
+      "selected": true,
+      "laneReservation": true,
+      "status": "selected-pending-owner-gate"
+    },
+    {
+      "targetId": "knowledge-hub-window-vault",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "eligible",
+      "eligibilityReason": "low-risk-restore-proof-candidate",
+      "requestedState": "not-started",
+      "weightedScore": 64.25,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "first-restore-proof-pending",
+        "retention-proof-pending"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 22.5,
+        "ownerCollaboratorWorkloadReduction": 20,
+        "revenueFinancialStability": 4,
+        "portfolioSynergyUnblockingValue": 14.25,
+        "readinessAndCostToFinish": 3.5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Missing restore-tested knowledge continuity is a material portfolio risk.",
+        "ownerCollaboratorWorkloadReduction": "A reliable knowledge lane would reduce repeated source recovery and context assembly.",
+        "revenueFinancialStability": "The evidence supports continuity value, not direct revenue.",
+        "portfolioSynergyUnblockingValue": "Provenance and restore capability support every governed Cell and handoff.",
+        "readinessAndCostToFinish": "Architecture exists, but the first clean-room restore proof is still pending."
+      },
+      "rank": 5,
+      "selected": false,
+      "laneReservation": false,
+      "status": "queued"
+    },
+    {
+      "targetId": "cloverapps-ai",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "eligible",
+      "eligibilityReason": "candidate-owner-window-source-only",
+      "requestedState": "not-started",
+      "weightedScore": 63.5,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "current-task",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0",
+        "cloverapps-sites81-source-readback"
+      ],
+      "unknowns": [
+        "exact-live-source-unknown",
+        "owner-window-preview-unknown",
+        "restore-anchor-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 16.5,
+        "ownerCollaboratorWorkloadReduction": 21.25,
+        "revenueFinancialStability": 6,
+        "portfolioSynergyUnblockingValue": 14.25,
+        "readinessAndCostToFinish": 5.5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Owner-window fragmentation creates moderate continuity risk but no verified emergency.",
+        "ownerCollaboratorWorkloadReduction": "One source-bound owner window would substantially reduce repeated context assembly.",
+        "revenueFinancialStability": "The evidence supports indirect operating leverage, not a direct near-term cash claim.",
+        "portfolioSynergyUnblockingValue": "The owner window is the shared visibility surface for the portfolio kernel and Cells.",
+        "readinessAndCostToFinish": "Live 7.4.2 and saved Sites81 exist, but no exact owner-window preview was read back."
+      },
+      "rank": 6,
+      "selected": false,
+      "laneReservation": false,
+      "status": "queued"
+    },
+    {
+      "targetId": "clover-launchpad",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "eligible",
+      "eligibilityReason": "read-only-candidate-identity-work",
+      "requestedState": "not-started",
+      "weightedScore": 52.5,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "current-source-unknown",
+        "relay-proof-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 13.5,
+        "ownerCollaboratorWorkloadReduction": 16.25,
+        "revenueFinancialStability": 7,
+        "portfolioSynergyUnblockingValue": 11.25,
+        "readinessAndCostToFinish": 4.5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Proposal identity gaps create moderate process risk, not a verified emergency.",
+        "ownerCollaboratorWorkloadReduction": "Binding proposals to exact receipts would reduce repeated review work.",
+        "revenueFinancialStability": "The likely benefit is indirect through better delivery throughput.",
+        "portfolioSynergyUnblockingValue": "Launchpad connects proposals to the registry and Build Protocol.",
+        "readinessAndCostToFinish": "A documented release exists, but current source and relay proof are unresolved."
+      },
+      "rank": 7,
+      "selected": false,
+      "laneReservation": false,
+      "status": "queued"
+    },
+    {
+      "targetId": "poolside-pulse",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "event-boundary-evidence-pending",
+      "requestedState": "not-started",
+      "weightedScore": 45.75,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "exact-current-shas-unknown",
+        "event-boundary-evidence-pending"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 16.5,
+        "ownerCollaboratorWorkloadReduction": 10,
+        "revenueFinancialStability": 6,
+        "portfolioSynergyUnblockingValue": 6.75,
+        "readinessAndCostToFinish": 6.5
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Event-runtime boundaries matter, but no current incident is verified.",
+        "ownerCollaboratorWorkloadReduction": "The next step is bounded quality work rather than broad workload reduction.",
+        "revenueFinancialStability": "Only an indirect event-operations effect is supported.",
+        "portfolioSynergyUnblockingValue": "Prior protocol portability evidence is useful but not a current trunk dependency.",
+        "readinessAndCostToFinish": "A mature candidate exists, though exact current SHAs and event evidence remain unresolved."
+      },
+      "rank": 8,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked"
+    },
+    {
+      "targetId": "rollindd",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "explicitly-not-selected-this-gate",
+      "requestedState": "not-started",
+      "weightedScore": 44.5,
+      "hasUnknownFactor": false,
+      "freshness": {
+        "label": "current-task",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0",
+        "rollindd-pr6-readback"
+      ],
+      "unknowns": [
+        "deployed-page-readback-unavailable",
+        "build-1.2-enrollment-not-performed",
+        "merge-not-authorized"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 12,
+        "ownerCollaboratorWorkloadReduction": 11.25,
+        "revenueFinancialStability": 5,
+        "portfolioSynergyUnblockingValue": 8.25,
+        "readinessAndCostToFinish": 8
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "AI-inference"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Production is unchanged and an exact reconciliation boundary exists.",
+        "ownerCollaboratorWorkloadReduction": "The reconciliation improves evidence clarity but does not unlock the current trunk gate.",
+        "revenueFinancialStability": "No near-term financial outcome is evidenced by the reconciliation candidate.",
+        "portfolioSynergyUnblockingValue": "The receipt boundary is useful protocol evidence, but Build 1.2 enrollment was not performed.",
+        "readinessAndCostToFinish": "PR6 exact-head CI and preview identities exist, while deployed-page readback remains unavailable."
+      },
+      "rank": 9,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked"
+    },
+    {
+      "targetId": "propertycare-booking-central",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "canonical-source-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "canonical-repository-unknown",
+        "deployment-unknown",
+        "data-schema-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 27,
+        "ownerCollaboratorWorkloadReduction": 21.25,
+        "revenueFinancialStability": 18,
+        "portfolioSynergyUnblockingValue": 13.5,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Reliable reservation state is operationally urgent and safety-relevant.",
+        "ownerCollaboratorWorkloadReduction": "A trustworthy daily operations view could substantially reduce manual coordination.",
+        "revenueFinancialStability": "Reservation reliability is directly material to operating stability.",
+        "portfolioSynergyUnblockingValue": "This Cell would unify several overlapping resort-operations identities.",
+        "readinessAndCostToFinish": "Canonical repository, deployment, release, and data-schema identity are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "songandstage",
+      "priority": "P0",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "current-source-and-rehearsal-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "current-source-deployment-pairing-unknown",
+        "rehearsal-evidence-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 21,
+        "ownerCollaboratorWorkloadReduction": 16.25,
+        "revenueFinancialStability": 16,
+        "portfolioSynergyUnblockingValue": 8.25,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Show-night reliability creates time-sensitive continuity risk.",
+        "ownerCollaboratorWorkloadReduction": "Reliable show-state and signup flows could reduce manual event coordination.",
+        "revenueFinancialStability": "The registered commercial entertainment role makes revenue stability material.",
+        "portfolioSynergyUnblockingValue": "The product has reusable event patterns but is not a current kernel dependency.",
+        "readinessAndCostToFinish": "Current source and deployment pairing and production rehearsal evidence are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "cart-waiver",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "durable-record-boundary-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "exact-source-unknown",
+        "durable-record-identity-unknown",
+        "backup-identity-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 22.5,
+        "ownerCollaboratorWorkloadReduction": 13.75,
+        "revenueFinancialStability": 7,
+        "portfolioSynergyUnblockingValue": 7.5,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Record integrity and retention make the risk material.",
+        "ownerCollaboratorWorkloadReduction": "A durable workflow could reduce manual record handling.",
+        "revenueFinancialStability": "The commercial effect is indirect in the available evidence.",
+        "portfolioSynergyUnblockingValue": "The Cell could validate shared durable-record controls.",
+        "readinessAndCostToFinish": "Exact source, durable storage, backup, and review state are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "clover-companion",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "storage-and-retention-boundary-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "current-source-unknown",
+        "durable-storage-unknown",
+        "retention-boundary-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 10.5,
+        "ownerCollaboratorWorkloadReduction": 17.5,
+        "revenueFinancialStability": null,
+        "portfolioSynergyUnblockingValue": 8.25,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "unknown",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Capture continuity matters, but no current incident is verified.",
+        "ownerCollaboratorWorkloadReduction": "A durable capture lane could materially reduce owner context burden.",
+        "revenueFinancialStability": "No evidence establishes a financial-stability effect.",
+        "portfolioSynergyUnblockingValue": "Owner-controlled capture could supply approved observations to Core.",
+        "readinessAndCostToFinish": "Source, durable storage, recovery, and retention are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "clover-core-hq",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "product-identity-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "current-source-unknown",
+        "product-boundary-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 9,
+        "ownerCollaboratorWorkloadReduction": 13.75,
+        "revenueFinancialStability": 3,
+        "portfolioSynergyUnblockingValue": 6,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "No immediate continuity incident is verified for this un-reconciled identity.",
+        "ownerCollaboratorWorkloadReduction": "Resolving overlap with CloverApps could reduce duplicate owner surfaces.",
+        "revenueFinancialStability": "No direct financial effect is established.",
+        "portfolioSynergyUnblockingValue": "Identity resolution would clarify the experience plane but is not a broad kernel gate.",
+        "readinessAndCostToFinish": "Current source, Sites save, and product boundary are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "operations-hub",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "product-boundary-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "separate-product-decision-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 16.5,
+        "ownerCollaboratorWorkloadReduction": 17.5,
+        "revenueFinancialStability": 9,
+        "portfolioSynergyUnblockingValue": 11.25,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "An operations view could reduce coordination risk if its role is confirmed.",
+        "ownerCollaboratorWorkloadReduction": "A bounded unified view could materially reduce resort coordination effort.",
+        "revenueFinancialStability": "The evidence supports indirect operating stability.",
+        "portfolioSynergyUnblockingValue": "A confirmed boundary could connect several resort Cells without duplicating them.",
+        "readinessAndCostToFinish": "Whether this should remain a separate application is unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "property-opportunity-finder",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "lawful-source-boundary-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "lawful-source-access-unknown",
+        "outreach-boundary-unknown",
+        "underwriting-model-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 9,
+        "ownerCollaboratorWorkloadReduction": 12.5,
+        "revenueFinancialStability": 13,
+        "portfolioSynergyUnblockingValue": 5.25,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "No immediate continuity event is established.",
+        "ownerCollaboratorWorkloadReduction": "A bounded research workflow could reduce manual opportunity screening.",
+        "revenueFinancialStability": "The concept has potential financial relevance without a verified model or outcome.",
+        "portfolioSynergyUnblockingValue": "It is not a current trunk dependency.",
+        "readinessAndCostToFinish": "Lawful source access, outreach boundary, and underwriting model are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "serenity-shores-app",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "canonical-guest-surface-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "current-sites-save-unknown",
+        "canonical-source-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 10.5,
+        "ownerCollaboratorWorkloadReduction": 11.25,
+        "revenueFinancialStability": 7,
+        "portfolioSynergyUnblockingValue": 6.75,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Public-content accuracy matters, but no urgent incident is verified.",
+        "ownerCollaboratorWorkloadReduction": "Consolidation could reduce duplicate guest-surface maintenance.",
+        "revenueFinancialStability": "Only an indirect visitor-experience effect is supported.",
+        "portfolioSynergyUnblockingValue": "Identity resolution would clarify overlap with Maps and Stay Hub.",
+        "readinessAndCostToFinish": "Current Sites save, deployment, and canonical source are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "serenity-shores-maps",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "map-source-and-editor-boundary-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "current-sites-save-unknown",
+        "exact-media-unknown",
+        "editing-boundary-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 13.5,
+        "ownerCollaboratorWorkloadReduction": 10,
+        "revenueFinancialStability": 5,
+        "portfolioSynergyUnblockingValue": 6,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "AI-inference",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "Incorrect public location data can create operational confusion.",
+        "ownerCollaboratorWorkloadReduction": "Verified dated records could reduce repeated map corrections.",
+        "revenueFinancialStability": "Only an indirect visitor-experience effect is supported.",
+        "portfolioSynergyUnblockingValue": "A clean public map boundary would support several resort surfaces.",
+        "readinessAndCostToFinish": "Current Sites save, exact media, and editing boundary are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    },
+    {
+      "targetId": "vibe-translator",
+      "priority": "P1",
+      "lane": "affiliatedBranch",
+      "eligibility": "blocked",
+      "eligibilityReason": "concept-and-identity-unresolved",
+      "requestedState": "not-started",
+      "weightedScore": null,
+      "hasUnknownFactor": true,
+      "freshness": {
+        "label": "same-day",
+        "observedAt": "2026-08-20"
+      },
+      "provenance": [
+        "registry-current-1.0",
+        "registry-candidate-2.0.0"
+      ],
+      "unknowns": [
+        "repository-unknown",
+        "deployment-unknown",
+        "rollback-unknown"
+      ],
+      "factorContributions": {
+        "deadlineSafetyContinuityRisk": 7.5,
+        "ownerCollaboratorWorkloadReduction": 11.25,
+        "revenueFinancialStability": null,
+        "portfolioSynergyUnblockingValue": 4.5,
+        "readinessAndCostToFinish": null
+      },
+      "factorEvidenceClassifications": {
+        "deadlineSafetyContinuityRisk": "AI-inference",
+        "ownerCollaboratorWorkloadReduction": "AI-inference",
+        "revenueFinancialStability": "unknown",
+        "portfolioSynergyUnblockingValue": "AI-inference",
+        "readinessAndCostToFinish": "unknown"
+      },
+      "factorRationales": {
+        "deadlineSafetyContinuityRisk": "No time-sensitive operational dependency is verified.",
+        "ownerCollaboratorWorkloadReduction": "A bounded interpretation workflow could reduce communication effort if validated.",
+        "revenueFinancialStability": "No financial effect is established for the concept.",
+        "portfolioSynergyUnblockingValue": "The concept is not a current dependency for the trunk gate.",
+        "readinessAndCostToFinish": "Repository, Site identity, deployment, data, and rollback are unknown."
+      },
+      "rank": null,
+      "selected": false,
+      "laneReservation": false,
+      "status": "blocked-unknown"
+    }
+  ],
+  "top3Overall": [
+    {
+      "targetId": "clover-core",
+      "overallRank": 1,
+      "weightedScore": 81.5,
+      "eligibility": "eligible",
+      "status": "active",
+      "rationales": {
+        "deadlineSafetyContinuityRisk": "Finishing the bounded trunk gate reduces policy and handoff ambiguity across the active stack.",
+        "ownerCollaboratorWorkloadReduction": "A deterministic kernel and handoff boundary reduce repeated owner and model coordination.",
+        "revenueFinancialStability": "The contribution is indirect portfolio stability rather than a direct revenue event.",
+        "portfolioSynergyUnblockingValue": "Core is the governed kernel used by the Gateway, owner window, protocols, and Cells.",
+        "readinessAndCostToFinish": "Exact source and preview anchors exist and the active work is bounded to this candidate gate."
+      }
+    },
+    {
+      "targetId": "lakeside-essentials",
+      "overallRank": 2,
+      "weightedScore": 79.5,
+      "eligibility": "blocked",
+      "status": "blocked",
+      "rationales": {
+        "deadlineSafetyContinuityRisk": "Commerce and reservation hold points create high operational risk if boundaries are wrong.",
+        "ownerCollaboratorWorkloadReduction": "Reliable isolated commerce operations could reduce significant manual work.",
+        "revenueFinancialStability": "The registered commerce role makes financial stability directly material.",
+        "portfolioSynergyUnblockingValue": "The Cell exercises shared commerce, reservation, and release boundaries.",
+        "readinessAndCostToFinish": "An exact PR exists, but documented hold points and duplicate deployment wiring remain."
+      }
+    },
+    {
+      "targetId": "boat-rentals",
+      "overallRank": 3,
+      "weightedScore": 75,
+      "eligibility": "blocked",
+      "status": "blocked",
+      "rationales": {
+        "deadlineSafetyContinuityRisk": "Reservation and waiver integrity make continuity risk high.",
+        "ownerCollaboratorWorkloadReduction": "Reliable synthetic rehearsal and operations could reduce manual reconciliation.",
+        "revenueFinancialStability": "The registered rental role has direct commercial relevance without claiming a current outcome.",
+        "portfolioSynergyUnblockingValue": "The Cell is a useful data and release-boundary exemplar.",
+        "readinessAndCostToFinish": "A disposable pilot exists, but exact production and candidate configuration remain unresolved."
+      }
+    }
+  ],
+  "top3Eligible": [
+    {
+      "targetId": "clover-core",
+      "eligibleRank": 1,
+      "overallRank": 1,
+      "weightedScore": 81.5
+    },
+    {
+      "targetId": "clover-warroom",
+      "eligibleRank": 2,
+      "overallRank": 4,
+      "weightedScore": 67.75
+    },
+    {
+      "targetId": "knowledge-hub-window-vault",
+      "eligibleRank": 3,
+      "overallRank": 5,
+      "weightedScore": 64.25
+    }
+  ],
+  "recommendedAffiliatedTargetId": "clover-warroom",
+  "activeByLane": {
+    "coreTrunk": [
+      "clover-core"
+    ],
+    "affiliatedBranch": []
+  },
+  "reservedByLane": {
+    "coreTrunk": [],
+    "affiliatedBranch": [
+      "clover-warroom"
+    ]
+  },
+  "priorityOutputHash": "sha256:edf73217a96d571652cd5eba5e2c8237875eaf77a602833d7713abc67b8e95e2"
+}

@@ -22,11 +22,30 @@ test('Clover Today exposes the five owner questions and fail-closed authority', 
     'Truth Loop active',
     'Action Loop locked',
     'No production authority',
-    'One decision at a time'
+    'One decision at a time',
+    'Minimum Useful Core',
+    'What works now',
+    'What changed',
+    'Live versus candidate',
+    'Source freshness',
+    'Top three priorities',
+    'Recommended next action',
+    'Action ID and envelope',
+    'Connector plan and authority',
+    'Publication readback verified',
+    'it does not replace priorities, Action ID, Handoff lifecycle, or authority'
   ]) {
     assert.ok(html.includes(phrase), `missing ${phrase}`);
   }
   assert.ok(html.includes('textContent'));
+  assert.ok(html.includes('window.openai?.toolOutput'));
+  assert.ok(html.includes('renderOwnerSession'));
+  assert.equal(html.includes("fetch('/api/context')"), false);
+  assert.equal(html.includes('innerHTML'), false);
+  for (const privateName of ['RollinD', 'Serenity', 'Lakeside', 'SongAndStage']) {
+    assert.equal(html.includes(privateName), false, `anonymous surface embeds ${privateName}`);
+  }
+  assert.equal(/[a-f0-9]{40,64}/.test(html), false, 'anonymous surface embeds a source hash');
   assert.ok(!html.includes('standingProductionAuthority: true'));
 });
 

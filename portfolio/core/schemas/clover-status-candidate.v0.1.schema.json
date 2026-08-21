@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-status-candidate.v0.1.schema.json",
+  "title": "Clover August 20 candidate status 0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "candidateVersion", "statusHash", "status", "asOf", "timezone", "scope", "methodology", "historicalPreservation", "stateDefinitions", "metrics", "reconciliation", "evidence", "priorityArtifacts", "unknowns", "authority"],
+  "properties": {
+    "documentType": {"const": "clover-master-status-candidate"},
+    "schemaVersion": {"const": "0.2-candidate"},
+    "candidateVersion": {"const": "2026-08-20.0.1"},
+    "statusHash": {"$ref": "#/$defs/hash"},
+    "status": {"const": "candidate-unmerged-undeployed"},
+    "asOf": {"const": "2026-08-20"},
+    "timezone": {"const": "America/Chicago"},
+    "scope": {"const": "Clover Core Trunk Activation and Handoff Gate 0.1 and its relationship to the complete Clover mission."},
+    "methodology": {"const": "portfolio/PROGRESS_METHODOLOGY_V0.2_CANDIDATE.md"},
+    "historicalPreservation": {"$ref": "#/$defs/historicalPreservation"},
+    "stateDefinitions": {"$ref": "#/$defs/stateDefinitions"},
+    "metrics": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/metric"}},
+    "reconciliation": {"$ref": "#/$defs/reconciliation"},
+    "evidence": {"type": "array", "minItems": 14, "uniqueItems": true, "items": {"$ref": "#/$defs/evidence"}},
+    "priorityArtifacts": {"$ref": "#/$defs/priorityArtifacts"},
+    "unknowns": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/unknown"}},
+    "authority": {"$ref": "#/$defs/authority"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "stateClass": {"enum": ["live", "current", "candidate", "historical"]},
+    "historicalPreservation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "overallMissionCompletionEstimate", "weightedRawCompletion", "stateClass", "modifiedByThisCandidate"],
+      "properties": {
+        "path": {"const": "portfolio/status/snapshots/2026-08-17.json"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "overallMissionCompletionEstimate": {"const": 41},
+        "weightedRawCompletion": {"const": 40.55},
+        "stateClass": {"const": "historical"},
+        "modifiedByThisCandidate": {"const": false}
+      }
+    },
+    "stateDefinitions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["live", "current", "candidate", "historical", "reported", "partially-verified", "unverified", "unknown"],
+      "properties": {
+        "live": {"type": "string", "minLength": 1}, "current": {"type": "string", "minLength": 1},
+        "candidate": {"type": "string", "minLength": 1}, "historical": {"type": "string", "minLength": 1},
+        "reported": {"type": "string", "minLength": 1}, "partially-verified": {"type": "string", "minLength": 1},
+        "unverified": {"type": "string", "minLength": 1}, "unknown": {"type": "string", "minLength": 1}
+      }
+    },
+    "metricFreshness": {
+      "type": "object", "additionalProperties": false, "required": ["label", "newestObservedAt", "oldestMaterialEvidenceAt", "notes"],
+      "properties": {
+        "label": {"enum": ["mixed", "same-day", "historical", "unknown"]},
+        "newestObservedAt": {"type": "string"}, "oldestMaterialEvidenceAt": {"type": "string"},
+        "notes": {"type": "string", "minLength": 1}
+      }
+    },
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "title", "weight", "completionEstimate", "contribution", "evidenceClass", "evidenceBasis"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1}, "title": {"type": "string", "minLength": 1},
+        "weight": {"type": "number", "minimum": 1, "maximum": 100},
+        "completionEstimate": {"type": "number", "minimum": 0, "maximum": 100},
+        "contribution": {"type": "number", "minimum": 0, "maximum": 100},
+        "evidenceClass": {"type": "string", "minLength": 1},
+        "evidenceBasis": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "metric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "label", "asOf", "scope", "stateClass", "completionEstimate", "weightedRawCompletion", "weightingMethod", "confidence", "sourceFreshness", "exclusions", "components"],
+      "properties": {
+        "id": {"enum": ["broad-mission-completion", "owner-usable-operating-loop-completion", "live-production-completion", "verified-candidate-completion"]},
+        "label": {"type": "string", "minLength": 1}, "asOf": {"const": "2026-08-20"},
+        "scope": {"type": "string", "minLength": 1}, "stateClass": {"$ref": "#/$defs/stateClass"},
+        "completionEstimate": {"type": "number", "minimum": 0, "maximum": 100},
+        "weightedRawCompletion": {"type": "number", "minimum": 0, "maximum": 100},
+        "weightingMethod": {"type": "string", "minLength": 1},
+        "confidence": {"enum": ["high", "medium", "medium-low", "low"]},
+        "sourceFreshness": {"$ref": "#/$defs/metricFreshness"},
+        "exclusions": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "components": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/component"}}
+      }
+    },
+    "registryCurrent": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "records", "sha256"],
+      "properties": {"stateClass": {"const": "current"}, "version": {"const": "1.0"}, "records": {"const": 28}, "sha256": {"type": "string"}}
+    },
+    "registryCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "records", "partiallyVerified", "reported", "unverified", "sha256"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "2.0.0"}, "records": {"const": 45}, "partiallyVerified": {"const": 14}, "reported": {"const": 3}, "unverified": {"const": 28}, "sha256": {"type": "string"}}
+    },
+    "protocolCurrent": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "status"],
+      "properties": {"stateClass": {"const": "current"}, "version": {"type": "string"}, "status": {"type": "string"}}
+    },
+    "buildCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "standardCI", "runId", "exactHead", "projectPilot", "storedPointerStandardCI", "evidencePrecedence"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "1.2.0"}, "standardCI": {"const": "success"}, "runId": {"const": 32376233048}, "exactHead": {"type": "string"}, "projectPilot": {"const": "pending"}, "storedPointerStandardCI": {"const": "not-run"}, "evidencePrecedence": {"type": "string"}}
+    },
+    "dataCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "standardCI", "runId", "exactHead", "disposableProjectPilot", "storedPointerStandardCI", "evidencePrecedence"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "1.0.1"}, "standardCI": {"const": "success"}, "runId": {"const": 32376232998}, "exactHead": {"type": "string"}, "disposableProjectPilot": {"const": "pending"}, "storedPointerStandardCI": {"const": "not-run"}, "evidencePrecedence": {"type": "string"}}
+    },
+    "versionState": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version"],
+      "properties": {"stateClass": {"$ref": "#/$defs/stateClass"}, "version": {"type": "string"}}
+    },
+    "constitutionCurrent": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "status", "sha256"],
+      "properties": {"stateClass": {"const": "current"}, "version": {"const": "0.1"}, "status": {"const": "ratified-active"}, "sha256": {"type": "string"}}
+    },
+    "constitutionCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "status"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "0.2"}, "status": {"const": "unratified-candidate"}}
+    },
+    "coreCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "repository", "pullRequest", "exactHead", "status"],
+      "properties": {"stateClass": {"const": "candidate"}, "repository": {"const": "chrisdortch/first"}, "pullRequest": {"const": 16}, "exactHead": {"type": "string"}, "status": {"type": "string"}}
+    },
+    "gatewayBaseline": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "deploymentId", "contextSourceCommit", "target", "aliases", "readOnly", "writeToolsDisabled", "standingProductionAuthority"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "0.3.0"}, "deploymentId": {"type": "string"}, "contextSourceCommit": {"type": "string"}, "target": {"const": null}, "aliases": {"type": "array", "maxItems": 0}, "readOnly": {"const": true}, "writeToolsDisabled": {"const": true}, "standingProductionAuthority": {"const": false}}
+    },
+    "gatewayTrunk": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "status", "exactFinalHead", "previewDeploymentId", "notes"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "0.3.1"}, "status": {"const": "unmerged-undeployed"}, "exactFinalHead": {"const": null}, "previewDeploymentId": {"const": null}, "notes": {"type": "string"}}
+    },
+    "cloverAppsLive": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "location"],
+      "properties": {"stateClass": {"const": "live"}, "version": {"const": "7.4.2"}, "location": {"const": "cloverapps.ai"}}
+    },
+    "cloverAppsBase": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "sitesVersion", "sourceCommit"],
+      "properties": {"stateClass": {"const": "historical"}, "sitesVersion": {"const": 80}, "sourceCommit": {"type": "string"}}
+    },
+    "cloverAppsCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "version", "sitesVersion", "sourceCommit", "preview", "deployed"],
+      "properties": {"stateClass": {"const": "candidate"}, "version": {"const": "7.4.3"}, "sitesVersion": {"const": 81}, "sourceCommit": {"type": "string"}, "preview": {"const": null}, "deployed": {"const": false}}
+    },
+    "serenityCandidate": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "repository", "pullRequest", "exactHead", "tree", "exactHeadRunId", "primaryPreview", "duplicatePreview", "targets", "status"],
+      "properties": {"stateClass": {"const": "candidate"}, "repository": {"const": "chrisdortch/serenity-stores"}, "pullRequest": {"const": 22}, "exactHead": {"type": "string"}, "tree": {"type": "string"}, "exactHeadRunId": {"const": 32392241490}, "primaryPreview": {"type": "string"}, "duplicatePreview": {"type": "string"}, "targets": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"const": null}}, "status": {"type": "string"}}
+    },
+    "rollindProduction": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "branch", "exactHead", "deploymentId", "unchanged"],
+      "properties": {"stateClass": {"const": "live"}, "branch": {"const": "main"}, "exactHead": {"type": "string"}, "deploymentId": {"type": "string"}, "unchanged": {"const": true}}
+    },
+    "rollindPr3": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "pullRequest", "branch", "exactHead", "status"],
+      "properties": {"stateClass": {"const": "candidate"}, "pullRequest": {"const": 3}, "branch": {"type": "string"}, "exactHead": {"type": "string"}, "status": {"type": "string"}}
+    },
+    "rollindPr6": {
+      "type": "object", "additionalProperties": false, "required": ["stateClass", "pullRequest", "branch", "exactHead", "tree", "exactHeadRunId", "deploymentId", "target", "status", "buildProtocol1_2EnrollmentPerformed", "deployedPageReadback"],
+      "properties": {"stateClass": {"const": "candidate"}, "pullRequest": {"const": 6}, "branch": {"type": "string"}, "exactHead": {"type": "string"}, "tree": {"type": "string"}, "exactHeadRunId": {"const": 32409106490}, "deploymentId": {"type": "string"}, "target": {"const": null}, "status": {"type": "string"}, "buildProtocol1_2EnrollmentPerformed": {"const": false}, "deployedPageReadback": {"type": "string"}}
+    },
+    "reconciliation": {
+      "type": "object", "additionalProperties": false, "required": ["registries", "buildProtocol", "dataProtocol", "commandPacket", "constitution", "core", "gateway", "cloverApps", "serenity", "rollindd"],
+      "properties": {
+        "registries": {"type": "object", "additionalProperties": false, "required": ["current", "candidate"], "properties": {"current": {"$ref": "#/$defs/registryCurrent"}, "candidate": {"$ref": "#/$defs/registryCandidate"}}},
+        "buildProtocol": {"type": "object", "additionalProperties": false, "required": ["current", "candidate"], "properties": {"current": {"$ref": "#/$defs/protocolCurrent"}, "candidate": {"$ref": "#/$defs/buildCandidate"}}},
+        "dataProtocol": {"type": "object", "additionalProperties": false, "required": ["current", "candidate"], "properties": {"current": {"$ref": "#/$defs/protocolCurrent"}, "candidate": {"$ref": "#/$defs/dataCandidate"}}},
+        "commandPacket": {"type": "object", "additionalProperties": false, "required": ["current", "candidate"], "properties": {"current": {"$ref": "#/$defs/versionState"}, "candidate": {"$ref": "#/$defs/versionState"}}},
+        "constitution": {"type": "object", "additionalProperties": false, "required": ["current", "candidate"], "properties": {"current": {"$ref": "#/$defs/constitutionCurrent"}, "candidate": {"$ref": "#/$defs/constitutionCandidate"}}},
+        "core": {"type": "object", "additionalProperties": false, "required": ["candidate"], "properties": {"candidate": {"$ref": "#/$defs/coreCandidate"}}},
+        "gateway": {"type": "object", "additionalProperties": false, "required": ["baselineCandidate", "trunkActivationCandidate"], "properties": {"baselineCandidate": {"$ref": "#/$defs/gatewayBaseline"}, "trunkActivationCandidate": {"$ref": "#/$defs/gatewayTrunk"}}},
+        "cloverApps": {"type": "object", "additionalProperties": false, "required": ["live", "baseCheckpoint", "savedCandidate"], "properties": {"live": {"$ref": "#/$defs/cloverAppsLive"}, "baseCheckpoint": {"$ref": "#/$defs/cloverAppsBase"}, "savedCandidate": {"$ref": "#/$defs/cloverAppsCandidate"}}},
+        "serenity": {"type": "object", "additionalProperties": false, "required": ["evidenceOnly", "modifiedByThisGate", "candidate"], "properties": {"evidenceOnly": {"const": true}, "modifiedByThisGate": {"const": false}, "candidate": {"$ref": "#/$defs/serenityCandidate"}}},
+        "rollindd": {"type": "object", "additionalProperties": false, "required": ["modifiedByThisGate", "production", "pr3", "pr6Reconciliation"], "properties": {"modifiedByThisGate": {"const": false}, "production": {"$ref": "#/$defs/rollindProduction"}, "pr3": {"$ref": "#/$defs/rollindPr3"}, "pr6Reconciliation": {"$ref": "#/$defs/rollindPr6"}}}
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false, "required": ["sourceId", "claimClass", "stateClass", "observedAt", "freshness", "exactIdentity", "status"],
+      "properties": {
+        "sourceId": {"type": "string", "minLength": 1}, "claimClass": {"enum": ["source-fact", "connector-fact", "ratification-receipt"]},
+        "stateClass": {"$ref": "#/$defs/stateClass"}, "observedAt": {"type": "string"},
+        "freshness": {"enum": ["current-task", "same-day", "historical", "unknown"]},
+        "exactIdentity": {"type": "string", "minLength": 1},
+        "status": {"enum": ["verified", "partially-verified", "reported", "unverified", "unknown"]}
+      }
+    },
+    "laneState": {
+      "type": "object", "additionalProperties": false, "required": ["coreTrunk", "affiliatedBranch"],
+      "properties": {"coreTrunk": {"type": "array", "maxItems": 1, "items": {"type": "string"}}, "affiliatedBranch": {"type": "array", "maxItems": 1, "items": {"type": "string"}}}
+    },
+    "priorityArtifacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["input", "output", "model", "recommendedNextTargetId", "recommendationBoundary", "priorityInputHash", "priorityOutputHash", "wip", "activeByLane", "reservedByLane"],
+      "properties": {
+        "input": {"type": "string"}, "output": {"type": "string"}, "model": {"const": "0.1-candidate"},
+        "recommendedNextTargetId": {"const": "clover-warroom"}, "recommendationBoundary": {"type": "string"},
+        "priorityInputHash": {"$ref": "#/$defs/hash"}, "priorityOutputHash": {"$ref": "#/$defs/hash"},
+        "wip": {"type": "object", "additionalProperties": false, "required": ["coreTrunk", "affiliatedBranch"], "properties": {"coreTrunk": {"const": 1}, "affiliatedBranch": {"const": 1}}},
+        "activeByLane": {"$ref": "#/$defs/laneState"}, "reservedByLane": {"$ref": "#/$defs/laneState"}
+      }
+    },
+    "unknown": {
+      "type": "object", "additionalProperties": false, "required": ["id", "status", "impact"],
+      "properties": {"id": {"type": "string", "minLength": 1}, "status": {"enum": ["unknown", "known-gap", "pending", "not-checked-by-policy"]}, "impact": {"type": "string", "minLength": 1}}
+    },
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["standingProductionAuthority", "mergeApproved", "productionDeploymentApproved", "productionPromotionApproved", "productionDataAccessApproved", "privateDataAccessApproved", "secretMutationApproved", "domainOrAliasMutationApproved", "persistentEnvironmentMutationApproved", "externalMessageApproved", "purchaseOrSpendApproved"],
+      "properties": {
+        "standingProductionAuthority": {"const": false}, "mergeApproved": {"const": false},
+        "productionDeploymentApproved": {"const": false}, "productionPromotionApproved": {"const": false},
+        "productionDataAccessApproved": {"const": false}, "privateDataAccessApproved": {"const": false},
+        "secretMutationApproved": {"const": false}, "domainOrAliasMutationApproved": {"const": false},
+        "persistentEnvironmentMutationApproved": {"const": false}, "externalMessageApproved": {"const": false},
+        "purchaseOrSpendApproved": {"const": false}
+      }
+    }
+  }
+}

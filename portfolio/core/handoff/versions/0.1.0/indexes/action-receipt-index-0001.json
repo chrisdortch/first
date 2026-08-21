@@ -1,0 +1,89 @@
+{
+  "documentType": "clover-handoff-action-receipt-index",
+  "schemaVersion": "0.1.0",
+  "indexId": "handoff-index:demonstration:20260820",
+  "createdAt": "2026-08-20T21:19:45.000Z",
+  "previousIndexPath": null,
+  "previousIndexHash": null,
+  "entries": [
+    {
+      "sequence": 1,
+      "recordedAt": "2026-08-20T21:19:45.000Z",
+      "actionId": "CLOVER-2026-08-20-001",
+      "branchCapsuleId": "cell-capsule:clover-core:20260820",
+      "branchCapsuleHash": "9284103f45dde81732d04eaee79f04625a38ca78272218d3f0610eeffffb45d5",
+      "envelopeId": "handoff-action:001:status-refresh",
+      "envelopePath": "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-envelope.json",
+      "envelopeHash": "0f246dfa000fee8c8f7b24a0e21075236fe05f1cc647736747f9f9df8cd4afba",
+      "status": "completed",
+      "lifecycle": {
+        "state": "consumed",
+        "singleUse": true,
+        "consumedAt": "2026-08-20T21:19:44.000Z",
+        "consumedByReceiptId": "handoff-receipt:001:status-refresh",
+        "revokedAt": null,
+        "revocationEvidenceHash": null
+      },
+      "ownerApproval": {
+        "status": "not-required",
+        "approverId": "owner:chris-dortch",
+        "approvedAt": null,
+        "approvedEnvelopeHash": null,
+        "approvalEvidenceHash": null,
+        "attestationId": null,
+        "attestationPath": null,
+        "attestationHash": null
+      },
+      "receiptId": "handoff-receipt:001:status-refresh",
+      "receiptPath": "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-receipt.json",
+      "receiptHash": "85a80a7aea223d2317477e6975a9f1a34bd5fed8ba2f1f1e48edf2e742a6f3d8",
+      "outcome": "succeeded",
+      "review": {
+        "status": "pending",
+        "decisionId": null,
+        "decisionPath": null,
+        "decisionHash": null
+      }
+    },
+    {
+      "sequence": 2,
+      "recordedAt": "2026-08-20T21:19:45.000Z",
+      "actionId": "CLOVER-2026-08-20-002",
+      "branchCapsuleId": "cell-capsule:clover-warroom:20260820",
+      "branchCapsuleHash": "37e2487a27143900e66cc69cd0bd8fe1ae44e4cf3fef5ad1d57a69636e0df97d",
+      "envelopeId": "handoff-action:002:warroom-identity",
+      "envelopePath": "portfolio/core/handoff/versions/0.1.0/demonstration/action-002-warroom-identity-envelope.json",
+      "envelopeHash": "71873de93355ec1301b2a398b34d72860339f19f52c937fffdc3c95638550214",
+      "status": "pending",
+      "lifecycle": {
+        "state": "proposed",
+        "singleUse": true,
+        "consumedAt": null,
+        "consumedByReceiptId": null,
+        "revokedAt": null,
+        "revocationEvidenceHash": null
+      },
+      "ownerApproval": {
+        "status": "pending",
+        "approverId": "owner:chris-dortch",
+        "approvedAt": null,
+        "approvedEnvelopeHash": null,
+        "approvalEvidenceHash": null,
+        "attestationId": null,
+        "attestationPath": null,
+        "attestationHash": null
+      },
+      "receiptId": null,
+      "receiptPath": null,
+      "receiptHash": null,
+      "outcome": "pending",
+      "review": {
+        "status": "pending",
+        "decisionId": null,
+        "decisionPath": null,
+        "decisionHash": null
+      }
+    }
+  ],
+  "indexHash": "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c"
+}

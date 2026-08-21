@@ -49,3 +49,10 @@ jobs:
         run: node portfolio/registry/validate-registry-v2.mjs
       - name: Test federated registry projection and version identities
         run: node --test portfolio/registry/test/*.test.mjs
+      - name: Validate August 20 candidate status, priority, and Core activation records
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test portfolio/test/*.test.mjs
+          node portfolio/runtime/validate-core-activation.mjs
+          node portfolio/core/scripts/verify-publication-finalization.mjs
