@@ -78,6 +78,117 @@ const INTENTS = [
   },
 ];
 
+const PORTFOLIO_MODE_CUES = Object.freeze({
+  report_activity: Object.freeze([
+    "what happened",
+    "what changed today",
+    "what changed since",
+    "show activity since",
+    "what was completed and verified",
+    "update today s log",
+    "report what changed",
+    "today s log",
+    "daily log",
+    "last accepted receipt",
+    "last receipt",
+    "latest accepted receipt",
+  ]),
+  execute_safe_parts: Object.freeze([
+    "do only the safe",
+    "do only the safe parts",
+    "do the safe parts",
+    "complete only the reversible parts",
+    "move forward with what is already authorized and safe",
+    "prepare the safe preview only parts",
+    "do what you can safely do without creating new risk",
+    "do the recommended safe step",
+  ]),
+  recommend_next: Object.freeze([
+    "what is the single best next thing",
+    "single best next thing",
+    "best next thing",
+    "what should i do next",
+    "one best next action",
+    "one next action",
+    "what do you recommend now",
+    "what do you recommend",
+    "highest value next step",
+    "smallest highest value next step",
+    "smartest next",
+    "recommended step",
+    "feel overloaded",
+    "overloaded",
+    "overwhelmed",
+    "too much to manage",
+    "reduce this to one decision",
+    "one decision",
+    "safest thing you can do now",
+    "just recommend",
+    "recommend only",
+  ]),
+  explain_priority: Object.freeze([
+    "priority",
+    "priorities",
+    "ranked",
+    "ranking",
+    "dependency",
+    "dependencies",
+    "evidence behind",
+    "evidence is driving",
+    "readiness",
+    "most important item",
+    "top priority",
+  ]),
+  brief: Object.freeze([
+    "what matters today",
+    "what should i know",
+    "what do i need to know",
+    "brief me",
+    "daily brief",
+    "morning brief",
+    "across my priorities",
+    "across my current priorities",
+    "help me understand today",
+  ]),
+});
+
+const EXPLAIN_PRIORITY_WHEN_NONTECHNICAL_CUES = Object.freeze([
+  "blocked",
+  "explain why",
+  "why it matters",
+]);
+
+const DIAGNOSTIC_CUES = Object.freeze([
+  "fix",
+  "error",
+  "errors",
+  "broken",
+  "failing",
+  "failure",
+  "crash",
+  "bug",
+  "runtime failure",
+  "build failing",
+  "checkout failing",
+  "log",
+  "logs",
+  "reproduce the failure",
+  "diagnose",
+]);
+
+const NONAFFIRMATIVE_SAFE_PREFIXES = Object.freeze([
+  "do not",
+  "don t",
+  "dont",
+  "never",
+  "should i",
+  "should we",
+  "would i",
+  "would we",
+  "could i",
+  "could we",
+]);
+
 const PROJECT_ALIASES = {
   "clover apps": "cloverapps-ai",
   cloverapps: "cloverapps-ai",
@@ -177,37 +288,77 @@ function normalize(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function includesCue(normalized, cue) {
+  return ` ${normalized} `.includes(` ${normalize(cue)} `);
+}
+
+function includesAnyCue(normalized, cues) {
+  return cues.some((cue) => includesCue(normalized, cue));
+}
+
+function startsWithCue(normalized, cue) {
+  const normalizedCue = normalize(cue);
+  return normalized === normalizedCue || normalized.startsWith(`${normalizedCue} `);
+}
+
+function affirmativeSafeImperative(normalized) {
+  const withoutCourtesy = normalized.startsWith("please ") ? normalized.slice("please ".length) : normalized;
+  if (NONAFFIRMATIVE_SAFE_PREFIXES.some((cue) => startsWithCue(withoutCourtesy, cue))) return false;
+  return PORTFOLIO_MODE_CUES.execute_safe_parts.some((cue) => startsWithCue(withoutCourtesy, cue));
+}
+
 function meaningfulTokens(value) {
   return normalize(value)
     .split(/\s+/)
     .filter((token) => token.length > 2 && !STOPWORDS.has(token));
 }
 
-function detectIntent(request) {
-  const normalized = normalize(request);
-  const scored = INTENTS.map((intent, index) => ({
+function detectExplicitIntent(normalized) {
+  const scored = INTENTS
+    .filter((intent) => ![PORTFOLIO_INTENT_ID, "diagnose_project"].includes(intent.id))
+    .map((intent, index) => ({
     intent,
     index,
-    score: intent.patterns.reduce((total, pattern) => total + (normalized.includes(normalize(pattern)) ? normalize(pattern).length : 0), 0),
+    score: intent.patterns.reduce((total, pattern) => total + (includesCue(normalized, pattern) ? normalize(pattern).length : 0), 0),
   })).sort((a, b) => b.score - a.score || a.index - b.index);
-  return scored[0].score > 0 ? scored[0].intent : INTENTS.find((intent) => intent.id === "evolve_project");
+  return scored[0]?.score > 0 ? scored[0].intent : null;
 }
 
 function detectPortfolioMode(request) {
   const normalized = normalize(request);
-  if (["what happened", "what changed today", "today s log", "daily log", "report what changed"].some((pattern) => normalized.includes(pattern))) {
-    return "report_activity";
+  const technicalFailure = includesAnyCue(normalized, DIAGNOSTIC_CUES);
+  if (includesAnyCue(normalized, PORTFOLIO_MODE_CUES.report_activity)) return "report_activity";
+  if (affirmativeSafeImperative(normalized)) return "execute_safe_parts";
+  if (includesAnyCue(normalized, PORTFOLIO_MODE_CUES.recommend_next)) return "recommend_next";
+  if (includesAnyCue(normalized, PORTFOLIO_MODE_CUES.brief)) return "brief";
+  if (!technicalFailure && (
+    includesAnyCue(normalized, PORTFOLIO_MODE_CUES.explain_priority)
+    || includesAnyCue(normalized, EXPLAIN_PRIORITY_WHEN_NONTECHNICAL_CUES)
+  )) return "explain_priority";
+  return null;
+}
+
+function detectRouting(request) {
+  const normalized = normalize(request);
+  const portfolioMode = detectPortfolioMode(normalized);
+  if (portfolioMode) {
+    return {
+      intent: INTENTS.find((intent) => intent.id === PORTFOLIO_INTENT_ID),
+      portfolioMode,
+    };
   }
-  if (["do the safe parts", "safe reversible", "recommended step"].some((pattern) => normalized.includes(pattern))) {
-    return "execute_safe_parts";
+  if (includesAnyCue(normalized, DIAGNOSTIC_CUES)) {
+    return {
+      intent: INTENTS.find((intent) => intent.id === "diagnose_project"),
+      portfolioMode: null,
+    };
   }
-  if (["what do you recommend", "highest value next step", "smallest highest value", "smartest next"].some((pattern) => normalized.includes(pattern))) {
-    return "recommend_next";
-  }
-  if (["most important item", "explain why", "why it matters"].some((pattern) => normalized.includes(pattern))) {
-    return "explain_priority";
-  }
-  return "brief";
+  const explicitIntent = detectExplicitIntent(normalized);
+  if (explicitIntent) return { intent: explicitIntent, portfolioMode: null };
+  return {
+    intent: INTENTS.find((intent) => intent.id === PORTFOLIO_INTENT_ID),
+    portfolioMode: "brief",
+  };
 }
 
 function instructionBody(request) {
@@ -320,6 +471,7 @@ function portfolioExecutionSteps(mode) {
     recommend_next: [
       "Compare the smallest credible next actions across the current priorities.",
       "Select one highest-value reversible step using deadlines, harm avoided, cash constraints, strategic compounding, dependencies, confidence, cost, and owner attention.",
+      "Reduce the owner-facing result to one decision while preserving the complete source, uncertainty, alternative, authority, and rollback record.",
       "Prepare the exact next command or Action Envelope, but do not execute it.",
     ],
     execute_safe_parts: [
@@ -389,8 +541,7 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
   const originalRequest = String(request || "").trim();
   if (!originalRequest) throw new Error("A command request is required.");
   const requestBody = instructionBody(originalRequest);
-  const intent = detectIntent(requestBody);
-  const portfolioMode = intent.id === PORTFOLIO_INTENT_ID ? detectPortfolioMode(requestBody) : null;
+  const { intent, portfolioMode } = detectRouting(requestBody);
   const resolution = resolveProject(requestBody, projects || []);
   const project = resolution.project;
   const isPortfolio = intent.id === PORTFOLIO_INTENT_ID;
