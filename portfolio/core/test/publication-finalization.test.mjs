@@ -6,15 +6,21 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { sha256Bytes, sha256Canonical } from "../lib/canonical-json.mjs";
+import { sealHandoffDocument } from "../lib/handoff-ledger.mjs";
 import {
   ACTION_002_HASH,
+  HANDOFF_INDEX_DIRECTORY,
+  HANDOFF_INDEX_PATH,
   HISTORICAL_RECEIPT_HASH,
   HISTORICAL_REPORT_HASH,
+  HISTORICAL_HANDOFF_INDEX_BYTE_HASH,
+  HISTORICAL_HANDOFF_INDEX_HASH,
   HISTORICAL_REVIEW_PROMPT_HASH,
   PUBLICATION_INDEX_PATH,
   assertSanitizedPublicationMirror,
   loadPublicationCatalog,
   publicationRecordHash,
+  validateHandoffIndexChain,
   validatePublicationFinalization,
   validatePublicationIndexChain,
   validatePublicationIndexTransition,
@@ -39,6 +45,8 @@ function createTempRoot() {
     "portfolio/core/publication",
     "portfolio/core/today/2026-08-20/session.json",
     "portfolio/core/handoff/index.json",
+    "portfolio/core/handoff/versions/0.1.0/indexes",
+    "portfolio/core/handoff/versions/0.1.0/schemas/action-receipt-index.schema.json",
     "portfolio/status/candidates/2026-08-20/status.json",
   ]) {
     const source = path.join(ROOT, relativePath);
@@ -94,6 +102,94 @@ function makeSuccessor(previous) {
   return next;
 }
 
+function handoffSnapshotPath(sequence) {
+  return `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-${String(sequence).padStart(4, "0")}.json`;
+}
+
+function makeApprovedHandoffSuccessor(previous, sequence = 2) {
+  const next = structuredClone(previous);
+  next.indexId = `handoff-index:synthetic-approved-${sequence}:20260820`;
+  next.createdAt = `2026-08-20T21:${String(18 + sequence).padStart(2, "0")}:00.000Z`;
+  next.previousIndexPath = handoffSnapshotPath(sequence - 1);
+  next.previousIndexHash = previous.indexHash;
+  const action = next.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+  action.recordedAt = next.createdAt;
+  action.lifecycle.state = "available";
+  action.ownerApproval = {
+    status: "approved",
+    approverId: "owner:chris-dortch",
+    approvedAt: "2026-08-20T21:19:50.000Z",
+    approvedEnvelopeHash: ACTION_002_HASH,
+    approvalEvidenceHash: "a".repeat(64),
+    attestationId: "handoff-approval:002:synthetic",
+    attestationPath: "portfolio/core/handoff/versions/0.1.0/approvals/action-002.synthetic.json",
+    attestationHash: "b".repeat(64),
+  };
+  return sealHandoffDocument(next, "indexHash");
+}
+
+function makeConsumedHandoffSuccessor(previous, sequence = 3) {
+  const next = structuredClone(previous);
+  next.indexId = `handoff-index:synthetic-consumed-${sequence}:20260820`;
+  next.createdAt = `2026-08-20T21:${String(18 + sequence).padStart(2, "0")}:00.000Z`;
+  next.previousIndexPath = handoffSnapshotPath(sequence - 1);
+  next.previousIndexHash = previous.indexHash;
+  const action = next.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+  action.recordedAt = next.createdAt;
+  action.status = "completed";
+  action.lifecycle = {
+    state: "consumed",
+    singleUse: true,
+    consumedAt: "2026-08-20T21:20:30.000Z",
+    consumedByReceiptId: "handoff-receipt:002:synthetic",
+    revokedAt: null,
+    revocationEvidenceHash: null,
+  };
+  action.receiptId = "handoff-receipt:002:synthetic";
+  action.receiptPath = "portfolio/core/handoff/versions/0.1.0/demonstration/action-002.synthetic-receipt.json";
+  action.receiptHash = "c".repeat(64);
+  action.outcome = "partial";
+  return sealHandoffDocument(next, "indexHash");
+}
+
+function makeReviewedHandoffSuccessor(previous, sequence = 4) {
+  const next = structuredClone(previous);
+  next.indexId = `handoff-index:synthetic-reviewed-${sequence}:20260820`;
+  next.createdAt = `2026-08-20T21:${String(18 + sequence).padStart(2, "0")}:00.000Z`;
+  next.previousIndexPath = handoffSnapshotPath(sequence - 1);
+  next.previousIndexHash = previous.indexHash;
+  const action = next.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+  action.recordedAt = next.createdAt;
+  action.review = {
+    status: "completed",
+    decisionId: "handoff-review:002:synthetic",
+    decisionPath: "portfolio/core/handoff/versions/0.1.0/reviews/action-002.synthetic.json",
+    decisionHash: "d".repeat(64),
+  };
+  return sealHandoffDocument(next, "indexHash");
+}
+
+function installHandoffChain(root, indexes) {
+  indexes.forEach((index, offset) => writeJson(root, handoffSnapshotPath(offset + 1), index));
+  writeJson(root, HANDOFF_INDEX_PATH, indexes.at(-1));
+}
+
+function installLatestHandoffIndex(root, index, sequence) {
+  writeJson(root, handoffSnapshotPath(sequence), index);
+  writeJson(root, HANDOFF_INDEX_PATH, index);
+}
+
+function createHandoffSuccessorRoot(state = "approved") {
+  const root = createTempRoot();
+  const genesis = readJson(root, handoffSnapshotPath(1));
+  const approved = makeApprovedHandoffSuccessor(genesis);
+  const indexes = [genesis, approved];
+  if (["consumed", "reviewed"].includes(state)) indexes.push(makeConsumedHandoffSuccessor(approved));
+  if (state === "reviewed") indexes.push(makeReviewedHandoffSuccessor(indexes.at(-1)));
+  installHandoffChain(root, indexes);
+  return { root, indexes };
+}
+
 test("the persisted publication catalog is closed, source-bound, and non-authorizing", () => {
   const result = validatePublicationFinalization(ROOT);
   assert.equal(result.status, "passed");
@@ -102,6 +198,9 @@ test("the persisted publication catalog is closed, source-bound, and non-authori
   assert.equal(result.action002Status, "pending");
   assert.equal(result.containerBindingStatus, "pending-external-publication-receipt");
   assert.equal(result.chainDepth, 1);
+  assert.equal(result.handoffChainDepth, 1);
+  assert.equal(result.currentHandoffIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+  assert.equal(result.historicalHandoffIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
 });
 
 test("the three externally issued artifacts are mirrored byte-for-byte", () => {
@@ -129,6 +228,180 @@ test("the root index is byte-identical to immutable index 0001 and connector IDs
   assert.deepEqual(index.connectorIds["clover://publication/review-prompt"], index.current.reviewPrompt);
   assert.deepEqual(index.connectorIds["clover://publication/review-decision"], index.current.reviewPointer);
   assert.deepEqual(index.connectorIds["clover://publication/readback"], index.current.publicationReadback);
+});
+
+test("the baseline Handoff root resolves exactly to immutable genesis index 0001", () => {
+  const chain = validateHandoffIndexChain(ROOT);
+  assert.equal(chain.status, "passed");
+  assert.equal(chain.depth, 1);
+  assert.equal(chain.currentSnapshotPath, handoffSnapshotPath(1));
+  assert.equal(chain.historicalSnapshotPath, handoffSnapshotPath(1));
+  assert.equal(chain.currentIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+  assert.equal(chain.historicalIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+  assert.equal(sha256Bytes(fs.readFileSync(path.join(ROOT, handoffSnapshotPath(1)))), HISTORICAL_HANDOFF_INDEX_BYTE_HASH);
+});
+
+test("historical publication evidence survives valid approved, consumed, and reviewed Handoff roots", () => {
+  for (const [state, depth] of [["approved", 2], ["consumed", 3], ["reviewed", 4]]) {
+    const { root, indexes } = createHandoffSuccessorRoot(state);
+    const chain = validateHandoffIndexChain(root);
+    assert.equal(chain.depth, depth);
+    assert.equal(chain.currentIndexHash, indexes.at(-1).indexHash);
+    assert.equal(chain.currentSnapshotPath, handoffSnapshotPath(depth));
+    assert.equal(chain.historicalIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+    assert.equal(chain.historicalSnapshotPath, handoffSnapshotPath(1));
+    assert.notEqual(chain.currentIndexHash, chain.historicalIndexHash);
+
+    const publication = validatePublicationFinalization(root);
+    assert.equal(publication.status, "passed");
+    assert.equal(publication.verdict, "AMEND");
+    assert.equal(publication.action002Status, "pending");
+    assert.equal(publication.handoffChainDepth, depth);
+    assert.equal(publication.currentHandoffIndexHash, indexes.at(-1).indexHash);
+    assert.equal(publication.historicalHandoffIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+  }
+});
+
+test("an approved current root cannot become the historical publication root or grant authority", () => {
+  const { root, indexes } = createHandoffSuccessorRoot("approved");
+  const index = readJson(root, PUBLICATION_INDEX_PATH);
+  const readback = readJson(root, index.current.publicationReadback.path);
+  const reviewPointer = readJson(root, index.current.reviewPointer.path);
+  const currentAction = indexes.at(-1).entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+  const historicalAction = validateHandoffIndexChain(root).historicalIndex.entries
+    .find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+  assert.equal(currentAction.lifecycle.state, "available");
+  assert.equal(currentAction.ownerApproval.status, "approved");
+  assert.equal(historicalAction.lifecycle.state, "proposed");
+  assert.equal(historicalAction.ownerApproval.status, "pending");
+  assert.equal(readback.action002.status, "pending");
+  assert.equal(reviewPointer.authority.mergeApproved, false);
+  assert.equal(reviewPointer.authority.productionApproved, false);
+  assert.equal(reviewPointer.authority.action002Approved, false);
+});
+
+test("Handoff history rejects missing or rewritten ancestors and broken predecessor hashes", () => {
+  {
+    const { root } = createHandoffSuccessorRoot("approved");
+    fs.unlinkSync(path.join(root, handoffSnapshotPath(1)));
+    assert.throws(() => validateHandoffIndexChain(root), /unavailable|ENOENT|missing/u);
+  }
+  {
+    const { root, indexes } = createHandoffSuccessorRoot("approved");
+    const rewritten = structuredClone(indexes[0]);
+    rewritten.entries[0].recordedAt = "2026-08-20T21:19:44.000Z";
+    writeJson(root, handoffSnapshotPath(1), sealHandoffDocument(rewritten, "indexHash"));
+    assert.throws(() => validateHandoffIndexChain(root), /previousIndexHash mismatch/u);
+  }
+  {
+    const { root } = createHandoffSuccessorRoot("approved");
+    fs.appendFileSync(path.join(root, handoffSnapshotPath(1)), " \n");
+    assert.throws(() => validateHandoffIndexChain(root), /genesis index 0001 bytes were rewritten/u);
+  }
+  {
+    const { root, indexes } = createHandoffSuccessorRoot("approved");
+    const broken = structuredClone(indexes[1]);
+    broken.previousIndexHash = "f".repeat(64);
+    installLatestHandoffIndex(root, sealHandoffDocument(broken, "indexHash"), 2);
+    assert.throws(() => validateHandoffIndexChain(root), /previousIndexHash mismatch/u);
+  }
+});
+
+test("Handoff history rejects duplicate hashes, predecessor-path reuse, and cycles", () => {
+  {
+    const root = createTempRoot();
+    fs.copyFileSync(path.join(root, handoffSnapshotPath(1)), path.join(root, handoffSnapshotPath(2)));
+    assert.throws(() => validateHandoffIndexChain(root), /exactly one numbered immutable snapshot/u);
+  }
+  {
+    const { root, indexes } = createHandoffSuccessorRoot("approved");
+    const cyclic = structuredClone(indexes[1]);
+    cyclic.previousIndexPath = handoffSnapshotPath(2);
+    cyclic.previousIndexHash = cyclic.indexHash;
+    installLatestHandoffIndex(root, sealHandoffDocument(cyclic, "indexHash"), 2);
+    assert.throws(() => validateHandoffIndexChain(root), /cycle or reused path/u);
+  }
+  {
+    const { root, indexes } = createHandoffSuccessorRoot("consumed");
+    const reused = structuredClone(indexes[2]);
+    reused.previousIndexPath = handoffSnapshotPath(1);
+    reused.previousIndexHash = indexes[0].indexHash;
+    installLatestHandoffIndex(root, sealHandoffDocument(reused, "indexHash"), 3);
+    assert.throws(() => validateHandoffIndexChain(root), /numbering is not contiguous/u);
+  }
+});
+
+test("Handoff history rejects deleted, reordered, or substituted prior entries and chronology", () => {
+  const mutations = [
+    [(next) => { next.entries.pop(); }, /append-only|transition/u],
+    [(next) => { next.entries.reverse(); }, /reordered|substituted/u],
+    [(next) => { next.entries[0].envelopeHash = "e".repeat(64); }, /reordered|substituted/u],
+    [(next) => { next.createdAt = "2026-08-20T21:19:44.000Z"; }, /append-only|transition/u],
+  ];
+  for (const [mutate, expected] of mutations) {
+    const root = createTempRoot();
+    const genesis = readJson(root, handoffSnapshotPath(1));
+    const next = makeApprovedHandoffSuccessor(genesis);
+    mutate(next);
+    installLatestHandoffIndex(root, sealHandoffDocument(next, "indexHash"), 2);
+    assert.throws(() => validateHandoffIndexChain(root), expected);
+  }
+});
+
+test("Handoff history rejects path escape and symlinked immutable ancestors", () => {
+  {
+    const { root, indexes } = createHandoffSuccessorRoot("approved");
+    const escaped = structuredClone(indexes[1]);
+    escaped.previousIndexPath = "portfolio/core/handoff/versions/0.1.0/indexes/../action-receipt-index-0001.json";
+    installLatestHandoffIndex(root, sealHandoffDocument(escaped, "indexHash"), 2);
+    assert.throws(() => validateHandoffIndexChain(root), /Schema violation|outside|invalid/u);
+  }
+  {
+    const { root } = createHandoffSuccessorRoot("approved");
+    const ancestor = path.join(root, handoffSnapshotPath(1));
+    const target = `${ancestor}.actual`;
+    fs.renameSync(ancestor, target);
+    fs.symlinkSync(path.basename(target), ancestor);
+    assert.throws(() => validateHandoffIndexChain(root), /symbolic link/u);
+  }
+});
+
+test("Handoff history rejects stable-root substitution, orphaned snapshots, and lifecycle widening", () => {
+  {
+    const { root, indexes } = createHandoffSuccessorRoot("approved");
+    const substitutedRoot = structuredClone(indexes[1]);
+    substitutedRoot.indexId = "handoff-index:synthetic-substituted-root";
+    writeJson(root, HANDOFF_INDEX_PATH, sealHandoffDocument(substitutedRoot, "indexHash"));
+    assert.throws(() => validateHandoffIndexChain(root), /does not resolve byte-for-byte/u);
+  }
+  {
+    const root = createTempRoot();
+    const genesis = readJson(root, handoffSnapshotPath(1));
+    const approved = makeApprovedHandoffSuccessor(genesis);
+    writeJson(root, handoffSnapshotPath(2), approved);
+    assert.throws(() => validateHandoffIndexChain(root), /orphaned|ambiguous/u);
+  }
+  {
+    const root = createTempRoot();
+    const genesis = readJson(root, handoffSnapshotPath(1));
+    const widened = makeApprovedHandoffSuccessor(genesis);
+    const action = widened.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+    action.status = "completed";
+    action.lifecycle = {
+      state: "consumed",
+      singleUse: true,
+      consumedAt: "2026-08-20T21:19:55.000Z",
+      consumedByReceiptId: "handoff-receipt:002:synthetic-direct",
+      revokedAt: null,
+      revocationEvidenceHash: null,
+    };
+    action.receiptId = "handoff-receipt:002:synthetic-direct";
+    action.receiptPath = "portfolio/core/handoff/versions/0.1.0/demonstration/action-002.synthetic-direct.json";
+    action.receiptHash = "f".repeat(64);
+    action.outcome = "succeeded";
+    installLatestHandoffIndex(root, sealHandoffDocument(widened, "indexHash"), 2);
+    assert.throws(() => validateHandoffIndexChain(root), /allowed lifecycle transition|invalid/u);
+  }
 });
 
 test("closed schemas reject added fields and a container-commit self-reference", () => {

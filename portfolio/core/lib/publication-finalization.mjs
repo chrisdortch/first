@@ -3,12 +3,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalize, sha256Bytes, sha256Canonical } from "./canonical-json.mjs";
+import { assertHandoffHash, validateIndexTransition } from "./handoff-ledger.mjs";
 import { validateJsonSchema } from "./validators.mjs";
 
 const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_ROOT_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../../..");
 export const PUBLICATION_INDEX_PATH = "portfolio/core/publication/index.json";
 export const PUBLICATION_SCHEMA_PATH = "portfolio/core/publication/versions/0.1.0/schemas/core-publication-finalization.schema.json";
+export const HANDOFF_INDEX_PATH = "portfolio/core/handoff/index.json";
+export const HANDOFF_INDEX_DIRECTORY = "portfolio/core/handoff/versions/0.1.0/indexes";
+export const HANDOFF_INDEX_SCHEMA_PATH = "portfolio/core/handoff/versions/0.1.0/schemas/action-receipt-index.schema.json";
+export const HISTORICAL_HANDOFF_INDEX_HASH = "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c";
+export const HISTORICAL_HANDOFF_INDEX_BYTE_HASH = "da4b60605402cf4197f8073c312c84a4a374daec35e11664bac86593bd8152ff";
 
 export const REVIEWED_HEAD = "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334";
 export const REVIEWED_TREE = "a027db19d8b177fe52d45fc0c0153ca1189f728e";
@@ -97,6 +103,131 @@ function readBytes(rootDirectory, relativePath) {
     fail(`artifact real path escapes repository root: ${relativePath}`);
   }
   return fs.readFileSync(realAbsolute);
+}
+
+function numberedHandoffIndexSequence(relativePath) {
+  const normalized = relativePath.split(path.sep).join("/");
+  const expectedPrefix = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-`;
+  if (!normalized.startsWith(expectedPrefix)) fail(`Handoff predecessor path is outside the immutable index directory: ${relativePath}`);
+  const suffix = normalized.slice(expectedPrefix.length);
+  const match = /^(\d{4})\.json$/u.exec(suffix);
+  if (!match) fail(`Handoff predecessor path is not a numbered immutable index: ${relativePath}`);
+  return Number.parseInt(match[1], 10);
+}
+
+function readHandoffIndex(rootDirectory, relativePath, schema, label) {
+  let bytes;
+  let value;
+  try {
+    bytes = readBytes(rootDirectory, relativePath);
+    value = JSON.parse(bytes.toString("utf8"));
+    validateJsonSchema(schema, value, {
+      schemaDirectory: path.dirname(absolutePath(rootDirectory, HANDOFF_INDEX_SCHEMA_PATH)),
+      label,
+    });
+    assertHandoffHash(value, "indexHash", label);
+  } catch (error) {
+    fail(`${label} at ${relativePath} is unavailable or invalid: ${error.message}`);
+  }
+  return { bytes, value, path: relativePath, sequence: numberedHandoffIndexSequence(relativePath) };
+}
+
+function listNumberedHandoffIndexPaths(rootDirectory) {
+  const directory = absolutePath(rootDirectory, HANDOFF_INDEX_DIRECTORY);
+  let stat;
+  try {
+    stat = fs.lstatSync(directory);
+  } catch (error) {
+    fail(`Handoff immutable index directory is unavailable: ${error.message}`);
+  }
+  if (stat.isSymbolicLink()) fail("Handoff immutable index directory is a symbolic link");
+  if (!stat.isDirectory()) fail("Handoff immutable index path is not a directory");
+  return fs.readdirSync(directory)
+    .filter((name) => /^action-receipt-index-\d{4}\.json$/u.test(name))
+    .sort()
+    .map((name) => `${HANDOFF_INDEX_DIRECTORY}/${name}`);
+}
+
+export function validateHandoffIndexChain(rootDirectory = DEFAULT_ROOT_DIRECTORY, options = {}) {
+  const root = path.resolve(rootDirectory);
+  const historicalIndexHash = options.historicalIndexHash || HISTORICAL_HANDOFF_INDEX_HASH;
+  if (!/^[a-f0-9]{64}$/u.test(historicalIndexHash)) fail("historical Handoff index hash is not a lowercase SHA-256 digest");
+
+  const schema = readJson(root, HANDOFF_INDEX_SCHEMA_PATH);
+  const rootBytes = readBytes(root, HANDOFF_INDEX_PATH);
+  let rootIndex;
+  try {
+    rootIndex = JSON.parse(rootBytes.toString("utf8"));
+    validateJsonSchema(schema, rootIndex, {
+      schemaDirectory: path.dirname(absolutePath(root, HANDOFF_INDEX_SCHEMA_PATH)),
+      label: "current-handoff-root",
+    });
+    assertHandoffHash(rootIndex, "indexHash", "current Handoff root");
+  } catch (error) {
+    fail(`current Handoff root is invalid: ${error.message}`);
+  }
+
+  const numberedPaths = listNumberedHandoffIndexPaths(root);
+  if (numberedPaths.length === 0) fail("Handoff immutable index directory contains no numbered snapshots");
+  const numbered = numberedPaths.map((relativePath) =>
+    readHandoffIndex(root, relativePath, schema, `handoff-index-${path.basename(relativePath)}`));
+  const rootMatches = numbered.filter((candidate) =>
+    candidate.value.indexHash === rootIndex.indexHash && candidate.bytes.equals(rootBytes));
+  if (rootMatches.length !== 1) fail("stable Handoff root does not resolve byte-for-byte to exactly one numbered immutable snapshot");
+
+  const visitedPaths = new Set();
+  const visitedHashes = new Set();
+  const chain = [];
+  let current = rootMatches[0];
+  while (true) {
+    if (visitedPaths.has(current.path)) fail(`Handoff predecessor chain contains a cycle or reused path: ${current.path}`);
+    if (visitedHashes.has(current.value.indexHash)) fail(`Handoff predecessor chain contains a duplicate ancestor hash: ${current.value.indexHash}`);
+    visitedPaths.add(current.path);
+    visitedHashes.add(current.value.indexHash);
+    chain.push(current);
+
+    const hasPreviousPath = current.value.previousIndexPath !== null;
+    const hasPreviousHash = current.value.previousIndexHash !== null;
+    if (hasPreviousPath !== hasPreviousHash) fail(`Handoff index ${current.path} has an incomplete predecessor binding`);
+    if (!hasPreviousPath) {
+      if (current.sequence !== 1) fail("Handoff predecessor chain terminated before immutable genesis index 0001");
+      break;
+    }
+
+    const previousPath = current.value.previousIndexPath;
+    if (visitedPaths.has(previousPath)) fail(`Handoff predecessor chain contains a cycle or reused path: ${previousPath}`);
+    const previousSequence = numberedHandoffIndexSequence(previousPath);
+    if (previousSequence !== current.sequence - 1) fail(`Handoff predecessor numbering is not contiguous at ${current.path}`);
+    const previous = readHandoffIndex(root, previousPath, schema, `handoff-index-${path.basename(previousPath)}`);
+    if (previous.value.indexHash !== current.value.previousIndexHash) fail(`Handoff previousIndexHash mismatch at ${current.path}`);
+    try {
+      validateIndexTransition(previous.value, current.value);
+    } catch (error) {
+      fail(`Handoff transition ${previous.path} -> ${current.path} is invalid: ${error.message}`);
+    }
+    current = previous;
+  }
+
+  if (visitedPaths.size !== numbered.length || numbered.some((candidate) => !visitedPaths.has(candidate.path))) {
+    fail("Handoff immutable index directory contains an orphaned, substituted, or ambiguous numbered snapshot");
+  }
+  const historicalMatches = chain.filter((candidate) => candidate.value.indexHash === historicalIndexHash);
+  if (historicalMatches.length !== 1) fail(`historical Handoff index hash ${historicalIndexHash} did not resolve exactly once`);
+  const [historical] = historicalMatches;
+  if (historicalIndexHash === HISTORICAL_HANDOFF_INDEX_HASH &&
+      sha256Bytes(historical.bytes) !== HISTORICAL_HANDOFF_INDEX_BYTE_HASH) {
+    fail("immutable Handoff genesis index 0001 bytes were rewritten");
+  }
+  return {
+    status: "passed",
+    depth: chain.length,
+    currentIndexHash: rootIndex.indexHash,
+    currentSnapshotPath: rootMatches[0].path,
+    historicalIndexHash: historical.value.indexHash,
+    historicalSnapshotPath: historical.path,
+    currentIndex: rootIndex,
+    historicalIndex: historical.value,
+  };
 }
 
 function withoutOwnHash(value) {
@@ -222,9 +353,16 @@ function assertProviderEvidence(readback, mirroredReceipt) {
 function assertSourceBindings(readback, rootDirectory) {
   const today = readJson(rootDirectory, readback.sourceBindings.today.path);
   const status = readJson(rootDirectory, readback.sourceBindings.status.path);
-  const handoff = readJson(rootDirectory, readback.sourceBindings.handoffIndex.path);
   if (today.sessionHash !== readback.sourceBindings.today.hash) fail("Today source binding mismatch");
   if (String(status.statusHash).replace(/^sha256:/, "") !== readback.sourceBindings.status.hash) fail("status source binding mismatch");
+  if (readback.sourceBindings.handoffIndex.path !== HANDOFF_INDEX_PATH ||
+      readback.sourceBindings.handoffIndex.hash !== HISTORICAL_HANDOFF_INDEX_HASH) {
+    fail("Handoff historical source binding substitution");
+  }
+  const handoffChain = validateHandoffIndexChain(rootDirectory, {
+    historicalIndexHash: readback.sourceBindings.handoffIndex.hash,
+  });
+  const handoff = handoffChain.historicalIndex;
   if (handoff.indexHash !== readback.sourceBindings.handoffIndex.hash) fail("Handoff source binding mismatch");
   const entries = handoff.entries.filter((entry) => entry.actionId === "CLOVER-2026-08-20-002");
   if (entries.length !== 1) fail("Action 002 does not resolve exactly once");
@@ -233,6 +371,7 @@ function assertSourceBindings(readback, rootDirectory) {
   if (action.envelopeHash !== ACTION_002_HASH || action.envelopeHash !== entry.envelopeHash || action.indexHash !== handoff.indexHash) fail("Action 002 identity substitution");
   if (entry.status !== "pending" || entry.lifecycle.state !== "proposed" || entry.ownerApproval.status !== "pending") fail("Action 002 is no longer pending and proposed");
   if (entry.lifecycle.consumedAt !== null || entry.lifecycle.revokedAt !== null || action.consumed || action.revoked) fail("Action 002 lifecycle widened");
+  return handoffChain;
 }
 
 function assertMirroredReceiptScope(readback, mirroredReceipt) {
@@ -345,7 +484,7 @@ export function validatePublicationCatalog(catalog, options = {}) {
     assertSanitizedPublicationMirror(readBytes(rootDirectory, pointer.path), label);
   }
   assertProviderEvidence(readback, mirroredReceipt);
-  assertSourceBindings(readback, rootDirectory);
+  const handoffChain = assertSourceBindings(readback, rootDirectory);
   if (readback.precedence.scope !== "publication-readback-only" || readback.precedence.supersedes.length !== 1) fail("publication precedence widened");
   if (readback.precedence.supersedes[0].hash !== readback.sourceBindings.today.hash) fail("publication precedence Today hash mismatch");
   const protectedScopes = new Set(["owner-authority", "handoff-lifecycle", "production-state", "historical-records"]);
@@ -366,6 +505,9 @@ export function validatePublicationCatalog(catalog, options = {}) {
     action002Status: readback.action002.status,
     containerBindingStatus: readback.containerBinding.status,
     chainDepth: indexChain.depth,
+    handoffChainDepth: handoffChain.depth,
+    currentHandoffIndexHash: handoffChain.currentIndexHash,
+    historicalHandoffIndexHash: handoffChain.historicalIndexHash,
   };
 }
 
