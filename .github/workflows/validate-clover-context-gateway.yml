@@ -17,6 +17,9 @@ on:
       - 'CODEX_CLOVER_OPERATOR.md'
       - 'apps/clover-context-gateway/**'
       - 'portfolio/core/handoff/**'
+      - 'portfolio/core/lib/publication-finalization.mjs'
+      - 'portfolio/core/publication/**'
+      - 'portfolio/core/scripts/verify-publication-finalization.mjs'
       - 'portfolio/core/today/**'
       - 'portfolio/context/**'
       - 'portfolio/registry/projections/core-project-index.v2.json'
@@ -38,6 +41,9 @@ on:
       - 'CODEX_CLOVER_OPERATOR.md'
       - 'apps/clover-context-gateway/**'
       - 'portfolio/core/handoff/**'
+      - 'portfolio/core/lib/publication-finalization.mjs'
+      - 'portfolio/core/publication/**'
+      - 'portfolio/core/scripts/verify-publication-finalization.mjs'
       - 'portfolio/core/today/**'
       - 'portfolio/context/**'
       - 'portfolio/registry/projections/core-project-index.v2.json'
@@ -122,7 +128,12 @@ jobs:
           if (candidateCommandSchema.properties?.schemaVersion?.const !== '1.2') process.exit(1);
           if ((pointer.currentVersion || pointer.version) !== '0.2.0') process.exit(1);
           if (pointer.candidate?.version !== '0.3.1') process.exit(1);
-          if (pointer.candidate?.status !== 'draft-unmerged-undeployed') process.exit(1);
+          if (pointer.candidate?.status !== 'draft-unmerged-preview-verified') process.exit(1);
+          if (pointer.candidate?.reviewedImplementation?.headCommit !== '2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334') process.exit(1);
+          if (pointer.candidate?.publicationReadback?.connectorId !== 'clover://publication/readback') process.exit(1);
+          if (pointer.candidate?.publicationReadback?.indexHash !== '92bd597a10beba1a2a4324ebd9f500a6bf62c590dc07693f6c84e076ba83c062') process.exit(1);
+          if (pointer.candidate?.publicationReadback?.recordHash !== '1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a') process.exit(1);
+          if (pointer.candidate?.amendmentContainer?.status !== 'awaiting-post-commit-source-bound-readback' || pointer.candidate.amendmentContainer.commit !== null) process.exit(1);
           const packageJson = JSON.parse(fs.readFileSync('apps/clover-context-gateway/package.json', 'utf8'));
           if (packageJson.version !== '0.3.1') process.exit(1);
           if (!fs.existsSync(pointer.currentDocument)) process.exit(1);
@@ -132,6 +143,10 @@ jobs:
           if (!fs.readFileSync('AI_START_HERE.md', 'utf8').includes('prepare_clover_command')) process.exit(1);
           console.log(JSON.stringify({ status: 'passed', deployedVersion: '0.2.0', preservedCandidateVersion: '0.3.0', candidateVersion: '0.3.1', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
           NODE
+
+      - name: Verify publication finalization catalog
+        shell: bash
+        run: node portfolio/core/scripts/verify-publication-finalization.mjs > "$RUNNER_TEMP/publication-finalization-validation.json"
 
       - name: Smoke-test HTTP, exact target resolution, and MCP
         shell: bash
@@ -148,6 +163,8 @@ jobs:
           curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center'
           curl --fail --silent 'http://127.0.0.1:8787/api/search?q=RollinD' > "$RUNNER_TEMP/search.json"
           curl --fail --silent --get --data-urlencode 'id=clover://project/rollindd' http://127.0.0.1:8787/api/fetch > "$RUNNER_TEMP/fetch.json"
+          curl --fail --silent --get --data-urlencode 'id=clover://publication/readback' http://127.0.0.1:8787/api/fetch > "$RUNNER_TEMP/publication-readback.json"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' --get --data-urlencode 'id=clover://publication/readback/current' http://127.0.0.1:8787/api/fetch)" = "404"
           curl --fail --silent \
             -H 'content-type: application/json' \
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
@@ -159,6 +176,7 @@ jobs:
           const health = readReceipt('health.json');
           const fetched = readReceipt('fetch.json');
           const command = readReceipt('command.json');
+          const publication = readReceipt('publication-readback.json');
           if (!/^[a-f0-9]{40}$/.test(expectedCommit || '')) process.exit(1);
           if (health.version !== '0.3.1') process.exit(1);
           if (health.contextSource?.commit !== expectedCommit) process.exit(1);
@@ -173,6 +191,13 @@ jobs:
           if (!/^[a-f0-9]{64}$/.test(command.today?.data?.envelopeHash || '')) process.exit(1);
           if (command.today?.data?.privacy?.publicSanitizedProjection !== true) process.exit(1);
           if (command.today?.data?.privacy?.containsRawCellData !== false) process.exit(1);
+          if (publication.id !== 'clover://publication/readback') process.exit(1);
+          if (publication.metadata?.hashVerified !== true) process.exit(1);
+          if (publication.metadata?.contentHash !== '1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a') process.exit(1);
+          if (command.today?.publicationReadback?.available !== true) process.exit(1);
+          if (command.today?.publicationReadback?.metadata?.containerSource?.commit !== expectedCommit) process.exit(1);
+          if (command.today?.evidencePrecedence?.reviewedImplementationHead !== '2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334') process.exit(1);
+          if (command.today?.evidencePrecedence?.status !== 'verified-publication-readback-preferred') process.exit(1);
           for (const component of Object.values(command.today?.components || {})) {
             if (component?.metadata?.commit !== expectedCommit) process.exit(1);
           }
@@ -187,9 +212,11 @@ jobs:
           path: |
             apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/control-plane-validation.json
+            ${{ runner.temp }}/publication-finalization-validation.json
             ${{ runner.temp }}/health.json
             ${{ runner.temp }}/search.json
             ${{ runner.temp }}/fetch.json
+            ${{ runner.temp }}/publication-readback.json
             ${{ runner.temp }}/command.json
             ${{ runner.temp }}/mcp-smoke.json
             ${{ runner.temp }}/clover-context-gateway.log

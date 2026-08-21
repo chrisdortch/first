@@ -561,6 +561,11 @@
     const authorityRequired = firstDefined(today, ['authorityRequired', 'ownerAuthorityRequired', 'ownerGates']);
     const asOf = firstDefined(today, ['asOf', 'generatedAt', 'observedAt']);
     const candidateStatus = firstDefined(today, ['candidateStatus']);
+    const publication = todayWrapper.publicationReadback?.available === true
+      ? todayWrapper.publicationReadback.data
+      : null;
+    const publicationMetadata = todayWrapper.publicationReadback?.metadata || null;
+    const evidencePrecedence = todayWrapper.evidencePrecedence || null;
 
     if (candidateStatus && typeof candidateStatus === 'object') {
       const metrics = Array.isArray(candidateStatus.metrics) ? candidateStatus.metrics : [];
@@ -582,6 +587,23 @@
     freshnessValueEl.textContent = safeSummary(freshness, 'Source freshness unavailable');
     freshnessDetailEl.textContent = 'Stale, contradictory, and unavailable sources remain labeled.';
 
+    if (publication && evidencePrecedence?.applied === true) {
+      const implementation = publication.reviewedImplementation || {};
+      const github = publication.github || {};
+      const vercel = publication.vercel || {};
+      const successfulWorkflows = Array.isArray(github.workflows)
+        ? github.workflows.filter((workflow) => workflow?.conclusion === 'success').length
+        : 0;
+      const container = publicationMetadata?.containerSource || {};
+      changedValueEl.textContent = `Publication evidence verified · verdict ${safeSummary(publication.verdict, 'unknown')}`;
+      changedDetailEl.textContent = `${successfulWorkflows} exact-head workflow${successfulWorkflows === 1 ? '' : 's'} passed for ${safeSummary(implementation.headCommit, 'reviewed source unavailable')}.`;
+      stateValueEl.textContent = `Gateway preview ${safeSummary(vercel.state, 'unknown')} · target ${vercel.target === null ? 'null' : 'contradictory'} · ${Array.isArray(vercel.aliases) ? vercel.aliases.length : 'unknown'} aliases`;
+      stateDetailEl.textContent = `Reviewed implementation ${safeSummary(implementation.headCommit, 'unknown')} remains draft and unmerged; this does not change live or production state.`;
+      freshnessValueEl.textContent = safeSummary(publication.evidenceStatus, 'Publication freshness unavailable');
+      freshnessDetailEl.textContent = `Observed ${safeSummary(publication.observedAt, 'time unavailable')} · runtime container ${safeSummary(container.commit, 'commit unavailable')} contains the finalization records.`;
+      addPill('Publication readback verified');
+    }
+
     for (const priority of priorities) {
       const item = document.createElement('li');
       item.textContent = priority;
@@ -602,7 +624,9 @@
     connectorValueEl.textContent = safeSummary(connectorPlan, 'No connector plan supplied');
     authorityValueEl.textContent = safeSummary(authorityRequired, 'No standing authority; exact owner gate remains required.');
 
-    ownerSessionStateEl.textContent = 'Dated candidate owner session supplied through the connected Clover app. It grants no authority.';
+    ownerSessionStateEl.textContent = publication
+      ? 'Dated candidate owner session plus a later verified publication-evidence sibling supplied through the connected Clover app. The sibling changes only its declared CI and preview claims; it does not replace priorities, Action ID, Handoff lifecycle, or authority.'
+      : 'Dated candidate owner session supplied through the connected Clover app. It grants no authority.';
     ownerSessionEl.hidden = false;
     if (actionId) addPill(`Action ${safeSummary(actionId)}`);
   }

@@ -11,10 +11,32 @@
   "status": "canonical-serverless-safe-public-preview-verified-chatgpt-connection-pending",
   "candidate": {
     "version": "0.3.1",
-    "status": "draft-unmerged-undeployed",
+    "status": "draft-unmerged-preview-verified",
     "branch": "platform/clover-core-trunk-activation-v0.1-20260820",
     "document": "portfolio/context/versions/0.3.1/CANDIDATE_STATUS.md",
-    "identity": "Version 0.3.1 is the additive owner-session candidate on the Core trunk-activation branch. Validation and preview receipts must bind its exact GitHub SHA; this pointer does not relabel the preserved 0.3.0 preview or deployed 0.2.0 source."
+    "reviewedImplementation": {
+      "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+      "deploymentId": "dpl_bwkBAYEz8XjjNLx4xXrdPAvc8bmS",
+      "immutableUrl": "https://clover-context-gateway-preview-bah2p1llj-chris-dortchs-projects.vercel.app",
+      "state": "READY",
+      "target": null,
+      "aliases": []
+    },
+    "publicationReadback": {
+      "indexPath": "portfolio/core/publication/index.json",
+      "indexHash": "92bd597a10beba1a2a4324ebd9f500a6bf62c590dc07693f6c84e076ba83c062",
+      "connectorId": "clover://publication/readback",
+      "recordPath": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-publication-readback-0001.json",
+      "recordHash": "1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a",
+      "status": "verified-for-reviewed-implementation-head"
+    },
+    "amendmentContainer": {
+      "status": "awaiting-post-commit-source-bound-readback",
+      "commit": null,
+      "tree": null,
+      "relationship": "will-contain-publication-records-and-readback-wrapper"
+    },
+    "identity": "Version 0.3.1 is the additive owner-session candidate on the Core trunk-activation branch. Reviewed implementation 2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334 has an exact verified target-null preview. The later source container that first includes the publication records and readback wrapper still requires its own post-commit source-bound verification; this pointer does not relabel that container, the preserved 0.3.0 preview, or deployed 0.2.0 source."
   },
   "completionEstimate": 90,
   "completionEstimateAsOf": "2026-08-17",

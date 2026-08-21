@@ -1,0 +1,211 @@
+{
+  "documentType": "clover-core-publication-readback",
+  "schemaVersion": "0.1.0",
+  "readbackId": "core-trunk-activation-publication-readback:2026-08-20:0001",
+  "observedAt": "2026-08-21T00:23:15Z",
+  "evidenceStatus": "current-for-reviewed-implementation-head",
+  "verdict": "AMEND",
+  "reviewedImplementation": {
+    "repository": "chrisdortch/first",
+    "branch": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "tree": "a027db19d8b177fe52d45fc0c0153ca1189f728e",
+    "directParent": "9006dcb78ee9412b57321cbd0fbdfa617d7bf96c",
+    "baseBranch": "platform/clover-core-trust-slice-v0.2-20260818",
+    "baseCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "pullRequest": {
+      "number": 17,
+      "url": "https://github.com/chrisdortch/first/pull/17",
+      "state": "open",
+      "draft": true,
+      "merged": false
+    }
+  },
+  "mirroredIssuanceArtifacts": {
+    "finalReport": {
+      "artifactType": "mirrored-final-report",
+      "recordId": "external-final-report:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Report_2026-08-20.md",
+      "hash": "37b8b8e247c524117c525a71afacbe2e557198ca04ac88b4c0e397b3f2085c50",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "sourceBoundReceipt": {
+      "artifactType": "mirrored-source-bound-receipt",
+      "recordId": "external-source-bound-receipt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Source_Bound_Receipt_2026-08-20.json",
+      "hash": "293188db70f99b738ecb58fec232702079e10ab8234db816d4a28c4e83fae603",
+      "hashMode": "sha256-bytes",
+      "mediaType": "application/json"
+    },
+    "reviewPrompt": {
+      "artifactType": "mirrored-review-prompt",
+      "recordId": "external-review-prompt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Chat_Pro_Core_Trunk_Activation_Review_Prompt_2026-08-20.md",
+      "hash": "a8207c4e0b0e615ef129f4a8bb38a2e22a238d3abc1dd1682f1b970ec8a6efb9",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "changedPathAllowlistScope": {
+      "repository": "chrisdortch/first",
+      "baseCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "reviewedHeadCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+      "changedPathCount": 62,
+      "status": "exactly-matches-mirrored-receipt-and-reviewed-head-diff"
+    }
+  },
+  "reviewPointer": {
+    "artifactType": "structured-review-pointer",
+    "recordId": "core-trunk-activation-review-pointer:2026-08-20:0.1.0",
+    "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-review-pointer.json",
+    "hash": "e7e8b46886353c8d0c71d4412cae1521d420ccd59e925b81b4627b343198041d",
+    "hashMode": "sha256-canonical-without-self-hash-field",
+    "mediaType": "application/json"
+  },
+  "github": {
+    "observedAt": "2026-08-20T23:20:53Z",
+    "sourceCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "workflows": [
+      {
+        "name": "Validate Clover master plan",
+        "runId": 32427471833,
+        "conclusion": "success",
+        "jobs": [
+          {
+            "jobId": 96612271757,
+            "node": null,
+            "conclusion": "success"
+          }
+        ],
+        "artifacts": []
+      },
+      {
+        "name": "Validate Clover Context Gateway",
+        "runId": 32427471937,
+        "conclusion": "success",
+        "jobs": [
+          {
+            "jobId": 96612272190,
+            "node": 24,
+            "conclusion": "success"
+          },
+          {
+            "jobId": 96612272373,
+            "node": 22,
+            "conclusion": "success"
+          }
+        ],
+        "artifacts": [
+          {
+            "artifactId": 9427917664,
+            "node": 24,
+            "sha256": "2a1ea1978c8b18b6ab98894b88dd862fc015467bb6ec2f0ac347f3f3d6dfab0f",
+            "expiresAt": "2026-09-19T23:10:03Z"
+          },
+          {
+            "artifactId": 9427917765,
+            "node": 22,
+            "sha256": "d37b1047abf8aec386feea75fe48ae6cbefb6fbfb013f9d700645d95122d5b6e",
+            "expiresAt": "2026-09-19T23:10:05Z"
+          }
+        ]
+      },
+      {
+        "name": "Validate Clover Core Candidate",
+        "runId": 32427471892,
+        "conclusion": "success",
+        "jobs": [
+          {
+            "jobId": 96612272080,
+            "node": 24,
+            "conclusion": "success"
+          },
+          {
+            "jobId": 96612272122,
+            "node": 22,
+            "conclusion": "success"
+          }
+        ],
+        "artifacts": [
+          {
+            "artifactId": 9427918607,
+            "node": 24,
+            "sha256": "6d18fa57a848822beb98f58a783e0a0f3da729d046e6ffa161cbfe5acfde9305",
+            "expiresAt": "2026-09-19T23:10:06Z"
+          },
+          {
+            "artifactId": 9427918903,
+            "node": 22,
+            "sha256": "4ae9b5b746abfc4c2ccb03d532e50bad8357d87c2f88db53fa07cd85ef25c82c",
+            "expiresAt": "2026-09-19T23:10:07Z"
+          }
+        ]
+      }
+    ]
+  },
+  "vercel": {
+    "observedAt": "2026-08-20T23:20:53Z",
+    "deploymentId": "dpl_bwkBAYEz8XjjNLx4xXrdPAvc8bmS",
+    "immutableUrl": "https://clover-context-gateway-preview-bah2p1llj-chris-dortchs-projects.vercel.app",
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "sourceCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "sourceRef": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "sourceType": "cli",
+    "state": "READY",
+    "target": null,
+    "aliases": [],
+    "gatewayVersion": "0.3.1",
+    "mode": "read-only",
+    "writeToolsEnabled": false,
+    "standingProductionAuthority": false
+  },
+  "sourceBindings": {
+    "today": {
+      "path": "portfolio/core/today/2026-08-20/session.json",
+      "hash": "56e5d0342c3f4d47dcaf5cec8cf2c6f52341ea57115bdecdc3751e7df7afd208"
+    },
+    "status": {
+      "path": "portfolio/status/candidates/2026-08-20/status.json",
+      "hash": "4c7300f46253ea64027ad1c475f0683aaeddf9927848aafb975635cdd0937f90"
+    },
+    "handoffIndex": {
+      "path": "portfolio/core/handoff/index.json",
+      "hash": "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c"
+    }
+  },
+  "action002": {
+    "actionId": "CLOVER-2026-08-20-002",
+    "envelopeHash": "71873de93355ec1301b2a398b34d72860339f19f52c937fffdc3c95638550214",
+    "indexHash": "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c",
+    "status": "pending",
+    "lifecycleState": "proposed",
+    "ownerApprovalStatus": "pending",
+    "consumed": false,
+    "revoked": false
+  },
+  "precedence": {
+    "scope": "publication-readback-only",
+    "supersedes": [
+      {
+        "path": "portfolio/core/today/2026-08-20/session.json",
+        "hash": "56e5d0342c3f4d47dcaf5cec8cf2c6f52341ea57115bdecdc3751e7df7afd208",
+        "claimScope": "exact-head-ci-and-gateway-preview-readback",
+        "reason": "This additive overlay supplies the later exact-head CI, artifact, and target-null Gateway preview evidence that the immutable prepublication Today snapshot explicitly left pending."
+      }
+    ],
+    "doesNotSupersede": [
+      "owner-authority",
+      "handoff-lifecycle",
+      "production-state",
+      "historical-records"
+    ]
+  },
+  "containerBinding": {
+    "status": "pending-external-publication-receipt",
+    "commit": null,
+    "tree": null,
+    "reviewedImplementationRelation": "The reviewed implementation head identifies the code and provider evidence under review; it is not the later commit that first contains this finalization record.",
+    "recordingRule": "After these bytes are committed, refreshed GitHub/Vercel/PR metadata must bind the exact container commit and tree in a post-commit source-bound readback; an optional later append-only record may persist it. Never use a local attachment."
+  },
+  "publicationReadbackHash": "1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a"
+}

@@ -23,11 +23,59 @@ const widgetHtml = readFileSync(path.join(appDir, "public", "command-center.html
 const WIDGET_URI = "ui://clover/command-center.html";
 const MCP_PATH = "/mcp";
 const VERSION = "0.3.1";
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const PUBLICATION_INDEX_ID = "clover://publication/index";
+const PUBLICATION_CURRENT_ID = "clover://publication/readback";
+const PUBLICATION_INDEX_PATH = "portfolio/core/publication/index.json";
+const PUBLICATION_ARTIFACT_PATH_PATTERN = /^portfolio\/core\/publication\/versions\/([0-9]+\.[0-9]+\.[0-9]+)\/(mirrors|records)\/([A-Za-z0-9_.-]+)$/;
+const PUBLICATION_INDEX_SNAPSHOT_PATTERN = /^portfolio\/core\/publication\/versions\/([0-9]+\.[0-9]+\.[0-9]+)\/records\/core-publication-index-([0-9]{4})\.json$/;
+const PUBLICATION_IMMUTABLE_RECORD_POLICY = "The stable root must be byte-identical to this immutable numbered snapshot. A successor preserves prior records, appends a new numbered snapshot, and advances the stable root with an exact previous path and hash.";
+const PUBLICATION_CONTAINER_RECORDING_RULE = "After these bytes are committed, refreshed GitHub/Vercel/PR metadata must bind the exact container commit and tree in a post-commit source-bound readback; an optional later append-only record may persist it. Never use a local attachment.";
+const REVIEWED_IMPLEMENTATION = Object.freeze({
+  headCommit: "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+  tree: "a027db19d8b177fe52d45fc0c0153ca1189f728e",
+  directParent: "9006dcb78ee9412b57321cbd0fbdfa617d7bf96c",
+  baseCommit: "364a9a96829f323aa00a679804fdd7ed879043b5",
+});
+const PUBLICATION_ARTIFACTS = Object.freeze({
+  finalReport: Object.freeze({
+    id: "clover://publication/report",
+    artifactType: "mirrored-final-report",
+    hashMode: "sha256-bytes",
+    mediaType: "text/markdown",
+  }),
+  sourceBoundReceipt: Object.freeze({
+    id: "clover://publication/receipt",
+    artifactType: "mirrored-source-bound-receipt",
+    hashMode: "sha256-bytes",
+    mediaType: "application/json",
+  }),
+  reviewPrompt: Object.freeze({
+    id: "clover://publication/review-prompt",
+    artifactType: "mirrored-review-prompt",
+    hashMode: "sha256-bytes",
+    mediaType: "text/markdown",
+  }),
+  reviewPointer: Object.freeze({
+    id: "clover://publication/review-decision",
+    artifactType: "structured-review-pointer",
+    hashMode: "sha256-canonical-without-self-hash-field",
+    mediaType: "application/json",
+  }),
+  publicationReadback: Object.freeze({
+    id: PUBLICATION_CURRENT_ID,
+    artifactType: "publication-readback",
+    hashMode: "sha256-canonical-without-self-hash-field",
+    mediaType: "application/json",
+  }),
+});
 
 const SERVER_INSTRUCTIONS = [
   "When the user says 'Use CloverApps to…', call prepare_clover_command before planning execution.",
   "For project/status questions, search first and fetch only the target records needed for the current task.",
   "When the optional Clover Today candidate is available, treat it as a dated candidate sibling to the canonical Command Packet, never as a replacement for current status or as authority.",
+  "When a validated publication readback sibling is available, prefer it only for the exact-head CI and target-null preview claims it explicitly supersedes; never use it to change the dated Today priorities, Action ID, Handoff lifecycle, owner authority, production state, or historical records.",
   "Canonical Clover records preserve intent and dated state; before any mutation, refresh materially relevant live facts through the native GitHub, Vercel, Drive, Sites, analytics, or Vault connector available in the conversation.",
   "Treat unavailable or contradictory facts as unknown. Never infer merge, production deployment, production-data access, domain/DNS, secret, purchase, messaging, agreement, or publication authority.",
   "Use deterministic checks before model visual/browser review and return exact receipts and status evidence.",
@@ -86,6 +134,35 @@ function documentSelfHash(document, field, { prefix = false } = {}) {
   return prefix ? `sha256:${digest}` : digest;
 }
 
+function hasExactKeys(record, keys) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+  const actual = Object.keys(record).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function isIsoTimestamp(value) {
+  return typeof value === "string" && value.length > 0 && Number.isFinite(Date.parse(value));
+}
+
+function withoutSha256Prefix(value) {
+  return typeof value === "string" && value.startsWith("sha256:") ? value.slice("sha256:".length) : value;
+}
+
+function publicGovernanceRecordSafe(value) {
+  const forbiddenKey = /(password|passwd|secretvalue|plaintextsecret|credentialvalue|privatekey|apikey|accesstoken|refreshtoken|customerrecord|guestrecord|staffrecord|healthrecord|medicalrecord|legalrecord|paymentrecord|transactionrecord|reservationrecord|messagebody|emailaddress|phonenumber|cardnumber|routingnumber|accountnumber|cvv|ssn)/i;
+  const secretValue = /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/-]{8,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}|\/Users\//i;
+  const emailValue = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+  function visit(item) {
+    if (Array.isArray(item)) return item.every(visit);
+    if (item && typeof item === "object") {
+      return Object.entries(item).every(([key, child]) => !forbiddenKey.test(key.replace(/[^a-z0-9]/gi, "")) && visit(child));
+    }
+    return typeof item !== "string" || (!secretValue.test(item) && !emailValue.test(item));
+  }
+  return visit(value);
+}
+
 function componentHasIdentity(component, id, relativePath) {
   return component?.id === id
     && component?.metadata?.relativePath === relativePath;
@@ -132,6 +209,366 @@ function handoffContract(component) {
     && Array.isArray(data?.entries);
 }
 
+function publicationPointerContract(pointer, config) {
+  const pathMatch = PUBLICATION_ARTIFACT_PATH_PATTERN.exec(pointer?.path || "");
+  const expectedArea = config.hashMode === "sha256-bytes" ? "mirrors" : "records";
+  const expectedExtension = config.mediaType === "application/json" ? ".json" : ".md";
+  return hasExactKeys(pointer, ["artifactType", "recordId", "path", "hash", "hashMode", "mediaType"])
+    && pointer.artifactType === config.artifactType
+    && typeof pointer.recordId === "string"
+    && pointer.recordId.length > 0
+    && pointer.recordId.length <= 180
+    && pathMatch?.[2] === expectedArea
+    && pathMatch?.[3].endsWith(expectedExtension)
+    && HASH_PATTERN.test(pointer.hash || "")
+    && pointer.hashMode === config.hashMode
+    && pointer.mediaType === config.mediaType;
+}
+
+function publicationIndexEntryContract(entry, offset) {
+  const config = Object.values(PUBLICATION_ARTIFACTS).find((item) => item.artifactType === entry?.artifactType);
+  return Boolean(config)
+    && hasExactKeys(entry, [
+      "sequence", "artifactType", "recordId", "path", "hash", "hashMode", "mediaType", "recordedAt", "status",
+    ])
+    && entry.sequence === offset + 1
+    && publicationPointerContract({
+      artifactType: entry.artifactType,
+      recordId: entry.recordId,
+      path: entry.path,
+      hash: entry.hash,
+      hashMode: entry.hashMode,
+      mediaType: entry.mediaType,
+    }, config)
+    && isIsoTimestamp(entry.recordedAt)
+    && ["current", "superseded"].includes(entry.status);
+}
+
+function publicationComponentMetadataContract(component, pointer, config) {
+  const metadata = component?.metadata;
+  return component?.id === config.id
+    && component?.available === true
+    && hasExactKeys(metadata, [
+      "repository", "ref", "commit", "relativePath", "sourceType", "found", "hashVerified",
+      "contentHash", "hashMode", "mediaType", "artifactType", "recordId",
+    ])
+    && metadata.relativePath === pointer.path
+    && metadata.sourceType === "validated-publication-artifact"
+    && metadata.found === true
+    && metadata.hashVerified === true
+    && metadata.contentHash === pointer.hash
+    && metadata.hashMode === pointer.hashMode
+    && metadata.mediaType === pointer.mediaType
+    && metadata.artifactType === pointer.artifactType
+    && metadata.recordId === pointer.recordId;
+}
+
+function publicationIndexContract(component) {
+  const index = component?.index;
+  const data = index?.data;
+  const metadata = index?.metadata;
+  if (!componentHasIdentity(index, PUBLICATION_INDEX_ID, PUBLICATION_INDEX_PATH)
+    || index?.available !== true
+    || metadata?.found !== true
+    || metadata?.hashVerified !== true
+    || metadata?.hashMode !== "sha256-canonical-without-self-hash-field"
+    || metadata?.contentHash !== data?.publicationIndexHash
+    || metadata?.immutableSnapshotByteIdentical !== true
+    || metadata?.chainVerified !== true
+    || metadata?.ancestorArtifactsVerified !== true
+    || !hasExactKeys(data, [
+      "documentType", "schemaVersion", "indexId", "updatedAt", "reviewedImplementationHead",
+      "lifecycle", "current", "connectorIds", "entries", "publicationIndexHash",
+    ])
+    || data.documentType !== "clover-core-publication-index"
+    || data.schemaVersion !== "0.1.0"
+    || data.indexId !== "core-publication-index:2026-08-20"
+    || !isIsoTimestamp(data.updatedAt)
+    || data.reviewedImplementationHead !== REVIEWED_IMPLEMENTATION.headCommit
+    || !hasExactKeys(data.lifecycle, [
+      "mode", "sequence", "stableRootPath", "immutableSnapshotPath", "previousIndexPath",
+      "previousIndexHash", "immutableRecordPolicy",
+    ])
+    || data.lifecycle.mode !== "append-only-records-with-advancing-root-pointer"
+    || !Number.isInteger(data.lifecycle.sequence)
+    || data.lifecycle.sequence < 1
+    || data.lifecycle.stableRootPath !== PUBLICATION_INDEX_PATH
+    || !PUBLICATION_INDEX_SNAPSHOT_PATTERN.test(data.lifecycle.immutableSnapshotPath || "")
+    || PUBLICATION_INDEX_SNAPSHOT_PATTERN.exec(data.lifecycle.immutableSnapshotPath)?.[2] !== String(data.lifecycle.sequence).padStart(4, "0")
+    || metadata.immutableSnapshotPath !== data.lifecycle.immutableSnapshotPath
+    || data.lifecycle.immutableRecordPolicy !== PUBLICATION_IMMUTABLE_RECORD_POLICY
+    || (data.lifecycle.sequence === 1
+      ? data.lifecycle.previousIndexPath !== null || data.lifecycle.previousIndexHash !== null
+      : !PUBLICATION_INDEX_SNAPSHOT_PATTERN.test(data.lifecycle.previousIndexPath || "") || !HASH_PATTERN.test(data.lifecycle.previousIndexHash || ""))
+    || !hasExactKeys(data.current, Object.keys(PUBLICATION_ARTIFACTS))
+    || !hasExactKeys(data.connectorIds, Object.values(PUBLICATION_ARTIFACTS).map((config) => config.id))
+    || !Array.isArray(data.entries)
+    || data.entries.length < Object.keys(PUBLICATION_ARTIFACTS).length
+    || !data.entries.every((entry, offset) => publicationIndexEntryContract(entry, offset))
+    || !HASH_PATTERN.test(data.publicationIndexHash || "")
+    || data.publicationIndexHash !== documentSelfHash(data, "publicationIndexHash")) return false;
+
+  const recordIds = new Set(data.entries.map((entry) => entry.recordId));
+  const paths = new Set(data.entries.map((entry) => entry.path));
+  if (recordIds.size !== data.entries.length || paths.size !== data.entries.length) return false;
+  return Object.entries(PUBLICATION_ARTIFACTS).every(([key, config]) => {
+    const pointer = data.current[key];
+    if (!publicationPointerContract(pointer, config)
+      || canonicalJson(data.connectorIds[config.id]) !== canonicalJson(pointer)) return false;
+    if (data.entries.filter((entry) => entry.status === "current" && entry.artifactType === config.artifactType).length !== 1) return false;
+    const matches = data.entries.filter((entry) => entry.status === "current"
+      && entry.artifactType === pointer.artifactType
+      && entry.recordId === pointer.recordId
+      && entry.path === pointer.path
+      && entry.hash === pointer.hash
+      && entry.hashMode === pointer.hashMode
+      && entry.mediaType === pointer.mediaType);
+    return matches.length === 1;
+  });
+}
+
+function reviewedImplementationContract(value) {
+  const pullRequest = value?.pullRequest;
+  return hasExactKeys(value, [
+    "repository", "branch", "headCommit", "tree", "directParent", "baseBranch", "baseCommit", "pullRequest",
+  ])
+    && value.repository === "chrisdortch/first"
+    && value.branch === "platform/clover-core-trunk-activation-v0.1-20260820"
+    && value.headCommit === REVIEWED_IMPLEMENTATION.headCommit
+    && value.tree === REVIEWED_IMPLEMENTATION.tree
+    && value.directParent === REVIEWED_IMPLEMENTATION.directParent
+    && value.baseBranch === "platform/clover-core-trust-slice-v0.2-20260818"
+    && value.baseCommit === REVIEWED_IMPLEMENTATION.baseCommit
+    && hasExactKeys(pullRequest, ["number", "url", "state", "draft", "merged"])
+    && pullRequest.number === 17
+    && pullRequest.url === "https://github.com/chrisdortch/first/pull/17"
+    && pullRequest.state === "open"
+    && pullRequest.draft === true
+    && pullRequest.merged === false;
+}
+
+function reviewDecisionContract(component, index) {
+  const data = component?.data;
+  const pointer = index?.current?.reviewPointer;
+  const decision = data?.decision;
+  const authority = data?.authority;
+  const findingIds = Array.isArray(decision?.findings) ? decision.findings.map((finding) => finding?.findingId) : [];
+  return publicationComponentMetadataContract(component, pointer, PUBLICATION_ARTIFACTS.reviewPointer)
+    && hasExactKeys(data, [
+      "documentType", "schemaVersion", "reviewPointerId", "recordedAt", "reviewedImplementation",
+      "reviewTarget", "reviewEvidence", "decision", "authority", "reviewPointerHash",
+    ])
+    && data.documentType === "clover-core-publication-review-pointer"
+    && data.schemaVersion === "0.1.0"
+    && data.reviewPointerId === pointer.recordId
+    && isIsoTimestamp(data.recordedAt)
+    && reviewedImplementationContract(data.reviewedImplementation)
+    && canonicalJson(data.reviewTarget) === canonicalJson(index.current.sourceBoundReceipt)
+    && hasExactKeys(data.reviewEvidence, ["reviewPrompt", "finalReport"])
+    && canonicalJson(data.reviewEvidence.reviewPrompt) === canonicalJson(index.current.reviewPrompt)
+    && canonicalJson(data.reviewEvidence.finalReport) === canonicalJson(index.current.finalReport)
+    && hasExactKeys(decision, [
+      "verdict", "assurance", "bindingApproval", "source", "decisionEvidenceStatus", "evidencePath",
+      "evidenceHash", "findingsNormalization", "findings",
+    ])
+    && decision.verdict === "AMEND"
+    && decision.assurance === "owner-provided-noncryptographic-independent-review"
+    && decision.bindingApproval === false
+    && decision.source === "owner-provided-chatgpt-personal-pro-output"
+    && decision.decisionEvidenceStatus === "owner-reported-in-chat-not-preserved"
+    && decision.evidencePath === null
+    && decision.evidenceHash === null
+    && decision.findingsNormalization === "normalized-summary"
+    && findingIds.length === 2
+    && new Set(findingIds).size === 2
+    && findingIds.includes("external-only-final-evidence")
+    && findingIds.includes("committed-prepublication-staleness")
+    && decision.findings.every((finding) => hasExactKeys(finding, ["findingId", "summary"])
+      && typeof finding.summary === "string" && finding.summary.length > 0)
+    && hasExactKeys(authority, ["mergeApproved", "productionApproved", "action002Approved"])
+    && authority.mergeApproved === false
+    && authority.productionApproved === false
+    && authority.action002Approved === false
+    && data.reviewPointerHash === pointer.hash
+    && data.reviewPointerHash === documentSelfHash(data, "reviewPointerHash")
+    && publicGovernanceRecordSafe(data);
+}
+
+function mirroredIssuanceContract(value, index, implementation) {
+  const scope = value?.changedPathAllowlistScope;
+  return hasExactKeys(value, ["finalReport", "sourceBoundReceipt", "reviewPrompt", "changedPathAllowlistScope"])
+    && canonicalJson(value.finalReport) === canonicalJson(index.current.finalReport)
+    && canonicalJson(value.sourceBoundReceipt) === canonicalJson(index.current.sourceBoundReceipt)
+    && canonicalJson(value.reviewPrompt) === canonicalJson(index.current.reviewPrompt)
+    && hasExactKeys(scope, ["repository", "baseCommit", "reviewedHeadCommit", "changedPathCount", "status"])
+    && scope.repository === implementation.repository
+    && scope.baseCommit === implementation.baseCommit
+    && scope.reviewedHeadCommit === implementation.headCommit
+    && scope.changedPathCount === 62
+    && scope.status === "exactly-matches-mirrored-receipt-and-reviewed-head-diff";
+}
+
+function githubEvidenceContract(value, implementation) {
+  const expectedWorkflows = new Set([
+    "Validate Clover master plan",
+    "Validate Clover Context Gateway",
+    "Validate Clover Core Candidate",
+  ]);
+  if (!hasExactKeys(value, ["observedAt", "sourceCommit", "workflows"])
+    || !isIsoTimestamp(value.observedAt)
+    || value.sourceCommit !== implementation.headCommit
+    || !Array.isArray(value.workflows)
+    || value.workflows.length !== 3
+    || new Set(value.workflows.map((workflow) => workflow?.name)).size !== 3) return false;
+  return value.workflows.every((workflow) => hasExactKeys(workflow, ["name", "runId", "conclusion", "jobs", "artifacts"])
+    && expectedWorkflows.has(workflow.name)
+    && Number.isInteger(workflow.runId)
+    && workflow.runId > 0
+    && workflow.conclusion === "success"
+    && Array.isArray(workflow.jobs)
+    && workflow.jobs.length >= 1
+    && workflow.jobs.length <= 2
+    && workflow.jobs.every((job) => hasExactKeys(job, ["jobId", "node", "conclusion"])
+      && Number.isInteger(job.jobId)
+      && job.jobId > 0
+      && (job.node === null || Number.isInteger(job.node))
+      && job.conclusion === "success")
+    && Array.isArray(workflow.artifacts)
+    && workflow.artifacts.length <= 2
+    && workflow.artifacts.every((artifact) => hasExactKeys(artifact, ["artifactId", "node", "sha256", "expiresAt"])
+      && Number.isInteger(artifact.artifactId)
+      && artifact.artifactId > 0
+      && Number.isInteger(artifact.node)
+      && HASH_PATTERN.test(artifact.sha256 || "")
+      && isIsoTimestamp(artifact.expiresAt)));
+}
+
+function vercelEvidenceContract(value, implementation) {
+  return hasExactKeys(value, [
+    "observedAt", "deploymentId", "immutableUrl", "projectId", "sourceCommit", "sourceRef",
+    "sourceType", "state", "target", "aliases", "gatewayVersion", "mode", "writeToolsEnabled", "standingProductionAuthority",
+  ])
+    && isIsoTimestamp(value.observedAt)
+    && /^dpl_[A-Za-z0-9]+$/.test(value.deploymentId || "")
+    && /^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(value.immutableUrl || "")
+    && /^prj_[A-Za-z0-9]+$/.test(value.projectId || "")
+    && value.sourceCommit === implementation.headCommit
+    && value.sourceRef === implementation.branch
+    && value.sourceType === "cli"
+    && value.state === "READY"
+    && value.target === null
+    && Array.isArray(value.aliases)
+    && value.aliases.length === 0
+    && value.gatewayVersion === VERSION
+    && value.mode === "read-only"
+    && value.writeToolsEnabled === false
+    && value.standingProductionAuthority === false;
+}
+
+function sourceBindingsContract(value, { session, candidateStatus, handoff }) {
+  if (!hasExactKeys(value, ["today", "status", "handoffIndex"])) return false;
+  const bindings = Object.values(value);
+  if (!bindings.every((binding) => hasExactKeys(binding, ["path", "hash"])
+    && typeof binding.path === "string"
+    && HASH_PATTERN.test(binding.hash || ""))) return false;
+  return value.today.path === session.metadata.relativePath
+    && value.today.hash === session.data.sessionHash
+    && value.status.path === candidateStatus.metadata.relativePath
+    && value.status.hash === withoutSha256Prefix(candidateStatus.data.statusHash)
+    && value.handoffIndex.path === handoff.metadata.relativePath
+    && value.handoffIndex.hash === handoff.data.indexHash;
+}
+
+function action002Contract(value, { session, handoff }) {
+  const matches = handoff.data.entries.filter((entry) => matchesPendingHandoff(entry, {
+    actionId: session.data.actionId,
+    envelopePath: session.data.envelopePath,
+    envelopeHash: session.data.envelopeHash,
+  }));
+  return hasExactKeys(value, [
+    "actionId", "envelopeHash", "indexHash", "status", "lifecycleState",
+    "ownerApprovalStatus", "consumed", "revoked",
+  ])
+    && value.actionId === session.data.actionId
+    && value.envelopeHash === session.data.envelopeHash
+    && value.indexHash === handoff.data.indexHash
+    && value.status === "pending"
+    && value.lifecycleState === "proposed"
+    && value.ownerApprovalStatus === "pending"
+    && value.consumed === false
+    && value.revoked === false
+    && matches.length === 1;
+}
+
+function precedenceContract(value, session) {
+  const requiredExclusions = ["owner-authority", "handoff-lifecycle", "production-state", "historical-records"];
+  const supersedes = value?.supersedes;
+  return hasExactKeys(value, ["scope", "supersedes", "doesNotSupersede"])
+    && value.scope === "publication-readback-only"
+    && Array.isArray(supersedes)
+    && supersedes.length === 1
+    && hasExactKeys(supersedes[0], ["path", "hash", "claimScope", "reason"])
+    && supersedes[0].path === session.metadata.relativePath
+    && supersedes[0].hash === session.data.sessionHash
+    && supersedes[0].claimScope === "exact-head-ci-and-gateway-preview-readback"
+    && typeof supersedes[0].reason === "string"
+    && supersedes[0].reason.length > 0
+    && Array.isArray(value.doesNotSupersede)
+    && value.doesNotSupersede.length === requiredExclusions.length
+    && requiredExclusions.every((item) => value.doesNotSupersede.includes(item));
+}
+
+function publicationReadbackContract(component, context) {
+  const data = component?.data;
+  const index = component?.index?.data;
+  const currentPointer = index?.current?.publicationReadback;
+  const pathMatch = PUBLICATION_ARTIFACT_PATH_PATTERN.exec(component?.metadata?.relativePath || "");
+  const container = data?.containerBinding;
+  const artifacts = component?.artifacts;
+  return component?.available === true
+    && componentHasIdentity(component, PUBLICATION_CURRENT_ID, currentPointer?.path)
+    && publicationIndexContract(component)
+    && componentsShareExactSource([component, component.index])
+    && publicationComponentMetadataContract(component, currentPointer, PUBLICATION_ARTIFACTS.publicationReadback)
+    && hasExactKeys(artifacts, ["report", "receipt", "reviewPrompt", "reviewDecision"])
+    && publicationComponentMetadataContract(artifacts.report, index.current.finalReport, PUBLICATION_ARTIFACTS.finalReport)
+    && publicationComponentMetadataContract(artifacts.receipt, index.current.sourceBoundReceipt, PUBLICATION_ARTIFACTS.sourceBoundReceipt)
+    && publicationComponentMetadataContract(artifacts.reviewPrompt, index.current.reviewPrompt, PUBLICATION_ARTIFACTS.reviewPrompt)
+    && reviewDecisionContract(artifacts.reviewDecision, index)
+    && componentsShareExactSource([component, component.index, ...Object.values(artifacts)])
+    && hasExactKeys(data, [
+      "documentType", "schemaVersion", "readbackId", "observedAt", "evidenceStatus", "verdict",
+      "reviewedImplementation", "mirroredIssuanceArtifacts", "reviewPointer", "github", "vercel",
+      "sourceBindings", "action002", "precedence", "containerBinding", "publicationReadbackHash",
+    ])
+    && data.documentType === "clover-core-publication-readback"
+    && data.schemaVersion === "0.1.0"
+    && pathMatch?.[1] === data.schemaVersion
+    && data.readbackId === currentPointer.recordId
+    && isIsoTimestamp(data.observedAt)
+    && data.evidenceStatus === "current-for-reviewed-implementation-head"
+    && data.verdict === "AMEND"
+    && reviewedImplementationContract(data.reviewedImplementation)
+    && index.reviewedImplementationHead === data.reviewedImplementation.headCommit
+    && mirroredIssuanceContract(data.mirroredIssuanceArtifacts, index, data.reviewedImplementation)
+    && canonicalJson(data.reviewPointer) === canonicalJson(index.current.reviewPointer)
+    && githubEvidenceContract(data.github, data.reviewedImplementation)
+    && vercelEvidenceContract(data.vercel, data.reviewedImplementation)
+    && sourceBindingsContract(data.sourceBindings, context)
+    && action002Contract(data.action002, context)
+    && precedenceContract(data.precedence, context.session)
+    && hasExactKeys(container, ["status", "commit", "tree", "reviewedImplementationRelation", "recordingRule"])
+    && container.status === "pending-external-publication-receipt"
+    && container.commit === null
+    && container.tree === null
+    && container.reviewedImplementationRelation === "The reviewed implementation head identifies the code and provider evidence under review; it is not the later commit that first contains this finalization record."
+    && container.recordingRule === PUBLICATION_CONTAINER_RECORDING_RULE
+    && HASH_PATTERN.test(data.publicationReadbackHash || "")
+    && data.publicationReadbackHash === currentPointer.hash
+    && data.publicationReadbackHash === documentSelfHash(data, "publicationReadbackHash")
+    && publicGovernanceRecordSafe(data);
+}
+
 function componentsShareExactSource(components) {
   const metadata = components.map((component) => component?.metadata);
   if (metadata.some((item) => !item || item.found !== true)) return false;
@@ -165,6 +602,13 @@ export function composeTodaySibling(snapshot = {}) {
   const candidateStatus = snapshot.candidateStatus || { available: false, data: null, metadata: null };
   const registryCandidate = snapshot.registryCandidate || { available: false, data: null, metadata: null };
   const handoff = snapshot.handoff || { available: false, data: null, metadata: null };
+  const publicationReadback = snapshot.publicationReadback || {
+    id: PUBLICATION_CURRENT_ID,
+    available: false,
+    data: null,
+    metadata: null,
+    index: { id: PUBLICATION_INDEX_ID, available: false, data: null, metadata: null },
+  };
   const source = session.available === true && session.data && typeof session.data === "object" ? session.data : null;
   const action = firstPresent(source, ["action", "recommendedAction", "actionEnvelope"]);
   const topPriorities = firstPresent(source, ["topPriorities"]);
@@ -218,6 +662,33 @@ export function composeTodaySibling(snapshot = {}) {
     && registryCandidateContract(registryCandidate)
     && sessionContract(session)
     && handoffContract(handoff);
+  const publicationComplete = complete
+    && publicationReadbackContract(publicationReadback, { session, candidateStatus, handoff })
+    && componentsShareExactSource([
+      session,
+      candidateStatus,
+      registryCandidate,
+      handoff,
+      publicationReadback,
+      publicationReadback.index,
+      ...Object.values(publicationReadback.artifacts || {}),
+    ]);
+  const publicationAttempted = publicationReadback.available === true
+    || publicationReadback.metadata?.found === true
+    || publicationReadback.index?.metadata?.found === true;
+  const publicationStatus = publicationComplete
+    ? "verified-publication-readback-preferred"
+    : publicationAttempted
+      ? "invalid-publication-readback-failed-closed"
+      : "dated-session-only";
+  const containerSource = publicationComplete
+    ? {
+        repository: publicationReadback.metadata.repository,
+        ref: publicationReadback.metadata.ref,
+        commit: publicationReadback.metadata.commit,
+        relationship: "contains-finalization-records",
+      }
+    : null;
 
   return {
     id: session.id || "clover://today/candidate/2026-08-20",
@@ -240,11 +711,45 @@ export function composeTodaySibling(snapshot = {}) {
       complete,
       contract: "minimum-useful-core-2026-08-20",
     },
+    publicationReadback: {
+      id: publicationComplete ? publicationReadback.id : PUBLICATION_CURRENT_ID,
+      available: publicationComplete,
+      data: publicationComplete ? publicationReadback.data : null,
+      url: publicationComplete ? publicationReadback.url : null,
+      metadata: {
+        ...(publicationComplete ? publicationReadback.metadata : {}),
+        complete: publicationComplete,
+        contract: "clover-core-publication-readback-0.1.0",
+        status: publicationStatus,
+        containerSource,
+      },
+      index: publicationComplete
+        ? componentPointer(publicationReadback.index)
+        : { id: PUBLICATION_INDEX_ID, available: false, metadata: null },
+      artifacts: publicationComplete
+        ? Object.fromEntries(Object.entries(publicationReadback.artifacts).map(([key, artifact]) => [key, componentPointer(artifact)]))
+        : {},
+    },
+    evidencePrecedence: {
+      applied: publicationComplete,
+      status: publicationStatus,
+      scope: publicationComplete ? publicationReadback.data.precedence.scope : null,
+      observedAt: publicationComplete ? publicationReadback.data.observedAt : null,
+      reviewedImplementationHead: publicationComplete ? publicationReadback.data.reviewedImplementation.headCommit : null,
+      supersedes: publicationComplete ? publicationReadback.data.precedence.supersedes : [],
+      doesNotSupersede: publicationComplete ? publicationReadback.data.precedence.doesNotSupersede : [],
+    },
     components: {
       candidateStatus: componentPointer(candidateStatus),
       registryCandidate: componentPointer(registryCandidate),
       session: componentPointer(session),
       handoff: componentPointer(handoff),
+      publicationReadback: publicationComplete
+        ? componentPointer(publicationReadback)
+        : { id: PUBLICATION_CURRENT_ID, available: false, metadata: null },
+      publicationIndex: publicationComplete
+        ? componentPointer(publicationReadback.index)
+        : { id: PUBLICATION_INDEX_ID, available: false, metadata: null },
     },
   };
 }
@@ -293,7 +798,7 @@ function createCloverServer(baseUrl) {
     "fetch",
     {
       title: "Fetch Clover context item",
-      description: "Use this after search when the model needs the complete canonical Clover item for source-grounded planning or execution. Stable project IDs use clover://project/<projectId>.",
+      description: "Use this after search when the model needs one complete source-grounded Clover item. Stable project IDs use clover://project/<projectId>; validated publication review artifacts use only the exact clover://publication/* IDs returned by search and the signed publication index.",
       inputSchema: { id: z.string().min(1) },
       annotations: readOnlyAnnotations,
     },

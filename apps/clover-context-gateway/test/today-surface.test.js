@@ -31,7 +31,9 @@ test('Clover Today exposes the five owner questions and fail-closed authority', 
     'Top three priorities',
     'Recommended next action',
     'Action ID and envelope',
-    'Connector plan and authority'
+    'Connector plan and authority',
+    'Publication readback verified',
+    'it does not replace priorities, Action ID, Handoff lifecycle, or authority'
   ]) {
     assert.ok(html.includes(phrase), `missing ${phrase}`);
   }

@@ -1,0 +1,486 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core-publication-finalization.v0.1.0.schema.json",
+  "title": "Clover Core publication finalization records 0.1.0",
+  "type": "object",
+  "required": ["documentType", "schemaVersion"],
+  "properties": {
+    "documentType": { "type": "string" },
+    "schemaVersion": { "const": "0.1.0" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/reviewPointer" },
+    { "$ref": "#/$defs/publicationReadback" },
+    { "$ref": "#/$defs/publicationIndex" }
+  ],
+  "$defs": {
+    "hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "nullableHash": {
+      "type": ["string", "null"],
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "gitCommit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "reviewedImplementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository", "branch", "headCommit", "tree", "directParent",
+        "baseBranch", "baseCommit", "pullRequest"
+      ],
+      "properties": {
+        "repository": { "const": "chrisdortch/first" },
+        "branch": { "const": "platform/clover-core-trunk-activation-v0.1-20260820" },
+        "headCommit": { "$ref": "#/$defs/gitCommit" },
+        "tree": { "$ref": "#/$defs/gitCommit" },
+        "directParent": { "$ref": "#/$defs/gitCommit" },
+        "baseBranch": { "const": "platform/clover-core-trust-slice-v0.2-20260818" },
+        "baseCommit": { "$ref": "#/$defs/gitCommit" },
+        "pullRequest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "url", "state", "draft", "merged"],
+          "properties": {
+            "number": { "const": 17 },
+            "url": { "const": "https://github.com/chrisdortch/first/pull/17" },
+            "state": { "const": "open" },
+            "draft": { "const": true },
+            "merged": { "const": false }
+          }
+        }
+      }
+    },
+    "artifactPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactType", "recordId", "path", "hash", "hashMode", "mediaType"],
+      "properties": {
+        "artifactType": {
+          "enum": [
+            "mirrored-final-report",
+            "mirrored-source-bound-receipt",
+            "mirrored-review-prompt",
+            "structured-review-pointer",
+            "publication-readback"
+          ]
+        },
+        "recordId": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "path": {
+          "type": "string",
+          "pattern": "^portfolio/core/publication/versions/[0-9]+\\.[0-9]+\\.[0-9]+/(mirrors|records)/[A-Za-z0-9_.-]+$"
+        },
+        "hash": { "$ref": "#/$defs/hash" },
+        "hashMode": {
+          "enum": ["sha256-bytes", "sha256-canonical-without-self-hash-field"]
+        },
+        "mediaType": { "enum": ["application/json", "text/markdown"] }
+      }
+    },
+    "githubEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observedAt", "sourceCommit", "workflows"],
+      "properties": {
+        "observedAt": { "type": "string", "format": "date-time" },
+        "sourceCommit": { "$ref": "#/$defs/gitCommit" },
+        "workflows": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "runId", "conclusion", "jobs", "artifacts"],
+            "properties": {
+              "name": {
+                "enum": [
+                  "Validate Clover master plan",
+                  "Validate Clover Context Gateway",
+                  "Validate Clover Core Candidate"
+                ]
+              },
+              "runId": { "type": "integer", "minimum": 1 },
+              "conclusion": { "const": "success" },
+              "jobs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["jobId", "node", "conclusion"],
+                  "properties": {
+                    "jobId": { "type": "integer", "minimum": 1 },
+                    "node": { "type": ["integer", "null"] },
+                    "conclusion": { "const": "success" }
+                  }
+                }
+              },
+              "artifacts": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["artifactId", "node", "sha256", "expiresAt"],
+                  "properties": {
+                    "artifactId": { "type": "integer", "minimum": 1 },
+                    "node": { "type": "integer" },
+                    "sha256": { "$ref": "#/$defs/hash" },
+                    "expiresAt": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "vercelEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observedAt", "deploymentId", "immutableUrl", "projectId", "sourceCommit",
+        "sourceRef", "sourceType", "state", "target", "aliases", "gatewayVersion", "mode",
+        "writeToolsEnabled", "standingProductionAuthority"
+      ],
+      "properties": {
+        "observedAt": { "type": "string", "format": "date-time" },
+        "deploymentId": { "type": "string", "pattern": "^dpl_[A-Za-z0-9]+$" },
+        "immutableUrl": { "type": "string", "pattern": "^https://[a-z0-9-]+\\.vercel\\.app$" },
+        "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9]+$" },
+        "sourceCommit": { "$ref": "#/$defs/gitCommit" },
+        "sourceRef": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "sourceType": { "const": "cli" },
+        "state": { "const": "READY" },
+        "target": { "const": null },
+        "aliases": { "type": "array", "maxItems": 0 },
+        "gatewayVersion": { "const": "0.3.1" },
+        "mode": { "const": "read-only" },
+        "writeToolsEnabled": { "const": false },
+        "standingProductionAuthority": { "const": false }
+      }
+    },
+    "sourceBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "hash"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 260 },
+        "hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "sourceBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["today", "status", "handoffIndex"],
+      "properties": {
+        "today": { "$ref": "#/$defs/sourceBinding" },
+        "status": { "$ref": "#/$defs/sourceBinding" },
+        "handoffIndex": { "$ref": "#/$defs/sourceBinding" }
+      }
+    },
+    "action002": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actionId", "envelopeHash", "indexHash", "status", "lifecycleState",
+        "ownerApprovalStatus", "consumed", "revoked"
+      ],
+      "properties": {
+        "actionId": { "const": "CLOVER-2026-08-20-002" },
+        "envelopeHash": { "$ref": "#/$defs/hash" },
+        "indexHash": { "$ref": "#/$defs/hash" },
+        "status": { "const": "pending" },
+        "lifecycleState": { "const": "proposed" },
+        "ownerApprovalStatus": { "const": "pending" },
+        "consumed": { "const": false },
+        "revoked": { "const": false }
+      }
+    },
+    "containerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "commit", "tree", "reviewedImplementationRelation", "recordingRule"],
+      "properties": {
+        "status": { "const": "pending-external-publication-receipt" },
+        "commit": { "const": null },
+        "tree": { "const": null },
+        "reviewedImplementationRelation": {
+          "const": "The reviewed implementation head identifies the code and provider evidence under review; it is not the later commit that first contains this finalization record."
+        },
+        "recordingRule": {
+          "const": "After these bytes are committed, refreshed GitHub/Vercel/PR metadata must bind the exact container commit and tree in a post-commit source-bound readback; an optional later append-only record may persist it. Never use a local attachment."
+        }
+      }
+    },
+    "reviewPointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentType", "schemaVersion", "reviewPointerId", "recordedAt",
+        "reviewedImplementation", "reviewTarget", "reviewEvidence", "decision",
+        "authority", "reviewPointerHash"
+      ],
+      "properties": {
+        "documentType": { "const": "clover-core-publication-review-pointer" },
+        "schemaVersion": { "const": "0.1.0" },
+        "reviewPointerId": { "const": "core-trunk-activation-review-pointer:2026-08-20:0.1.0" },
+        "recordedAt": { "type": "string", "format": "date-time" },
+        "reviewedImplementation": { "$ref": "#/$defs/reviewedImplementation" },
+        "reviewTarget": { "$ref": "#/$defs/artifactPointer" },
+        "reviewEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewPrompt", "finalReport"],
+          "properties": {
+            "reviewPrompt": { "$ref": "#/$defs/artifactPointer" },
+            "finalReport": { "$ref": "#/$defs/artifactPointer" }
+          }
+        },
+        "decision": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["verdict", "assurance", "bindingApproval", "source", "decisionEvidenceStatus", "evidencePath", "evidenceHash", "findingsNormalization", "findings"],
+          "properties": {
+            "verdict": { "const": "AMEND" },
+            "assurance": { "const": "owner-provided-noncryptographic-independent-review" },
+            "bindingApproval": { "const": false },
+            "source": { "const": "owner-provided-chatgpt-personal-pro-output" },
+            "decisionEvidenceStatus": { "const": "owner-reported-in-chat-not-preserved" },
+            "evidencePath": { "const": null },
+            "evidenceHash": { "const": null },
+            "findingsNormalization": { "const": "normalized-summary" },
+            "findings": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["findingId", "summary"],
+                "properties": {
+                  "findingId": {
+                    "enum": ["external-only-final-evidence", "committed-prepublication-staleness"]
+                  },
+                  "summary": { "type": "string", "minLength": 1, "maxLength": 600 }
+                }
+              }
+            }
+          }
+        },
+        "authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mergeApproved", "productionApproved", "action002Approved"],
+          "properties": {
+            "mergeApproved": { "const": false },
+            "productionApproved": { "const": false },
+            "action002Approved": { "const": false }
+          }
+        },
+        "reviewPointerHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "publicationReadback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentType", "schemaVersion", "readbackId", "observedAt", "evidenceStatus",
+        "verdict", "reviewedImplementation", "mirroredIssuanceArtifacts",
+        "reviewPointer", "github", "vercel", "sourceBindings", "action002",
+        "precedence", "containerBinding", "publicationReadbackHash"
+      ],
+      "properties": {
+        "documentType": { "const": "clover-core-publication-readback" },
+        "schemaVersion": { "const": "0.1.0" },
+        "readbackId": { "const": "core-trunk-activation-publication-readback:2026-08-20:0001" },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "evidenceStatus": { "const": "current-for-reviewed-implementation-head" },
+        "verdict": { "const": "AMEND" },
+        "reviewedImplementation": { "$ref": "#/$defs/reviewedImplementation" },
+        "mirroredIssuanceArtifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["finalReport", "sourceBoundReceipt", "reviewPrompt", "changedPathAllowlistScope"],
+          "properties": {
+            "finalReport": { "$ref": "#/$defs/artifactPointer" },
+            "sourceBoundReceipt": { "$ref": "#/$defs/artifactPointer" },
+            "reviewPrompt": { "$ref": "#/$defs/artifactPointer" },
+            "changedPathAllowlistScope": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["repository", "baseCommit", "reviewedHeadCommit", "changedPathCount", "status"],
+              "properties": {
+                "repository": { "const": "chrisdortch/first" },
+                "baseCommit": { "$ref": "#/$defs/gitCommit" },
+                "reviewedHeadCommit": { "$ref": "#/$defs/gitCommit" },
+                "changedPathCount": { "const": 62 },
+                "status": { "const": "exactly-matches-mirrored-receipt-and-reviewed-head-diff" }
+              }
+            }
+          }
+        },
+        "reviewPointer": { "$ref": "#/$defs/artifactPointer" },
+        "github": { "$ref": "#/$defs/githubEvidence" },
+        "vercel": { "$ref": "#/$defs/vercelEvidence" },
+        "sourceBindings": { "$ref": "#/$defs/sourceBindings" },
+        "action002": { "$ref": "#/$defs/action002" },
+        "precedence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scope", "supersedes", "doesNotSupersede"],
+          "properties": {
+            "scope": { "const": "publication-readback-only" },
+            "supersedes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "hash", "claimScope", "reason"],
+                "properties": {
+                  "path": { "const": "portfolio/core/today/2026-08-20/session.json" },
+                  "hash": { "$ref": "#/$defs/hash" },
+                  "claimScope": { "const": "exact-head-ci-and-gateway-preview-readback" },
+                  "reason": { "type": "string", "minLength": 1, "maxLength": 500 }
+                }
+              }
+            },
+            "doesNotSupersede": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "uniqueItems": true,
+              "items": {
+                "enum": ["owner-authority", "handoff-lifecycle", "production-state", "historical-records"]
+              }
+            }
+          }
+        },
+        "containerBinding": { "$ref": "#/$defs/containerBinding" },
+        "publicationReadbackHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "publicationIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentType", "schemaVersion", "indexId", "updatedAt",
+        "reviewedImplementationHead", "lifecycle", "current", "connectorIds", "entries",
+        "publicationIndexHash"
+      ],
+      "properties": {
+        "documentType": { "const": "clover-core-publication-index" },
+        "schemaVersion": { "const": "0.1.0" },
+        "indexId": { "const": "core-publication-index:2026-08-20" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "reviewedImplementationHead": { "$ref": "#/$defs/gitCommit" },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "sequence", "stableRootPath", "immutableSnapshotPath", "previousIndexPath", "previousIndexHash", "immutableRecordPolicy"],
+          "properties": {
+            "mode": { "const": "append-only-records-with-advancing-root-pointer" },
+            "sequence": { "type": "integer", "minimum": 1 },
+            "stableRootPath": { "const": "portfolio/core/publication/index.json" },
+            "immutableSnapshotPath": {
+              "type": "string",
+              "pattern": "^portfolio/core/publication/versions/[0-9]+\\.[0-9]+\\.[0-9]+/records/core-publication-index-[0-9]{4}\\.json$"
+            },
+            "previousIndexPath": {
+              "type": ["string", "null"],
+              "pattern": "^portfolio/core/publication/versions/[0-9]+\\.[0-9]+\\.[0-9]+/records/core-publication-index-[0-9]{4}\\.json$"
+            },
+            "previousIndexHash": { "$ref": "#/$defs/nullableHash" },
+            "immutableRecordPolicy": {
+              "const": "The stable root must be byte-identical to this immutable numbered snapshot. A successor preserves prior records, appends a new numbered snapshot, and advances the stable root with an exact previous path and hash."
+            }
+          },
+          "if": {
+            "properties": { "sequence": { "const": 1 } }
+          },
+          "then": {
+            "properties": {
+              "previousIndexPath": { "const": null },
+              "previousIndexHash": { "const": null }
+            }
+          },
+          "else": {
+            "properties": {
+              "previousIndexPath": {
+                "type": "string",
+                "pattern": "^portfolio/core/publication/versions/[0-9]+\\.[0-9]+\\.[0-9]+/records/core-publication-index-[0-9]{4}\\.json$"
+              },
+              "previousIndexHash": { "$ref": "#/$defs/hash" }
+            }
+          }
+        },
+        "current": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["finalReport", "sourceBoundReceipt", "reviewPrompt", "reviewPointer", "publicationReadback"],
+          "properties": {
+            "finalReport": { "$ref": "#/$defs/artifactPointer" },
+            "sourceBoundReceipt": { "$ref": "#/$defs/artifactPointer" },
+            "reviewPrompt": { "$ref": "#/$defs/artifactPointer" },
+            "reviewPointer": { "$ref": "#/$defs/artifactPointer" },
+            "publicationReadback": { "$ref": "#/$defs/artifactPointer" }
+          }
+        },
+        "connectorIds": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clover://publication/report", "clover://publication/receipt", "clover://publication/review-prompt", "clover://publication/review-decision", "clover://publication/readback"],
+          "properties": {
+            "clover://publication/report": { "$ref": "#/$defs/artifactPointer" },
+            "clover://publication/receipt": { "$ref": "#/$defs/artifactPointer" },
+            "clover://publication/review-prompt": { "$ref": "#/$defs/artifactPointer" },
+            "clover://publication/review-decision": { "$ref": "#/$defs/artifactPointer" },
+            "clover://publication/readback": { "$ref": "#/$defs/artifactPointer" }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "minItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sequence", "artifactType", "recordId", "path", "hash", "hashMode", "mediaType", "recordedAt", "status"],
+            "properties": {
+              "sequence": { "type": "integer", "minimum": 1 },
+              "artifactType": {
+                "enum": [
+                  "mirrored-final-report",
+                  "mirrored-source-bound-receipt",
+                  "mirrored-review-prompt",
+                  "structured-review-pointer",
+                  "publication-readback"
+                ]
+              },
+              "recordId": { "type": "string", "minLength": 1, "maxLength": 180 },
+              "path": {
+                "type": "string",
+                "pattern": "^portfolio/core/publication/versions/[0-9]+\\.[0-9]+\\.[0-9]+/(mirrors|records)/[A-Za-z0-9_.-]+$"
+              },
+              "hash": { "$ref": "#/$defs/hash" },
+              "hashMode": {
+                "enum": ["sha256-bytes", "sha256-canonical-without-self-hash-field"]
+              },
+              "mediaType": { "enum": ["application/json", "text/markdown"] },
+              "recordedAt": { "type": "string", "format": "date-time" },
+              "status": { "enum": ["current", "superseded"] }
+            }
+          }
+        },
+        "publicationIndexHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

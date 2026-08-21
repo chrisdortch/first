@@ -85,6 +85,7 @@ jobs:
           node --test portfolio/test/*.test.mjs
           node portfolio/core/scripts/verify-core.mjs > "$RUNNER_TEMP/clover-core-v02-verification.json"
           node portfolio/runtime/validate-core-activation.mjs > "$RUNNER_TEMP/clover-core-activation-v01-verification.json"
+          node portfolio/core/scripts/verify-publication-finalization.mjs > "$RUNNER_TEMP/clover-core-publication-finalization-v01-verification.json"
 
       - name: Install pinned gateway dependencies
         working-directory: apps/clover-context-gateway
@@ -130,6 +131,7 @@ jobs:
             ${{ runner.temp }}/clover-core-boundary.json
             ${{ runner.temp }}/clover-core-v02-verification.json
             ${{ runner.temp }}/clover-core-activation-v01-verification.json
+            ${{ runner.temp }}/clover-core-publication-finalization-v01-verification.json
           if-no-files-found: warn
           retention-days: 30
           compression-level: 6

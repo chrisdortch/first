@@ -1,0 +1,158 @@
+{
+  "documentType": "clover-core-publication-index",
+  "schemaVersion": "0.1.0",
+  "indexId": "core-publication-index:2026-08-20",
+  "updatedAt": "2026-08-21T00:23:15Z",
+  "reviewedImplementationHead": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+  "lifecycle": {
+    "mode": "append-only-records-with-advancing-root-pointer",
+    "sequence": 1,
+    "stableRootPath": "portfolio/core/publication/index.json",
+    "immutableSnapshotPath": "portfolio/core/publication/versions/0.1.0/records/core-publication-index-0001.json",
+    "previousIndexPath": null,
+    "previousIndexHash": null,
+    "immutableRecordPolicy": "The stable root must be byte-identical to this immutable numbered snapshot. A successor preserves prior records, appends a new numbered snapshot, and advances the stable root with an exact previous path and hash."
+  },
+  "current": {
+    "finalReport": {
+      "artifactType": "mirrored-final-report",
+      "recordId": "external-final-report:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Report_2026-08-20.md",
+      "hash": "37b8b8e247c524117c525a71afacbe2e557198ca04ac88b4c0e397b3f2085c50",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "sourceBoundReceipt": {
+      "artifactType": "mirrored-source-bound-receipt",
+      "recordId": "external-source-bound-receipt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Source_Bound_Receipt_2026-08-20.json",
+      "hash": "293188db70f99b738ecb58fec232702079e10ab8234db816d4a28c4e83fae603",
+      "hashMode": "sha256-bytes",
+      "mediaType": "application/json"
+    },
+    "reviewPrompt": {
+      "artifactType": "mirrored-review-prompt",
+      "recordId": "external-review-prompt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Chat_Pro_Core_Trunk_Activation_Review_Prompt_2026-08-20.md",
+      "hash": "a8207c4e0b0e615ef129f4a8bb38a2e22a238d3abc1dd1682f1b970ec8a6efb9",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "reviewPointer": {
+      "artifactType": "structured-review-pointer",
+      "recordId": "core-trunk-activation-review-pointer:2026-08-20:0.1.0",
+      "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-review-pointer.json",
+      "hash": "e7e8b46886353c8d0c71d4412cae1521d420ccd59e925b81b4627b343198041d",
+      "hashMode": "sha256-canonical-without-self-hash-field",
+      "mediaType": "application/json"
+    },
+    "publicationReadback": {
+      "artifactType": "publication-readback",
+      "recordId": "core-trunk-activation-publication-readback:2026-08-20:0001",
+      "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-publication-readback-0001.json",
+      "hash": "1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a",
+      "hashMode": "sha256-canonical-without-self-hash-field",
+      "mediaType": "application/json"
+    }
+  },
+  "connectorIds": {
+    "clover://publication/report": {
+      "artifactType": "mirrored-final-report",
+      "recordId": "external-final-report:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Report_2026-08-20.md",
+      "hash": "37b8b8e247c524117c525a71afacbe2e557198ca04ac88b4c0e397b3f2085c50",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "clover://publication/receipt": {
+      "artifactType": "mirrored-source-bound-receipt",
+      "recordId": "external-source-bound-receipt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Source_Bound_Receipt_2026-08-20.json",
+      "hash": "293188db70f99b738ecb58fec232702079e10ab8234db816d4a28c4e83fae603",
+      "hashMode": "sha256-bytes",
+      "mediaType": "application/json"
+    },
+    "clover://publication/review-prompt": {
+      "artifactType": "mirrored-review-prompt",
+      "recordId": "external-review-prompt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Chat_Pro_Core_Trunk_Activation_Review_Prompt_2026-08-20.md",
+      "hash": "a8207c4e0b0e615ef129f4a8bb38a2e22a238d3abc1dd1682f1b970ec8a6efb9",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown"
+    },
+    "clover://publication/review-decision": {
+      "artifactType": "structured-review-pointer",
+      "recordId": "core-trunk-activation-review-pointer:2026-08-20:0.1.0",
+      "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-review-pointer.json",
+      "hash": "e7e8b46886353c8d0c71d4412cae1521d420ccd59e925b81b4627b343198041d",
+      "hashMode": "sha256-canonical-without-self-hash-field",
+      "mediaType": "application/json"
+    },
+    "clover://publication/readback": {
+      "artifactType": "publication-readback",
+      "recordId": "core-trunk-activation-publication-readback:2026-08-20:0001",
+      "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-publication-readback-0001.json",
+      "hash": "1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a",
+      "hashMode": "sha256-canonical-without-self-hash-field",
+      "mediaType": "application/json"
+    }
+  },
+  "entries": [
+    {
+      "sequence": 1,
+      "artifactType": "mirrored-final-report",
+      "recordId": "external-final-report:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Report_2026-08-20.md",
+      "hash": "37b8b8e247c524117c525a71afacbe2e557198ca04ac88b4c0e397b3f2085c50",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown",
+      "recordedAt": "2026-08-20T23:20:53Z",
+      "status": "current"
+    },
+    {
+      "sequence": 2,
+      "artifactType": "mirrored-source-bound-receipt",
+      "recordId": "external-source-bound-receipt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Clover_Core_Trunk_Activation_Source_Bound_Receipt_2026-08-20.json",
+      "hash": "293188db70f99b738ecb58fec232702079e10ab8234db816d4a28c4e83fae603",
+      "hashMode": "sha256-bytes",
+      "mediaType": "application/json",
+      "recordedAt": "2026-08-20T23:20:53Z",
+      "status": "current"
+    },
+    {
+      "sequence": 3,
+      "artifactType": "mirrored-review-prompt",
+      "recordId": "external-review-prompt:2026-08-20",
+      "path": "portfolio/core/publication/versions/0.1.0/mirrors/Chat_Pro_Core_Trunk_Activation_Review_Prompt_2026-08-20.md",
+      "hash": "a8207c4e0b0e615ef129f4a8bb38a2e22a238d3abc1dd1682f1b970ec8a6efb9",
+      "hashMode": "sha256-bytes",
+      "mediaType": "text/markdown",
+      "recordedAt": "2026-08-20T23:20:53Z",
+      "status": "current"
+    },
+    {
+      "sequence": 4,
+      "artifactType": "structured-review-pointer",
+      "recordId": "core-trunk-activation-review-pointer:2026-08-20:0.1.0",
+      "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-review-pointer.json",
+      "hash": "e7e8b46886353c8d0c71d4412cae1521d420ccd59e925b81b4627b343198041d",
+      "hashMode": "sha256-canonical-without-self-hash-field",
+      "mediaType": "application/json",
+      "recordedAt": "2026-08-21T00:23:15Z",
+      "status": "current"
+    },
+    {
+      "sequence": 5,
+      "artifactType": "publication-readback",
+      "recordId": "core-trunk-activation-publication-readback:2026-08-20:0001",
+      "path": "portfolio/core/publication/versions/0.1.0/records/core-trunk-activation-publication-readback-0001.json",
+      "hash": "1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a",
+      "hashMode": "sha256-canonical-without-self-hash-field",
+      "mediaType": "application/json",
+      "recordedAt": "2026-08-21T00:23:15Z",
+      "status": "current"
+    }
+  ],
+  "publicationIndexHash": "92bd597a10beba1a2a4324ebd9f500a6bf62c590dc07693f6c84e076ba83c062"
+}

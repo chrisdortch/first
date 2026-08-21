@@ -25,6 +25,18 @@ try {
   const search = await client.callTool({ name: "search", arguments: { query: "RollinD" } });
   assert.ok(search.structuredContent.results.some((item) => item.id === "clover://project/rollindd"));
 
+  const publication = await client.callTool({ name: "fetch", arguments: { id: "clover://publication/readback" } });
+  assert.equal(publication.isError, undefined);
+  assert.equal(publication.structuredContent.id, "clover://publication/readback");
+  assert.equal(publication.structuredContent.metadata.hashVerified, true);
+  assert.equal(publication.structuredContent.metadata.contentHash, "1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a");
+  const publicationRecord = JSON.parse(publication.structuredContent.text);
+  assert.equal(publicationRecord.reviewedImplementation.headCommit, "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334");
+  assert.equal(publicationRecord.action002.ownerApprovalStatus, "pending");
+
+  const unbound = await client.callTool({ name: "fetch", arguments: { id: "clover://publication/readback/current" } });
+  assert.equal(unbound.structuredContent.metadata.found, false);
+
   console.log(JSON.stringify({ status: "passed", endpoint: endpoint.toString(), tools: names }));
 } finally {
   await client.close();
