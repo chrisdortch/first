@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { sha256Bytes } from "../lib/canonical-json.mjs";
 import {
   assertActionEnvelopeExecutable,
   assertSanitizedHandoffDocument,
@@ -17,11 +18,16 @@ import {
   validateIndependentReviewDecision,
   validateIndexTransition
 } from "../lib/handoff-ledger.mjs";
+import { validateHandoffIndexChain } from "../lib/publication-finalization.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
 const handoffRoot = path.join(repositoryRoot, "portfolio/core/handoff");
 const versionRoot = path.join(handoffRoot, "versions/0.1.0");
 const demonstrationRoot = path.join(versionRoot, "demonstration");
+const stableIndexPath = path.join(handoffRoot, "index.json");
+const genesisIndexPath = path.join(versionRoot, "indexes/action-receipt-index-0001.json");
+const genesisIndexHash = "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c";
+const genesisIndexByteHash = "da4b60605402cf4197f8073c312c84a4a374daec35e11664bac86593bd8152ff";
 
 const readJson = (filename) => JSON.parse(fs.readFileSync(filename, "utf8"));
 const clone = (value) => structuredClone(value);
@@ -33,7 +39,7 @@ const warroomCapsule = cells.find((entry) => entry.project.projectId === "clover
 const action001 = readJson(path.join(demonstrationRoot, "action-001-status-refresh-envelope.json"));
 const action002 = readJson(path.join(demonstrationRoot, "action-002-warroom-identity-envelope.json"));
 const receipt001 = readJson(path.join(demonstrationRoot, "action-001-status-refresh-receipt.json"));
-const index0001 = readJson(path.join(versionRoot, "indexes/action-receipt-index-0001.json"));
+const index0001 = readJson(genesisIndexPath);
 
 function resealReceipt(receipt) {
   return sealHandoffDocument(receipt, "receiptHash");
@@ -43,6 +49,13 @@ function writeJson(root, relativePath, value) {
   const target = path.join(root, relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function readRepositoryJson(relativePath) {
+  assert.equal(path.isAbsolute(relativePath), false);
+  const absolute = path.resolve(repositoryRoot, relativePath);
+  assert.ok(absolute.startsWith(`${repositoryRoot}${path.sep}`));
+  return readJson(absolute);
 }
 
 function makeObservation({ id, sourceId, subject, identityKey, state }) {
@@ -60,25 +73,49 @@ function makeObservation({ id, sourceId, subject, identityKey, state }) {
   }, "evidenceHash");
 }
 
-test("persisted Handoff Ledger is strict, self-bound, and has one byte-identical stable index", () => {
+test("persisted Handoff Ledger keeps immutable genesis and resolves the stable root to the latest valid snapshot", () => {
+  const stableIndex = readJson(stableIndexPath);
+  const chain = validateHandoffIndexChain(repositoryRoot, { historicalIndexHash: genesisIndexHash });
+  const persistedEnvelopes = stableIndex.entries.map((entry) => readRepositoryJson(entry.envelopePath));
+  const persistedReceipts = stableIndex.entries
+    .filter((entry) => entry.receiptPath !== null)
+    .map((entry) => readRepositoryJson(entry.receiptPath));
+  const persistedReviews = stableIndex.entries
+    .filter((entry) => entry.review.status === "completed")
+    .map((entry) => readRepositoryJson(entry.review.decisionPath));
   const result = validateHandoffLedger({
     branchCapsules: cells,
-    envelopes: [action001, action002],
-    receipts: [receipt001],
-    index: index0001
-  }, { repositoryRoot, now: "2026-08-20T21:25:00.000Z" });
+    envelopes: persistedEnvelopes,
+    receipts: persistedReceipts,
+    reviews: persistedReviews,
+    index: stableIndex
+  }, { repositoryRoot });
   assert.equal(result.valid, true);
-  assert.equal(result.indexHash, "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c");
+  assert.equal(result.indexHash, stableIndex.indexHash);
+  assert.equal(chain.status, "passed");
+  assert.equal(chain.currentIndexHash, stableIndex.indexHash);
+  assert.equal(chain.historicalIndexHash, genesisIndexHash);
+  assert.equal(chain.historicalSnapshotPath,
+    "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json");
+  assert.equal(computeHandoffHash(index0001, "indexHash"), genesisIndexHash);
+  assert.equal(sha256Bytes(fs.readFileSync(genesisIndexPath)), genesisIndexByteHash);
   assert.deepEqual(index0001.entries.map((entry) => entry.actionId), [
     "CLOVER-2026-08-20-001",
     "CLOVER-2026-08-20-002"
   ]);
-  assert.equal(
-    fs.readFileSync(path.join(handoffRoot, "index.json"), "utf8"),
-    fs.readFileSync(path.join(versionRoot, "indexes/action-receipt-index-0001.json"), "utf8")
-  );
   assert.equal(index0001.entries[0].lifecycle.state, "consumed");
   assert.equal(index0001.entries[1].lifecycle.state, "proposed");
+
+  if (stableIndex.indexHash === genesisIndexHash) {
+    assert.equal(chain.depth, 1);
+    assert.equal(
+      fs.readFileSync(stableIndexPath, "utf8"),
+      fs.readFileSync(genesisIndexPath, "utf8")
+    );
+  } else {
+    assert.ok(chain.depth > 1);
+    assert.notEqual(chain.currentSnapshotPath, chain.historicalSnapshotPath);
+  }
 });
 
 test("execution is default-deny without exact lifecycle state and blocks replay, pending approval, and expiry", () => {
@@ -357,11 +394,34 @@ test("append-only index transitions reject deletion, reorder, and Action ID reus
   reusedValue.entries[1].actionId = reusedValue.entries[0].actionId;
   const reused = sealHandoffDocument(reusedValue, "indexHash");
   assert.throws(() => validateIndexTransition(index0001, reused), /substituted|Action ID/i);
+
+  const widenedValue = clone(index0001);
+  widenedValue.indexId = "handoff-index:synthetic-lifecycle-widened";
+  widenedValue.createdAt = "2026-08-20T21:20:00.000Z";
+  widenedValue.previousIndexPath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json";
+  widenedValue.previousIndexHash = index0001.indexHash;
+  widenedValue.entries[1].recordedAt = widenedValue.createdAt;
+  widenedValue.entries[1].status = "completed";
+  widenedValue.entries[1].lifecycle.state = "consumed";
+  widenedValue.entries[1].lifecycle.consumedAt = widenedValue.createdAt;
+  widenedValue.entries[1].lifecycle.consumedByReceiptId = "handoff-receipt:002:synthetic-widened";
+  widenedValue.entries[1].receiptId = "handoff-receipt:002:synthetic-widened";
+  widenedValue.entries[1].receiptPath = "portfolio/core/handoff/versions/0.1.0/demonstration/action-002.synthetic-widened.json";
+  widenedValue.entries[1].receiptHash = "f".repeat(64);
+  widenedValue.entries[1].outcome = "succeeded";
+  const widened = sealHandoffDocument(widenedValue, "indexHash");
+  assert.throws(() => validateIndexTransition(index0001, widened), /allowed lifecycle transition/i);
 });
 
-test("Action 002 can become approved and complete a strict before/after public reconciliation", (t) => {
+test("Action 002 synthetic approved, consumed, and reviewed successors remain append-only and source-bound", (t) => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "clover-handoff-test-"));
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const genesisRelativePath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json";
+  const approvedRelativePath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0002.json";
+  const consumedRelativePath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json";
+  const reviewedRelativePath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0004.json";
+  const stableRelativePath = "portfolio/core/handoff/index.json";
+  const indexSchemaRelativePath = "portfolio/core/handoff/versions/0.1.0/schemas/action-receipt-index.schema.json";
   const attestationPath = "portfolio/core/handoff/versions/0.1.0/approvals/action-002.synthetic.json";
   const resultCapsulePath = "portfolio/core/handoff/versions/0.1.0/cells/clover-warroom.synthetic-reconciled.branch-capsule.json";
   const commit = "1111111111111111111111111111111111111111";
@@ -380,7 +440,7 @@ test("Action 002 can become approved and complete a strict before/after public r
   const approvedIndex = createOwnerApprovedIndexVersion(index0001, action002, attestation, {
     indexId: "handoff-index:synthetic-approved:20260820",
     createdAt: "2026-08-20T21:25:30.000Z",
-    previousIndexPath: "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
+    previousIndexPath: genesisRelativePath,
     attestationPath
   });
   assert.deepEqual(validateIndexTransition(index0001, approvedIndex), {
@@ -551,7 +611,7 @@ test("Action 002 can become approved and complete a strict before/after public r
       recordedHandoffPaths: [
         resultCapsulePath,
         "portfolio/core/handoff/versions/0.1.0/demonstration/action-002-warroom-identity-receipt.json",
-        "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0002.json",
+        consumedRelativePath,
         "portfolio/core/handoff/index.json"
       ],
       summary: "Only source-bound Handoff Ledger artifacts were recorded; the target project was not changed."
@@ -609,6 +669,114 @@ test("Action 002 can become approved and complete a strict before/after public r
     repositoryRoot: tempRoot,
     executionNow: receipt.startedAt
   }).valid, true);
+
+  const consumedValue = clone(approvedIndex);
+  consumedValue.indexId = "handoff-index:synthetic-consumed:20260820";
+  consumedValue.createdAt = "2026-08-20T21:27:30.000Z";
+  consumedValue.previousIndexPath = approvedRelativePath;
+  consumedValue.previousIndexHash = approvedIndex.indexHash;
+  const consumedEntry = consumedValue.entries[1];
+  consumedEntry.recordedAt = consumedValue.createdAt;
+  consumedEntry.status = "completed";
+  consumedEntry.lifecycle.state = "consumed";
+  consumedEntry.lifecycle.consumedAt = receipt.completedAt;
+  consumedEntry.lifecycle.consumedByReceiptId = receipt.receiptId;
+  consumedEntry.receiptId = receipt.receiptId;
+  consumedEntry.receiptPath = receipt.resultingState.persistedReceiptRef;
+  consumedEntry.receiptHash = receipt.receiptHash;
+  consumedEntry.outcome = receipt.outcome;
+  const consumedIndex = sealHandoffDocument(consumedValue, "indexHash");
+  assert.deepEqual(validateIndexTransition(approvedIndex, consumedIndex), {
+    valid: true,
+    transitionedEntries: 1,
+    appendedEntries: 0
+  });
+
+  const reviewPath = "portfolio/core/handoff/versions/0.1.0/reviews/action-002.synthetic.json";
+  const review = sealHandoffDocument({
+    documentType: "clover-handoff-independent-review-decision",
+    schemaVersion: "0.1.0",
+    decisionId: "handoff-review:002:synthetic-indexed",
+    reviewedAt: "2026-08-20T21:28:00.000Z",
+    reviewer: { reviewerId: "reviewer:synthetic-independent", independenceDeclared: true, executionLaneDifferent: true },
+    receiptId: receipt.receiptId,
+    receiptHash: receipt.receiptHash,
+    envelopeId: action002.envelopeId,
+    envelopeHash: action002.envelopeHash,
+    decision: "approve",
+    findings: [],
+    authority: {
+      decisionIsMergeApproval: false,
+      decisionIsProductionDeploymentApproval: false,
+      decisionIsProductionDataApproval: false,
+      decisionIsStandingAuthority: false
+    }
+  }, "decisionHash");
+  const reviewedValue = clone(consumedIndex);
+  reviewedValue.indexId = "handoff-index:synthetic-reviewed:20260820";
+  reviewedValue.createdAt = "2026-08-20T21:28:30.000Z";
+  reviewedValue.previousIndexPath = consumedRelativePath;
+  reviewedValue.previousIndexHash = consumedIndex.indexHash;
+  reviewedValue.entries[1].recordedAt = reviewedValue.createdAt;
+  reviewedValue.entries[1].review = {
+    status: "completed",
+    decisionId: review.decisionId,
+    decisionPath: reviewPath,
+    decisionHash: review.decisionHash
+  };
+  const reviewedIndex = sealHandoffDocument(reviewedValue, "indexHash");
+  assert.deepEqual(validateIndexTransition(consumedIndex, reviewedIndex), {
+    valid: true,
+    transitionedEntries: 1,
+    appendedEntries: 0
+  });
+
+  for (const [relativePath, value] of [
+    [genesisRelativePath, index0001],
+    [index0001.entries[0].envelopePath, action001],
+    [index0001.entries[1].envelopePath, action002],
+    [index0001.entries[0].receiptPath, receipt001],
+    [receipt.resultingState.persistedReceiptRef, receipt],
+    [reviewPath, review]
+  ]) writeJson(tempRoot, relativePath, value);
+  const schemaTarget = path.join(tempRoot, indexSchemaRelativePath);
+  fs.mkdirSync(path.dirname(schemaTarget), { recursive: true });
+  fs.copyFileSync(path.join(versionRoot, "schemas/action-receipt-index.schema.json"), schemaTarget);
+  const immutableSnapshotBytes = new Map([
+    [genesisRelativePath, fs.readFileSync(path.join(tempRoot, genesisRelativePath))]
+  ]);
+
+  for (const [latest, expectedDepth, expectedSnapshotPath, receipts, reviews] of [
+    [approvedIndex, 2, approvedRelativePath, [receipt001], []],
+    [consumedIndex, 3, consumedRelativePath, [receipt001, receipt], []],
+    [reviewedIndex, 4, reviewedRelativePath, [receipt001, receipt], [review]]
+  ]) {
+    writeJson(tempRoot, expectedSnapshotPath, latest);
+    immutableSnapshotBytes.set(expectedSnapshotPath, fs.readFileSync(path.join(tempRoot, expectedSnapshotPath)));
+    writeJson(tempRoot, stableRelativePath, latest);
+    const chain = validateHandoffIndexChain(tempRoot, { historicalIndexHash: genesisIndexHash });
+    assert.equal(chain.status, "passed");
+    assert.equal(chain.depth, expectedDepth);
+    assert.equal(chain.currentIndexHash, latest.indexHash);
+    assert.equal(chain.currentSnapshotPath, expectedSnapshotPath);
+    assert.equal(chain.historicalIndexHash, genesisIndexHash);
+    assert.equal(chain.historicalSnapshotPath, genesisRelativePath);
+    if (expectedDepth > 1) assert.notEqual(chain.currentSnapshotPath, chain.historicalSnapshotPath);
+    for (const [snapshotPath, originalBytes] of immutableSnapshotBytes) {
+      assert.equal(fs.readFileSync(path.join(tempRoot, snapshotPath)).equals(originalBytes), true);
+    }
+    assert.equal(validateHandoffLedger({
+      branchCapsules: cells,
+      envelopes: [action001, action002],
+      receipts,
+      reviews,
+      index: latest
+    }, { repositoryRoot: tempRoot, now: "2026-08-20T21:29:00.000Z" }).valid, true);
+  }
+  assert.equal(review.authority.decisionIsMergeApproval, false);
+  assert.equal(review.authority.decisionIsProductionDeploymentApproval, false);
+  assert.equal(review.authority.decisionIsProductionDataApproval, false);
+  assert.equal(review.authority.decisionIsStandingAuthority, false);
 
   const unresolvedCapsule = sealHandoffDocument({
     ...clone(resultCapsule),
