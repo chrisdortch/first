@@ -192,14 +192,15 @@ function createHandoffSuccessorRoot(state = "approved") {
 
 test("the persisted publication catalog is closed, source-bound, and non-authorizing", () => {
   const result = validatePublicationFinalization(ROOT);
+  const handoff = validateHandoffIndexChain(ROOT);
   assert.equal(result.status, "passed");
   assert.equal(result.verdict, "AMEND");
   assert.equal(result.historicalExternalReceiptHash, HISTORICAL_RECEIPT_HASH);
   assert.equal(result.action002Status, "pending");
   assert.equal(result.containerBindingStatus, "pending-external-publication-receipt");
   assert.equal(result.chainDepth, 1);
-  assert.equal(result.handoffChainDepth, 1);
-  assert.equal(result.currentHandoffIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+  assert.equal(result.handoffChainDepth, handoff.depth);
+  assert.equal(result.currentHandoffIndexHash, handoff.currentIndexHash);
   assert.equal(result.historicalHandoffIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
 });
 
@@ -230,15 +231,24 @@ test("the root index is byte-identical to immutable index 0001 and connector IDs
   assert.deepEqual(index.connectorIds["clover://publication/readback"], index.current.publicationReadback);
 });
 
-test("the baseline Handoff root resolves exactly to immutable genesis index 0001", () => {
+test("the current Handoff root resolves to its latest immutable snapshot and preserves genesis index 0001", () => {
   const chain = validateHandoffIndexChain(ROOT);
   assert.equal(chain.status, "passed");
-  assert.equal(chain.depth, 1);
-  assert.equal(chain.currentSnapshotPath, handoffSnapshotPath(1));
+  assert.equal(chain.currentSnapshotPath, handoffSnapshotPath(chain.depth));
+  assert.deepEqual(
+    fs.readFileSync(path.join(ROOT, HANDOFF_INDEX_PATH)),
+    fs.readFileSync(path.join(ROOT, chain.currentSnapshotPath)),
+  );
   assert.equal(chain.historicalSnapshotPath, handoffSnapshotPath(1));
-  assert.equal(chain.currentIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
   assert.equal(chain.historicalIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
   assert.equal(sha256Bytes(fs.readFileSync(path.join(ROOT, handoffSnapshotPath(1)))), HISTORICAL_HANDOFF_INDEX_BYTE_HASH);
+  if (chain.depth === 1) {
+    assert.equal(chain.currentIndexHash, chain.historicalIndexHash);
+    assert.equal(chain.currentSnapshotPath, chain.historicalSnapshotPath);
+  } else {
+    assert.notEqual(chain.currentIndexHash, chain.historicalIndexHash);
+    assert.notEqual(chain.currentSnapshotPath, chain.historicalSnapshotPath);
+  }
 });
 
 test("historical publication evidence survives valid approved, consumed, and reviewed Handoff roots", () => {

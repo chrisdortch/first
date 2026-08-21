@@ -4,6 +4,12 @@ import { createHash } from "node:crypto";
 
 const REPOSITORY = "chrisdortch/first";
 const FULL_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const HANDOFF_INDEX_ID = "clover://handoff/index";
+const HANDOFF_INDEX_PATH = "portfolio/core/handoff/index.json";
+const HANDOFF_INDEX_SNAPSHOT_PATTERN = /^portfolio\/core\/handoff\/versions\/0\.1\.0\/indexes\/action-receipt-index-([0-9]{4})\.json$/;
+const HISTORICAL_HANDOFF_INDEX_HASH = "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c";
+const HISTORICAL_HANDOFF_INDEX_BYTE_HASH = "da4b60605402cf4197f8073c312c84a4a374daec35e11664bac86593bd8152ff";
 const PUBLICATION_INDEX_ID = "clover://publication/index";
 const PUBLICATION_CURRENT_ID = "clover://publication/readback";
 const PUBLICATION_INDEX_PATH = "portfolio/core/publication/index.json";
@@ -100,7 +106,7 @@ const CORE_DOCUMENTS = [
   { id: "clover://cost-policy", title: "Clover Cost and Token Policy", relativePath: "portfolio/context/COST_POLICY.md", kind: "text", keywords: "cost token credits chat pro codex work sites voice" },
   { id: "clover://live-adapters", title: "Clover Live Adapter Registry", relativePath: "portfolio/context/LIVE_ADAPTER_REGISTRY.json", kind: "json", keywords: "github vercel drive sites logs errors traffic adapters" },
   { id: "clover://today/candidate/2026-08-20", title: "Clover Today Owner Session Candidate", relativePath: "portfolio/core/today/2026-08-20/session.json", kind: "json", optional: true, keywords: "today owner session priorities recommended action connector plan authority unknowns" },
-  { id: "clover://handoff/index", title: "Clover Handoff Ledger Index", relativePath: "portfolio/core/handoff/index.json", kind: "json", optional: true, keywords: "handoff action envelope execution receipt review decision branch capsule index" },
+  { id: HANDOFF_INDEX_ID, title: "Clover Handoff Ledger Index", relativePath: HANDOFF_INDEX_PATH, kind: "json", optional: true, keywords: "handoff action envelope execution receipt review decision branch capsule index" },
   { id: PUBLICATION_INDEX_ID, title: "Clover Core Publication Index", relativePath: PUBLICATION_INDEX_PATH, kind: "json", optional: true, keywords: "publication finalization readback exact source ci preview receipt current verified" },
   { id: "clover://owner/start", title: "Clover Owner Start", relativePath: "CLOVER_OWNER_START.md", kind: "text", optional: true, keywords: "owner start compact prompt use clover core" },
   { id: "clover://operator/chatgpt", title: "ChatGPT Clover Project Instructions", relativePath: "CHATGPT_PROJECT_INSTRUCTIONS.md", kind: "text", optional: true, keywords: "chatgpt project owner console instructions" },
@@ -112,7 +118,7 @@ const SNAPSHOT_DOCUMENTS = {
   candidateStatus: "clover://status/candidate/2026-08-20",
   registryCandidate: "clover://registry/candidate/2.0.0",
   today: "clover://today/candidate/2026-08-20",
-  handoff: "clover://handoff/index",
+  handoff: HANDOFF_INDEX_ID,
 };
 
 function readUtf8(filePath) {
@@ -228,6 +234,378 @@ function canonicalJson(value) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function handoffIndexDocumentDefinition(relativePath, id = "clover://handoff/index/previous") {
+  if (!HANDOFF_INDEX_SNAPSHOT_PATTERN.test(relativePath || "")) return null;
+  return {
+    id,
+    title: "Immutable Clover Handoff Ledger Index Snapshot",
+    relativePath,
+    kind: "json",
+    optional: true,
+  };
+}
+
+function handoffIndexSequence(relativePath) {
+  const match = HANDOFF_INDEX_SNAPSHOT_PATTERN.exec(relativePath || "");
+  return match ? Number(match[1]) : null;
+}
+
+function handoffCurrentSnapshotPath(index) {
+  if (index?.previousIndexPath === null && index?.previousIndexHash === null) {
+    return "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json";
+  }
+  const previousSequence = handoffIndexSequence(index?.previousIndexPath);
+  if (!Number.isInteger(previousSequence) || previousSequence < 1 || previousSequence >= 9999) return null;
+  return `portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-${String(previousSequence + 1).padStart(4, "0")}.json`;
+}
+
+function isIsoTimestamp(value) {
+  return typeof value === "string"
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)
+    && Number.isFinite(Date.parse(value));
+}
+
+function handoffIdentifier(value) {
+  return typeof value === "string" && value.length >= 3 && value.length <= 160
+    && /^[a-z0-9][a-z0-9._:-]*$/.test(value);
+}
+
+function handoffRepositoryPath(value) {
+  return typeof value === "string" && value.length >= 1 && value.length <= 500
+    && !value.startsWith("/")
+    && !value.split("/").includes("..")
+    && /^[A-Za-z0-9._*?\[\]{}/-]+$/.test(value);
+}
+
+const HANDOFF_ENTRY_KEYS = [
+  "sequence", "recordedAt", "actionId", "branchCapsuleId", "branchCapsuleHash", "envelopeId",
+  "envelopePath", "envelopeHash", "status", "lifecycle", "ownerApproval", "receiptId", "receiptPath",
+  "receiptHash", "outcome", "review",
+];
+const HANDOFF_LIFECYCLE_KEYS = [
+  "state", "singleUse", "consumedAt", "consumedByReceiptId", "revokedAt", "revocationEvidenceHash",
+];
+const HANDOFF_APPROVAL_KEYS = [
+  "status", "approverId", "approvedAt", "approvedEnvelopeHash", "approvalEvidenceHash", "attestationId",
+  "attestationPath", "attestationHash",
+];
+const HANDOFF_REVIEW_KEYS = ["status", "decisionId", "decisionPath", "decisionHash"];
+
+function handoffReviewContract(review) {
+  if (!hasExactKeys(review, HANDOFF_REVIEW_KEYS)) return false;
+  if (review.status === "pending") {
+    return review.decisionId === null && review.decisionPath === null && review.decisionHash === null;
+  }
+  return review.status === "completed"
+    && handoffIdentifier(review.decisionId)
+    && handoffRepositoryPath(review.decisionPath)
+    && HASH_PATTERN.test(review.decisionHash || "");
+}
+
+function handoffOwnerApprovalContract(approval) {
+  if (!hasExactKeys(approval, HANDOFF_APPROVAL_KEYS) || !handoffIdentifier(approval.approverId)) return false;
+  const evidenceFields = [
+    approval.approvedAt, approval.approvedEnvelopeHash, approval.approvalEvidenceHash, approval.attestationId,
+    approval.attestationPath, approval.attestationHash,
+  ];
+  if (["not-required", "pending"].includes(approval.status)) return evidenceFields.every((value) => value === null);
+  return approval.status === "approved"
+    && isIsoTimestamp(approval.approvedAt)
+    && HASH_PATTERN.test(approval.approvedEnvelopeHash || "")
+    && HASH_PATTERN.test(approval.approvalEvidenceHash || "")
+    && handoffIdentifier(approval.attestationId)
+    && handoffRepositoryPath(approval.attestationPath)
+    && HASH_PATTERN.test(approval.attestationHash || "");
+}
+
+function handoffLifecycleContract(lifecycle) {
+  if (!hasExactKeys(lifecycle, HANDOFF_LIFECYCLE_KEYS) || lifecycle.singleUse !== true) return false;
+  if (lifecycle.state === "consumed") {
+    return isIsoTimestamp(lifecycle.consumedAt)
+      && handoffIdentifier(lifecycle.consumedByReceiptId)
+      && lifecycle.revokedAt === null
+      && lifecycle.revocationEvidenceHash === null;
+  }
+  if (!["proposed", "available", "revoked"].includes(lifecycle.state)
+    || lifecycle.consumedAt !== null || lifecycle.consumedByReceiptId !== null) return false;
+  if (lifecycle.state === "revoked") {
+    return isIsoTimestamp(lifecycle.revokedAt) && HASH_PATTERN.test(lifecycle.revocationEvidenceHash || "");
+  }
+  return lifecycle.revokedAt === null && lifecycle.revocationEvidenceHash === null;
+}
+
+function handoffEntryContract(entry, offset) {
+  if (!hasExactKeys(entry, HANDOFF_ENTRY_KEYS)
+    || entry.sequence !== offset + 1
+    || !isIsoTimestamp(entry.recordedAt)
+    || !/^CLOVER-\d{4}-\d{2}-\d{2}-\d{3}$/.test(entry.actionId || "")
+    || !handoffIdentifier(entry.branchCapsuleId)
+    || !HASH_PATTERN.test(entry.branchCapsuleHash || "")
+    || !handoffIdentifier(entry.envelopeId)
+    || !handoffRepositoryPath(entry.envelopePath)
+    || !HASH_PATTERN.test(entry.envelopeHash || "")
+    || !handoffLifecycleContract(entry.lifecycle)
+    || !handoffOwnerApprovalContract(entry.ownerApproval)
+    || !handoffReviewContract(entry.review)
+    || (entry.ownerApproval.status === "approved" && entry.ownerApproval.approvedEnvelopeHash !== entry.envelopeHash)) return false;
+  if (entry.status === "pending") {
+    return ["proposed", "available", "revoked"].includes(entry.lifecycle.state)
+      && entry.receiptId === null
+      && entry.receiptPath === null
+      && entry.receiptHash === null
+      && entry.outcome === "pending"
+      && entry.review.status === "pending";
+  }
+  return entry.status === "completed"
+    && entry.lifecycle.state === "consumed"
+    && handoffIdentifier(entry.receiptId)
+    && entry.lifecycle.consumedByReceiptId === entry.receiptId
+    && handoffRepositoryPath(entry.receiptPath)
+    && HASH_PATTERN.test(entry.receiptHash || "")
+    && ["succeeded", "failed-closed", "blocked", "partial"].includes(entry.outcome);
+}
+
+function handoffIndexContract(index) {
+  if (!hasExactKeys(index, [
+    "documentType", "schemaVersion", "indexId", "createdAt", "previousIndexPath", "previousIndexHash", "entries", "indexHash",
+  ])
+    || index.documentType !== "clover-handoff-action-receipt-index"
+    || index.schemaVersion !== "0.1.0"
+    || !handoffIdentifier(index.indexId)
+    || !isIsoTimestamp(index.createdAt)
+    || ((index.previousIndexPath === null) !== (index.previousIndexHash === null))
+    || (index.previousIndexPath !== null && (!HANDOFF_INDEX_SNAPSHOT_PATTERN.test(index.previousIndexPath)
+      || !HASH_PATTERN.test(index.previousIndexHash || "")))
+    || !Array.isArray(index.entries)
+    || index.entries.length < 1
+    || index.entries.length > 1000
+    || !HASH_PATTERN.test(index.indexHash || "")
+    || index.indexHash === "0".repeat(64)
+    || index.indexHash !== documentSelfHash(index, "indexHash")
+    || !index.entries.every(handoffEntryContract)) return false;
+  const actionIds = index.entries.map((entry) => entry.actionId);
+  const envelopeIds = index.entries.map((entry) => entry.envelopeId);
+  return new Set(actionIds).size === actionIds.length && new Set(envelopeIds).size === envelopeIds.length;
+}
+
+function handoffDocumentContract(document) {
+  return Boolean(document)
+    && handoffIndexContract(document.parsed)
+    && publicationArtifactSafe(document.raw)
+    && publicationStructuredSafe(document.parsed);
+}
+
+function handoffImmutableEntryIdentity(entry) {
+  return {
+    sequence: entry.sequence,
+    actionId: entry.actionId,
+    branchCapsuleId: entry.branchCapsuleId,
+    branchCapsuleHash: entry.branchCapsuleHash,
+    envelopeId: entry.envelopeId,
+    envelopePath: entry.envelopePath,
+    envelopeHash: entry.envelopeHash,
+  };
+}
+
+function handoffSuccessorContract(current, previous, previousPath) {
+  if (!handoffIndexContract(current)
+    || !handoffIndexContract(previous)
+    || current.previousIndexPath !== previousPath
+    || current.previousIndexHash !== previous.indexHash
+    || Date.parse(current.createdAt) < Date.parse(previous.createdAt)
+    || current.entries.length < previous.entries.length) return false;
+  let transitions = 0;
+  for (let offset = 0; offset < previous.entries.length; offset += 1) {
+    const before = previous.entries[offset];
+    const after = current.entries[offset];
+    if (canonicalJson(handoffImmutableEntryIdentity(before)) !== canonicalJson(handoffImmutableEntryIdentity(after))) return false;
+    if (canonicalJson(before) === canonicalJson(after)) continue;
+    transitions += 1;
+    const approvalTransition = before.status === "pending" && before.lifecycle.state === "proposed"
+      && before.ownerApproval.status === "pending" && after.status === "pending"
+      && after.lifecycle.state === "available" && after.ownerApproval.status === "approved"
+      && after.receiptId === null && after.review.status === "pending";
+    const consumptionTransition = before.status === "pending" && before.lifecycle.state === "available"
+      && after.status === "completed" && after.lifecycle.state === "consumed" && after.receiptId !== null;
+    const revocationTransition = before.status === "pending" && after.status === "pending"
+      && after.lifecycle.state === "revoked" && after.lifecycle.revokedAt !== null
+      && after.lifecycle.revocationEvidenceHash !== null && after.receiptId === null;
+    const reviewTransition = before.status === "completed" && after.status === "completed"
+      && before.lifecycle.state === "consumed" && after.lifecycle.state === "consumed"
+      && before.review.status === "pending" && after.review.status === "completed";
+    if (!approvalTransition && !consumptionTransition && !revocationTransition && !reviewTransition) return false;
+    const stableExcept = (...keys) => {
+      const beforeStable = structuredClone(before);
+      const afterStable = structuredClone(after);
+      for (const key of ["recordedAt", ...keys]) {
+        delete beforeStable[key];
+        delete afterStable[key];
+      }
+      return canonicalJson(beforeStable) === canonicalJson(afterStable);
+    };
+    if (approvalTransition && !stableExcept("lifecycle", "ownerApproval")) return false;
+    if (consumptionTransition && !stableExcept("status", "lifecycle", "receiptId", "receiptPath", "receiptHash", "outcome")) return false;
+    if (revocationTransition && !stableExcept("lifecycle")) return false;
+    if ((consumptionTransition || revocationTransition || reviewTransition)
+      && canonicalJson(before.ownerApproval) !== canonicalJson(after.ownerApproval)) return false;
+    if (reviewTransition) {
+      const beforeStable = structuredClone(before);
+      const afterStable = structuredClone(after);
+      delete beforeStable.recordedAt;
+      delete afterStable.recordedAt;
+      delete beforeStable.review;
+      delete afterStable.review;
+      if (canonicalJson(beforeStable) !== canonicalJson(afterStable)) return false;
+    }
+  }
+  return transitions <= 1
+    && current.entries.slice(previous.entries.length).every((entry, offset) => entry.sequence === previous.entries.length + offset + 1);
+}
+
+function handoffChainResult(currentDocument, historicalIndexHash) {
+  if (!handoffDocumentContract(currentDocument) || !HASH_PATTERN.test(historicalIndexHash || "")) return null;
+  const currentSnapshotPath = handoffCurrentSnapshotPath(currentDocument.parsed);
+  if (!currentSnapshotPath) return null;
+  return { currentSnapshotPath, historicalIndexHash };
+}
+
+function resolveHandoffChainSync(currentDocument, historicalIndexHash, loadDocument) {
+  const initial = handoffChainResult(currentDocument, historicalIndexHash);
+  if (!initial) return null;
+  const currentSnapshotDefinition = handoffIndexDocumentDefinition(initial.currentSnapshotPath, "clover://handoff/index/current-snapshot");
+  const immutableCurrent = currentSnapshotDefinition ? loadDocument(currentSnapshotDefinition) : null;
+  if (!handoffDocumentContract(immutableCurrent) || immutableCurrent.raw !== currentDocument.raw
+    || immutableCurrent.parsed?.indexHash !== currentDocument.parsed.indexHash) return null;
+  const visitedPaths = new Set();
+  const visitedHashes = new Set();
+  let current = immutableCurrent;
+  let currentPath = initial.currentSnapshotPath;
+  let historicalDocument = null;
+  let historicalSnapshotPath = null;
+  let depth = 0;
+  let terminated = false;
+  while (depth < 1000) {
+    if (!handoffDocumentContract(current) || visitedPaths.has(currentPath) || visitedHashes.has(current.parsed.indexHash)) return null;
+    visitedPaths.add(currentPath);
+    visitedHashes.add(current.parsed.indexHash);
+    depth += 1;
+    if (current.parsed.indexHash === historicalIndexHash) {
+      if (historicalDocument) return null;
+      historicalDocument = current;
+      historicalSnapshotPath = currentPath;
+    }
+    if (current.parsed.previousIndexPath === null) {
+      if (handoffIndexSequence(currentPath) !== 1 || current.parsed.previousIndexHash !== null) return null;
+      terminated = true;
+      break;
+    }
+    const previousPath = current.parsed.previousIndexPath;
+    if (handoffIndexSequence(previousPath) !== handoffIndexSequence(currentPath) - 1) return null;
+    const previousDefinition = handoffIndexDocumentDefinition(previousPath);
+    const previous = previousDefinition ? loadDocument(previousDefinition) : null;
+    if (!previous || !handoffSuccessorContract(current.parsed, previous.parsed, previousPath)) return null;
+    current = previous;
+    currentPath = previousPath;
+  }
+  if (!historicalDocument || !terminated) return null;
+  if (historicalIndexHash === HISTORICAL_HANDOFF_INDEX_HASH
+    && sha256(historicalDocument.raw) !== HISTORICAL_HANDOFF_INDEX_BYTE_HASH) return null;
+  return {
+    valid: true,
+    depth,
+    currentDocument,
+    currentSnapshotPath: initial.currentSnapshotPath,
+    currentIndexHash: currentDocument.parsed.indexHash,
+    historicalDocument,
+    historicalSnapshotPath,
+    historicalIndexHash,
+  };
+}
+
+async function resolveHandoffChainAsync(currentDocument, historicalIndexHash, loadDocument) {
+  const initial = handoffChainResult(currentDocument, historicalIndexHash);
+  if (!initial) return null;
+  const currentSnapshotDefinition = handoffIndexDocumentDefinition(initial.currentSnapshotPath, "clover://handoff/index/current-snapshot");
+  const immutableCurrent = currentSnapshotDefinition ? await loadDocument(currentSnapshotDefinition) : null;
+  if (!handoffDocumentContract(immutableCurrent) || immutableCurrent.raw !== currentDocument.raw
+    || immutableCurrent.parsed?.indexHash !== currentDocument.parsed.indexHash) return null;
+  const visitedPaths = new Set();
+  const visitedHashes = new Set();
+  let current = immutableCurrent;
+  let currentPath = initial.currentSnapshotPath;
+  let historicalDocument = null;
+  let historicalSnapshotPath = null;
+  let depth = 0;
+  let terminated = false;
+  while (depth < 1000) {
+    if (!handoffDocumentContract(current) || visitedPaths.has(currentPath) || visitedHashes.has(current.parsed.indexHash)) return null;
+    visitedPaths.add(currentPath);
+    visitedHashes.add(current.parsed.indexHash);
+    depth += 1;
+    if (current.parsed.indexHash === historicalIndexHash) {
+      if (historicalDocument) return null;
+      historicalDocument = current;
+      historicalSnapshotPath = currentPath;
+    }
+    if (current.parsed.previousIndexPath === null) {
+      if (handoffIndexSequence(currentPath) !== 1 || current.parsed.previousIndexHash !== null) return null;
+      terminated = true;
+      break;
+    }
+    const previousPath = current.parsed.previousIndexPath;
+    if (handoffIndexSequence(previousPath) !== handoffIndexSequence(currentPath) - 1) return null;
+    const previousDefinition = handoffIndexDocumentDefinition(previousPath);
+    const previous = previousDefinition ? await loadDocument(previousDefinition) : null;
+    if (!previous || !handoffSuccessorContract(current.parsed, previous.parsed, previousPath)) return null;
+    current = previous;
+    currentPath = previousPath;
+  }
+  if (!historicalDocument || !terminated) return null;
+  if (historicalIndexHash === HISTORICAL_HANDOFF_INDEX_HASH
+    && sha256(historicalDocument.raw) !== HISTORICAL_HANDOFF_INDEX_BYTE_HASH) return null;
+  return {
+    valid: true,
+    depth,
+    currentDocument,
+    currentSnapshotPath: initial.currentSnapshotPath,
+    currentIndexHash: currentDocument.parsed.indexHash,
+    historicalDocument,
+    historicalSnapshotPath,
+    historicalIndexHash,
+  };
+}
+
+function projectedHandoffDocument(chain, { historical = false } = {}) {
+  if (chain?.valid !== true) return null;
+  const document = historical ? chain.historicalDocument : chain.currentDocument;
+  const resolvedSnapshotPath = historical ? chain.historicalSnapshotPath : chain.currentSnapshotPath;
+  return {
+    ...document,
+    id: HANDOFF_INDEX_ID,
+    title: historical ? "Clover Handoff Ledger Historical Source Binding" : "Clover Handoff Ledger Current Stable Root",
+    relativePath: HANDOFF_INDEX_PATH,
+    metadata: {
+      ...document.metadata,
+      relativePath: HANDOFF_INDEX_PATH,
+      sourceType: historical ? "validated-historical-handoff-binding" : "validated-current-handoff-root",
+      view: historical ? "historical-source-binding" : "current-stable-root",
+      resolvedSnapshotPath,
+      historicalIndexHash: chain.historicalIndexHash,
+      currentSnapshotPath: chain.currentSnapshotPath,
+      currentIndexHash: chain.currentIndexHash,
+      chainDepth: chain.depth,
+      chainVerified: true,
+      stableRootByteIdentical: true,
+    },
+  };
+}
+
+function handoffState(definition, document, source = {}) {
+  const state = optionalDocumentState(definition, document, source);
+  if (document) state.metadata = { ...document.metadata, found: true };
+  return state;
 }
 
 function documentSelfHash(document, field) {
@@ -431,6 +809,7 @@ function publicationCatalogContract(index, documents, sources) {
   const today = sources?.today?.parsed;
   const status = sources?.candidateStatus?.parsed;
   const handoff = sources?.handoff?.parsed;
+  const handoffChain = sources?.handoffChain;
   const protectedScopes = ["owner-authority", "handoff-lifecycle", "production-state", "historical-records"];
   if (!reviewPointerRecordContract(review, index)
     || !publicationReadbackShapeContract(readback, index)
@@ -459,8 +838,13 @@ function publicationCatalogContract(index, documents, sources) {
     || readback.sourceBindings.today.hash !== today?.sessionHash
     || readback?.sourceBindings?.status?.path !== sources.candidateStatus.relativePath
     || readback.sourceBindings.status.hash !== String(status?.statusHash || "").replace(/^sha256:/, "")
-    || readback?.sourceBindings?.handoffIndex?.path !== sources.handoff.relativePath
-    || readback.sourceBindings.handoffIndex.hash !== handoff?.indexHash
+    || handoffChain?.valid !== true
+    || sources?.handoff?.relativePath !== HANDOFF_INDEX_PATH
+    || readback?.sourceBindings?.handoffIndex?.path !== HANDOFF_INDEX_PATH
+    || readback.sourceBindings.handoffIndex.hash !== handoffChain.historicalIndexHash
+    || handoff?.indexHash !== handoffChain.historicalIndexHash
+    || today?.handoffIndexPath !== handoffChain.historicalSnapshotPath
+    || today?.handoffIndexHash !== handoffChain.historicalIndexHash
     || !pendingActionBinding(readback, today, handoff)
     || readback?.precedence?.scope !== "publication-readback-only"
     || !Array.isArray(readback.precedence.supersedes)
@@ -886,13 +1270,19 @@ export function createContextStore({ root, sourceRef = DEFAULT_REF, sourceCommit
       const definition = publicationArtifactDefinition(indexDocument.parsed.current[key], config);
       return [key, definition ? loadDocument(definition) : null];
     }));
-    const sources = Object.fromEntries(["today", "candidateStatus", "handoff"].map((key) => {
+    const sources = Object.fromEntries(["today", "candidateStatus"].map((key) => {
       const definition = CORE_DOCUMENTS.find((item) => item.id === SNAPSHOT_DOCUMENTS[key]);
       return [key, definition ? loadDocument(definition) : null];
     }));
+    const handoffDefinition = CORE_DOCUMENTS.find((item) => item.id === HANDOFF_INDEX_ID);
+    const currentHandoffDocument = loadDocument(handoffDefinition);
+    const historicalIndexHash = documents.publicationReadback?.parsed?.sourceBindings?.handoffIndex?.hash;
+    const handoffChain = resolveHandoffChainSync(currentHandoffDocument, historicalIndexHash, loadDocument);
+    sources.handoff = projectedHandoffDocument(handoffChain, { historical: true });
+    sources.handoffChain = handoffChain;
     const catalogValid = publicationCatalogContract(indexDocument.parsed, documents, sources);
-    if (!catalogValid) return { indexDefinition, indexDocument, immutableIndexDocument, indexValid: false, chainVerified, ancestorArtifactsVerified, catalogValid, documents };
-    return { indexDefinition, indexDocument, immutableIndexDocument, indexValid, chainVerified, ancestorArtifactsVerified, catalogValid, documents };
+    if (!catalogValid) return { indexDefinition, indexDocument, immutableIndexDocument, indexValid: false, chainVerified, ancestorArtifactsVerified, catalogValid, documents, handoffChain };
+    return { indexDefinition, indexDocument, immutableIndexDocument, indexValid, chainVerified, ancestorArtifactsVerified, catalogValid, documents, handoffChain };
   }
 
   function allDocuments() {
@@ -918,10 +1308,16 @@ export function createContextStore({ root, sourceRef = DEFAULT_REF, sourceCommit
     const pointer = fetchItem("clover://master-pointer")?.text;
     const projects = loadProjects();
     const source = { repository: REPOSITORY, ref: sourceRef, commit: sourceCommit, mode: "local" };
-    const optional = Object.fromEntries(Object.entries(SNAPSHOT_DOCUMENTS).map(([key, id]) => {
+    const optional = Object.fromEntries(Object.entries(SNAPSHOT_DOCUMENTS).filter(([key]) => key !== "handoff").map(([key, id]) => {
       const definition = CORE_DOCUMENTS.find((item) => item.id === id);
       return [key, optionalDocumentState(definition, loadDocument(definition), source)];
     }));
+    const handoffDefinition = CORE_DOCUMENTS.find((item) => item.id === HANDOFF_INDEX_ID);
+    const currentHandoffDocument = loadDocument(handoffDefinition);
+    let handoffChain = resolveHandoffChainSync(currentHandoffDocument, optional.today?.data?.handoffIndexHash, loadDocument);
+    if (handoffChain && optional.today?.data?.handoffIndexPath !== handoffChain.historicalSnapshotPath) handoffChain = null;
+    const handoff = handoffState(handoffDefinition, projectedHandoffDocument(handoffChain, { historical: true }), source);
+    const currentHandoff = handoffState(handoffDefinition, projectedHandoffDocument(handoffChain), source);
     const publication = loadPublicationCurrent();
     return {
       status: status ? JSON.parse(status) : null,
@@ -929,6 +1325,8 @@ export function createContextStore({ root, sourceRef = DEFAULT_REF, sourceCommit
       projects,
       source,
       ...optional,
+      handoff,
+      currentHandoff,
       publicationReadback: publicationReadbackState(publication, source),
     };
   }
@@ -1051,14 +1449,20 @@ export function createGitHubContextStore({
       return [key, definition ? await loadDocument(definition) : null];
     }));
     const documents = Object.fromEntries(entries);
-    const sourceEntries = await Promise.all(["today", "candidateStatus", "handoff"].map(async (key) => {
+    const sourceEntries = await Promise.all(["today", "candidateStatus"].map(async (key) => {
       const definition = CORE_DOCUMENTS.find((item) => item.id === SNAPSHOT_DOCUMENTS[key]);
       return [key, definition ? await loadDocument(definition) : null];
     }));
     const sources = Object.fromEntries(sourceEntries);
+    const handoffDefinition = CORE_DOCUMENTS.find((item) => item.id === HANDOFF_INDEX_ID);
+    const currentHandoffDocument = await loadDocument(handoffDefinition);
+    const historicalIndexHash = documents.publicationReadback?.parsed?.sourceBindings?.handoffIndex?.hash;
+    const handoffChain = await resolveHandoffChainAsync(currentHandoffDocument, historicalIndexHash, loadDocument);
+    sources.handoff = projectedHandoffDocument(handoffChain, { historical: true });
+    sources.handoffChain = handoffChain;
     const catalogValid = publicationCatalogContract(indexDocument.parsed, documents, sources);
-    if (!catalogValid) return { indexDefinition, indexDocument, immutableIndexDocument, indexValid: false, chainVerified, ancestorArtifactsVerified, catalogValid, documents };
-    return { indexDefinition, indexDocument, immutableIndexDocument, indexValid, chainVerified, ancestorArtifactsVerified, catalogValid, documents };
+    if (!catalogValid) return { indexDefinition, indexDocument, immutableIndexDocument, indexValid: false, chainVerified, ancestorArtifactsVerified, catalogValid, documents, handoffChain };
+    return { indexDefinition, indexDocument, immutableIndexDocument, indexValid, chainVerified, ancestorArtifactsVerified, catalogValid, documents, handoffChain };
   }
 
   async function search(query, limit = 10) {
@@ -1104,28 +1508,36 @@ export function createGitHubContextStore({
   async function snapshot() {
     const pointerDef = CORE_DOCUMENTS.find((item) => item.id === "clover://master-pointer");
     const statusDef = CORE_DOCUMENTS.find((item) => item.id === "clover://status/current");
-    const snapshotDefinitions = Object.fromEntries(Object.entries(SNAPSHOT_DOCUMENTS).map(([key, id]) => [
+    const snapshotDefinitions = Object.fromEntries(Object.entries(SNAPSHOT_DOCUMENTS).filter(([key]) => key !== "handoff").map(([key, id]) => [
       key,
       CORE_DOCUMENTS.find((item) => item.id === id),
     ]));
-    const [pointerDoc, statusDoc, projects, source, optionalDocuments, publication] = await Promise.all([
+    const handoffDefinition = CORE_DOCUMENTS.find((item) => item.id === HANDOFF_INDEX_ID);
+    const [pointerDoc, statusDoc, projects, source, optionalDocuments, currentHandoffDocument, publication] = await Promise.all([
       loadDocument(pointerDef),
       loadDocument(statusDef),
       loadProjects(),
       sourceIdentity(),
       Promise.all(Object.values(snapshotDefinitions).map(loadDocument)),
+      loadDocument(handoffDefinition),
       loadPublicationCurrent(),
     ]);
     const optional = Object.fromEntries(Object.keys(snapshotDefinitions).map((key, index) => [
       key,
       optionalDocumentState(snapshotDefinitions[key], optionalDocuments[index], source),
     ]));
+    let handoffChain = await resolveHandoffChainAsync(currentHandoffDocument, optional.today?.data?.handoffIndexHash, loadDocument);
+    if (handoffChain && optional.today?.data?.handoffIndexPath !== handoffChain.historicalSnapshotPath) handoffChain = null;
+    const handoff = handoffState(handoffDefinition, projectedHandoffDocument(handoffChain, { historical: true }), source);
+    const currentHandoff = handoffState(handoffDefinition, projectedHandoffDocument(handoffChain), source);
     return {
       status: statusDoc?.parsed || null,
       pointer: pointerDoc?.parsed || null,
       projects,
       source,
       ...optional,
+      handoff,
+      currentHandoff,
       publicationReadback: publicationReadbackState(publication, source),
     };
   }

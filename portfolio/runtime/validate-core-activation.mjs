@@ -125,6 +125,121 @@ function loadHandoff(indexPath, discovered = discoverHandoffDocuments()) {
   };
 }
 
+const HANDOFF_CELL_DIRECTORY = "portfolio/core/handoff/versions/0.1.0/cells";
+
+function capsuleBinding(capsule) {
+  return `${capsule.capsuleId}:${capsule.capsuleHash}`;
+}
+
+function exactDocument(documents, predicate, label) {
+  const matches = documents.filter(predicate);
+  invariant(matches.length === 1, `${label} must resolve exactly once`);
+  return matches[0];
+}
+
+export function assertBranchCapsuleReachability(discovered, index) {
+  invariant(Array.isArray(discovered?.branchCapsules), "Branch capsule discovery is unavailable");
+  invariant(Array.isArray(discovered?.envelopes), "Action envelope discovery is unavailable");
+  invariant(Array.isArray(discovered?.receipts), "Execution receipt discovery is unavailable");
+  invariant(Array.isArray(index?.entries), "Current Handoff index is unavailable");
+
+  const inputCapsuleBindings = new Set();
+  const indexedReceipts = [];
+  for (const entry of index.entries) {
+    const envelope = exactDocument(discovered.envelopes,
+      ({ data }) => data.envelopeId === entry.envelopeId && data.envelopeHash === entry.envelopeHash,
+      `Indexed envelope ${entry.envelopeId}`).data;
+    invariant(envelope.branchCapsuleId === entry.branchCapsuleId &&
+      envelope.branchCapsuleHash === entry.branchCapsuleHash,
+    `Indexed envelope ${entry.envelopeId} changed its input capsule binding`);
+    const inputCapsule = exactDocument(discovered.branchCapsules,
+      ({ data }) => data.capsuleId === entry.branchCapsuleId &&
+        data.capsuleHash === entry.branchCapsuleHash,
+      `Input capsule ${entry.branchCapsuleId}`).data;
+    inputCapsuleBindings.add(capsuleBinding(inputCapsule));
+
+    if (entry.receiptId !== null) {
+      const receipt = exactDocument(discovered.receipts,
+        ({ data }) => data.receiptId === entry.receiptId && data.receiptHash === entry.receiptHash,
+        `Indexed receipt ${entry.receiptId}`).data;
+      invariant(receipt.branchCapsuleId === inputCapsule.capsuleId &&
+        receipt.branchCapsuleHash === inputCapsule.capsuleHash &&
+        receipt.reconciliation.inputCapsuleId === inputCapsule.capsuleId &&
+        receipt.reconciliation.inputCapsuleHash === inputCapsule.capsuleHash,
+      `Indexed receipt ${entry.receiptId} changed its input capsule binding`);
+      indexedReceipts.push({ receipt, inputCapsule });
+    }
+  }
+
+  const resultReferences = new Map();
+  for (const { receipt, inputCapsule } of indexedReceipts) {
+    const reconciliation = receipt.reconciliation;
+    if (reconciliation.status !== "discovered") {
+      invariant(reconciliation.resultCapsuleId === null && reconciliation.resultCapsulePath === null &&
+        reconciliation.resultCapsuleHash === null,
+      `Receipt ${receipt.receiptId} carries an unreachable reconciliation result`);
+      continue;
+    }
+    invariant(receipt.outcome === "succeeded", `Receipt ${receipt.receiptId} did not succeed before recording a result capsule`);
+    invariant(reconciliation.resultCapsuleId !== inputCapsule.capsuleId &&
+      reconciliation.resultCapsuleHash !== inputCapsule.capsuleHash,
+    `Receipt ${receipt.receiptId} reuses its input capsule as a reconciliation result`);
+    const result = exactDocument(discovered.branchCapsules,
+      ({ path: capsulePath, data }) => capsulePath === reconciliation.resultCapsulePath &&
+        data.capsuleId === reconciliation.resultCapsuleId && data.capsuleHash === reconciliation.resultCapsuleHash,
+      `Result capsule for receipt ${receipt.receiptId}`);
+    invariant(!resultReferences.has(result.path),
+      `Result capsule ${result.path} is referenced by more than one successful receipt`);
+    invariant(result.data.project.projectId === receipt.resultingState.projectId,
+      `Result capsule ${result.path} changed the receipt project identity`);
+    resultReferences.set(result.path, { receipt, capsule: result.data });
+  }
+
+  const rootsByProject = new Map();
+  for (const capsule of discovered.branchCapsules) {
+    const projectId = capsule.data.project.projectId;
+    const canonicalRootPath = `${HANDOFF_CELL_DIRECTORY}/${projectId}.branch-capsule.json`;
+    const resultReference = resultReferences.get(capsule.path);
+    if (capsule.path === canonicalRootPath) {
+      invariant(!resultReference, `Catalog root capsule ${capsule.path} cannot also be a reconciliation result`);
+      const roots = rootsByProject.get(projectId) || [];
+      roots.push(capsule);
+      rootsByProject.set(projectId, roots);
+      continue;
+    }
+    invariant(resultReference,
+      `Non-root branch capsule ${capsule.path} is not reachable from one indexed successful receipt`);
+  }
+
+  const projectIds = new Set(discovered.branchCapsules.map(({ data }) => data.project.projectId));
+  for (const projectId of projectIds) {
+    const roots = rootsByProject.get(projectId) || [];
+    invariant(roots.length === 1, `Project ${projectId} must have exactly one canonical catalog root capsule`);
+  }
+  for (const [capsulePath, { receipt, capsule }] of resultReferences) {
+    const [root] = rootsByProject.get(capsule.project.projectId) || [];
+    invariant(root, `Result capsule ${capsulePath} has no canonical project root`);
+    invariant(Date.parse(capsule.recordedAt) > Date.parse(root.data.recordedAt),
+      `Result capsule ${capsulePath} does not succeed its canonical project root`);
+    invariant(Date.parse(capsule.recordedAt) >= Date.parse(receipt.startedAt) &&
+      Date.parse(capsule.recordedAt) <= Date.parse(receipt.completedAt),
+    `Result capsule ${capsulePath} was not recorded during its successful receipt`);
+  }
+
+  const catalogRoots = [...rootsByProject.values()].flat();
+
+  return {
+    valid: true,
+    branchCapsuleCount: discovered.branchCapsules.length,
+    catalogRootCapsuleCount: catalogRoots.length,
+    inputCapsuleCount: inputCapsuleBindings.size,
+    resultCapsuleCount: resultReferences.size,
+    catalogRootCapsuleHashes: catalogRoots.map(({ data }) => data.capsuleHash).sort(),
+    inputCapsuleHashes: [...inputCapsuleBindings].map((binding) => binding.slice(binding.lastIndexOf(":") + 1)).sort(),
+    resultCapsuleHashes: [...resultReferences.values()].map(({ capsule }) => capsule.capsuleHash).sort(),
+  };
+}
+
 function verifyCurrentIndexChain(discovered) {
   const rootBytes = readBytes(PATHS.handoffRootIndex);
   const rootIndex = JSON.parse(rootBytes.toString("utf8"));
@@ -135,11 +250,15 @@ function verifyCurrentIndexChain(discovered) {
   let currentPath = exactCandidates[0].path;
   let current = rootIndex;
   let rootResult = null;
+  let capsuleReachability = null;
   while (true) {
     invariant(!seen.has(currentPath), "Handoff index chain contains a cycle");
     seen.add(currentPath);
     const result = validateHandoffLedger(loadHandoff(currentPath, discovered), { repositoryRoot: REPOSITORY_ROOT });
-    if (!rootResult) rootResult = result;
+    if (!rootResult) {
+      rootResult = result;
+      capsuleReachability = assertBranchCapsuleReachability(discovered, current);
+    }
     chain.push({ path: currentPath, index: current });
     if (current.previousIndexPath === null) {
       invariant(current.previousIndexHash === null, "Initial Handoff index carries an orphan previous hash");
@@ -153,7 +272,7 @@ function verifyCurrentIndexChain(discovered) {
     currentPath = current.previousIndexPath;
     current = previous;
   }
-  return { rootResult, rootIndex, chain };
+  return { rootResult, rootIndex, chain, capsuleReachability };
 }
 
 export function assertTodayHandoffBinding(today, sessionIndex, chain) {
@@ -183,6 +302,7 @@ function verifyHandoffAndToday(today) {
   assertTodayHandoffBinding(today, sessionIndex, current.chain);
   return {
     ...current.rootResult,
+    capsuleReachability: current.capsuleReachability,
     currentIndexHash: current.rootIndex.indexHash,
     todayIndexHash: sessionIndex.indexHash,
     indexChainLength: current.chain.length,
@@ -267,7 +387,10 @@ export function validateCoreActivation() {
     todayHandoffIndexHash: handoffResult.todayIndexHash,
     handoffIndexChainLength: handoffResult.indexChainLength,
     protectedArtifactCount: Object.keys(PROTECTED_BYTES).length,
-    branchCapsuleCount: handoffResult.branchCapsuleHashes.length,
+    branchCapsuleCount: handoffResult.capsuleReachability.branchCapsuleCount,
+    catalogRootCapsuleCount: handoffResult.capsuleReachability.catalogRootCapsuleCount,
+    inputBranchCapsuleCount: handoffResult.capsuleReachability.inputCapsuleCount,
+    resultBranchCapsuleCount: handoffResult.capsuleReachability.resultCapsuleCount,
     authorityGranted: [],
     mergePerformed: false,
     productionDeploymentPerformed: false,
