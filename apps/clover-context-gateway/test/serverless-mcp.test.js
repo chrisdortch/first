@@ -394,6 +394,41 @@ test("Today sibling exposes the complete minimum-useful contract and fails close
   snapshot.handoff.data.indexHash = selfHash(snapshot.handoff.data, "indexHash");
   snapshot.today.data.handoffIndexHash = snapshot.handoff.data.indexHash;
   snapshot.today.data.sessionHash = selfHash(snapshot.today.data, "sessionHash");
+  Object.assign(snapshot.handoff.metadata, {
+    sourceType: "validated-historical-handoff-binding",
+    view: "historical-source-binding",
+    resolvedSnapshotPath: snapshot.today.data.handoffIndexPath,
+    historicalIndexHash: snapshot.handoff.data.indexHash,
+    currentSnapshotPath: "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json",
+    currentIndexHash: "9".repeat(64),
+    chainDepth: 3,
+    chainVerified: true,
+    stableRootByteIdentical: true,
+  });
+  snapshot.currentHandoff = structuredClone(snapshot.handoff);
+  snapshot.currentHandoff.data.indexId = "handoff-index:synthetic:0003";
+  snapshot.currentHandoff.data.entries[0].status = "completed";
+  snapshot.currentHandoff.data.entries[0].lifecycle = {
+    state: "consumed",
+    singleUse: true,
+    consumedAt: "2026-08-21T20:04:59.000Z",
+    consumedByReceiptId: "handoff-receipt:synthetic:002",
+    revokedAt: null,
+    revocationEvidenceHash: null,
+  };
+  snapshot.currentHandoff.data.entries[0].ownerApproval = { status: "approved" };
+  snapshot.currentHandoff.data.entries[0].receiptId = "handoff-receipt:synthetic:002";
+  snapshot.currentHandoff.data.entries[0].receiptPath = "portfolio/core/handoff/versions/0.1.0/demonstration/action-receipt.json";
+  snapshot.currentHandoff.data.entries[0].receiptHash = "8".repeat(64);
+  snapshot.currentHandoff.data.entries[0].outcome = "succeeded";
+  snapshot.currentHandoff.data.indexHash = selfHash(snapshot.currentHandoff.data, "indexHash");
+  Object.assign(snapshot.currentHandoff.metadata, {
+    sourceType: "validated-current-handoff-root",
+    view: "current-stable-root",
+    resolvedSnapshotPath: snapshot.handoff.metadata.currentSnapshotPath,
+    currentIndexHash: snapshot.currentHandoff.data.indexHash,
+  });
+  snapshot.handoff.metadata.currentIndexHash = snapshot.currentHandoff.data.indexHash;
 
   const today = composeTodaySibling(snapshot);
   assert.equal(today.available, true);
@@ -408,13 +443,14 @@ test("Today sibling exposes the complete minimum-useful contract and fails close
   assert.equal(today.evidencePrecedence.applied, false);
   assert.equal(today.evidencePrecedence.status, "dated-session-only");
 
-  const successor = structuredClone(snapshot);
-  successor.handoff.data.indexId = "handoff-index:synthetic:successor";
-  successor.handoff.data.indexHash = selfHash(successor.handoff.data, "indexHash");
-  successor.today.data.handoffIndexPath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0002.json";
-  successor.today.data.handoffIndexHash = successor.handoff.data.indexHash;
-  successor.today.data.sessionHash = selfHash(successor.today.data, "sessionHash");
-  assert.equal(composeTodaySibling(successor).available, true, "a source-bound successor index must not require a Gateway code change");
+  const successor = composeTodaySibling(structuredClone(snapshot));
+  assert.equal(successor.available, true, "a current lifecycle successor must not require a server.js change");
+  assert.equal(successor.data.handoffIndexHash, snapshot.handoff.data.indexHash);
+  assert.equal(successor.components.handoff.metadata.view, "historical-source-binding");
+  assert.equal(successor.components.handoff.metadata.resolvedSnapshotPath, snapshot.today.data.handoffIndexPath);
+  assert.equal(successor.components.handoff.metadata.currentIndexHash, snapshot.currentHandoff.data.indexHash);
+  assert.equal(successor.components.handoff.metadata.chainVerified, true);
+  assert.equal(successor.data.actionId, "CLOVER-2026-08-20-002");
 
   const publicationSnapshot = addPublicationReadback(structuredClone(snapshot));
   const withPublication = composeTodaySibling(publicationSnapshot);
@@ -424,6 +460,8 @@ test("Today sibling exposes the complete minimum-useful contract and fails close
   assert.equal(withPublication.evidencePrecedence.status, "verified-publication-readback-preferred");
   assert.equal(withPublication.publicationReadback.data.reviewedImplementation.headCommit, "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334");
   assert.equal(withPublication.publicationReadback.metadata.commit, commit, "container source must remain distinct from the reviewed implementation head");
+  assert.equal(withPublication.components.handoff.metadata.currentIndexHash, snapshot.currentHandoff.data.indexHash);
+  assert.equal(withPublication.components.handoff.metadata.view, "historical-source-binding");
   assert.deepEqual(withPublication.publicationReadback.metadata.containerSource, {
     repository: "chrisdortch/first",
     ref: "candidate",

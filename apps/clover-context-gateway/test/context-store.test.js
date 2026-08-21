@@ -30,6 +30,116 @@ function writeFixture(root, relativePath, content) {
   fs.writeFileSync(file, typeof content === "string" ? content : `${JSON.stringify(content, null, 2)}\n`);
 }
 
+const HANDOFF_INDEX_DIRECTORY = "portfolio/core/handoff/versions/0.1.0/indexes";
+
+function sealHandoffIndex(index) {
+  const sealed = structuredClone(index);
+  sealed.indexHash = selfHash(sealed, "indexHash");
+  return sealed;
+}
+
+function syntheticHandoffGenesis() {
+  return sealHandoffIndex({
+    documentType: "clover-handoff-action-receipt-index",
+    schemaVersion: "0.1.0",
+    indexId: "handoff-index:synthetic:0001",
+    createdAt: "2026-08-20T21:19:45.000Z",
+    previousIndexPath: null,
+    previousIndexHash: null,
+    entries: [{
+      sequence: 1,
+      recordedAt: "2026-08-20T21:19:45.000Z",
+      actionId: "CLOVER-2026-08-20-002",
+      branchCapsuleId: "cell-capsule:synthetic:20260820",
+      branchCapsuleHash: "b".repeat(64),
+      envelopeId: "handoff-action:synthetic:002",
+      envelopePath: "portfolio/core/handoff/versions/0.1.0/demonstration/action-envelope.json",
+      envelopeHash: "a".repeat(64),
+      status: "pending",
+      lifecycle: {
+        state: "proposed",
+        singleUse: true,
+        consumedAt: null,
+        consumedByReceiptId: null,
+        revokedAt: null,
+        revocationEvidenceHash: null,
+      },
+      ownerApproval: {
+        status: "pending",
+        approverId: "owner:chris-dortch",
+        approvedAt: null,
+        approvedEnvelopeHash: null,
+        approvalEvidenceHash: null,
+        attestationId: null,
+        attestationPath: null,
+        attestationHash: null,
+      },
+      receiptId: null,
+      receiptPath: null,
+      receiptHash: null,
+      outcome: "pending",
+      review: {
+        status: "pending",
+        decisionId: null,
+        decisionPath: null,
+        decisionHash: null,
+      },
+    }],
+    indexHash: "",
+  });
+}
+
+function writeConsumedHandoffSuccessors(root) {
+  const genesisPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0001.json`;
+  const approvedPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0002.json`;
+  const consumedPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0003.json`;
+  const genesis = JSON.parse(fs.readFileSync(path.join(root, genesisPath), "utf8"));
+  const approved = structuredClone(genesis);
+  approved.indexId = "handoff-index:synthetic:0002";
+  approved.createdAt = "2026-08-21T20:00:00.000Z";
+  approved.previousIndexPath = genesisPath;
+  approved.previousIndexHash = genesis.indexHash;
+  approved.entries[0].recordedAt = approved.createdAt;
+  approved.entries[0].lifecycle.state = "available";
+  approved.entries[0].ownerApproval = {
+    status: "approved",
+    approverId: "owner:chris-dortch",
+    approvedAt: "2026-08-21T19:59:59.000Z",
+    approvedEnvelopeHash: approved.entries[0].envelopeHash,
+    approvalEvidenceHash: "c".repeat(64),
+    attestationId: "handoff-approval:synthetic:002",
+    attestationPath: "portfolio/core/handoff/versions/0.1.0/approvals/action-002.json",
+    attestationHash: "d".repeat(64),
+  };
+  const sealedApproved = sealHandoffIndex(approved);
+
+  const consumed = structuredClone(sealedApproved);
+  consumed.indexId = "handoff-index:synthetic:0003";
+  consumed.createdAt = "2026-08-21T20:05:00.000Z";
+  consumed.previousIndexPath = approvedPath;
+  consumed.previousIndexHash = sealedApproved.indexHash;
+  consumed.entries[0].recordedAt = consumed.createdAt;
+  consumed.entries[0].status = "completed";
+  consumed.entries[0].lifecycle = {
+    state: "consumed",
+    singleUse: true,
+    consumedAt: "2026-08-21T20:04:59.000Z",
+    consumedByReceiptId: "handoff-receipt:synthetic:002",
+    revokedAt: null,
+    revocationEvidenceHash: null,
+  };
+  consumed.entries[0].receiptId = "handoff-receipt:synthetic:002";
+  consumed.entries[0].receiptPath = "portfolio/core/handoff/versions/0.1.0/demonstration/action-receipt.json";
+  consumed.entries[0].receiptHash = "e".repeat(64);
+  consumed.entries[0].outcome = "succeeded";
+  const sealedConsumed = sealHandoffIndex(consumed);
+
+  writeFixture(root, approvedPath, sealedApproved);
+  writeFixture(root, consumedPath, sealedConsumed);
+  writeFixture(root, "portfolio/core/handoff/index.json", sealedConsumed);
+  return { genesis, approved: sealedApproved, consumed: sealedConsumed, genesisPath, approvedPath, consumedPath };
+}
+
 function writePublicationFixture(root, {
   generation = 1,
   previousIndexPath = null,
@@ -109,7 +219,7 @@ function writePublicationFixture(root, {
     || pointer("structured-review-pointer", review.reviewPointerId, reviewPath, review.reviewPointerHash, "sha256-canonical-without-self-hash-field", "application/json");
   const today = JSON.parse(fs.readFileSync(path.join(root, "portfolio/core/today/2026-08-20/session.json"), "utf8"));
   const status = JSON.parse(fs.readFileSync(path.join(root, "portfolio/status/candidates/2026-08-20/status.json"), "utf8"));
-  const handoff = JSON.parse(fs.readFileSync(path.join(root, "portfolio/core/handoff/index.json"), "utf8"));
+  const handoff = JSON.parse(fs.readFileSync(path.join(root, today.handoffIndexPath), "utf8"));
   const workflow = (name) => ({
     name,
     runId: 1,
@@ -329,31 +439,8 @@ function fixtureRoot({ withCandidates = false } = {}) {
       statusHash: "",
     };
     candidateStatus.statusHash = `sha256:${selfHash(candidateStatus, "statusHash")}`;
-    const handoff = {
-      documentType: "clover-handoff-action-receipt-index",
-      schemaVersion: "0.1.0",
-      indexHash: "",
-      entries: [{
-        actionId: "CLOVER-2026-08-20-002",
-        envelopePath: "portfolio/core/handoff/versions/0.1.0/demonstration/action-envelope.json",
-        envelopeHash: "a".repeat(64),
-        status: "pending",
-        lifecycle: {
-          state: "proposed",
-          singleUse: true,
-          consumedAt: null,
-          consumedByReceiptId: null,
-          revokedAt: null,
-          revocationEvidenceHash: null,
-        },
-        ownerApproval: { status: "pending" },
-        receiptId: null,
-        receiptPath: null,
-        receiptHash: null,
-        outcome: "pending",
-      }],
-    };
-    handoff.indexHash = selfHash(handoff, "indexHash");
+    const handoff = syntheticHandoffGenesis();
+    const handoffSnapshotPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0001.json`;
     const today = {
       documentType: "clover-today-owner-session",
       schemaVersion: "0.1.0",
@@ -361,7 +448,7 @@ function fixtureRoot({ withCandidates = false } = {}) {
       actionId: "CLOVER-2026-08-20-002",
       envelopePath: handoff.entries[0].envelopePath,
       envelopeHash: handoff.entries[0].envelopeHash,
-      handoffIndexPath: "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
+      handoffIndexPath: handoffSnapshotPath,
       handoffIndexHash: handoff.indexHash,
       topPriorities: ["Synthetic priority"],
       recommendedNextAction: "Review the synthetic candidate.",
@@ -377,6 +464,7 @@ function fixtureRoot({ withCandidates = false } = {}) {
       },
       "portfolio/core/today/2026-08-20/session.json": today,
       "portfolio/core/handoff/index.json": handoff,
+      [handoffSnapshotPath]: handoff,
       "CLOVER_OWNER_START.md": "# Clover Owner Start\n",
       "CHATGPT_PROJECT_INSTRUCTIONS.md": "# ChatGPT Project Instructions\n",
       "CODEX_CLOVER_OPERATOR.md": "# Codex Clover Operator\n",
@@ -408,7 +496,7 @@ test("local snapshot preserves canonical v1 status and projects while optional c
     assert.equal(snapshot.projects.length, 2);
     assert.equal(snapshot.source.mode, "local");
     assert.equal(Object.hasOwn(snapshot.source, "root"), false);
-    for (const key of ["candidateStatus", "registryCandidate", "today", "handoff"]) {
+    for (const key of ["candidateStatus", "registryCandidate", "today", "handoff", "currentHandoff"]) {
       assert.equal(snapshot[key].available, false, `${key} must be unavailable`);
       assert.equal(snapshot[key].data, null, `${key} must not fall back to canonical data`);
       assert.equal(snapshot[key].metadata.found, false);
@@ -437,10 +525,177 @@ test("local candidate artifacts are optional, source-bound siblings", () => {
     assert.equal(snapshot.handoff.metadata.commit, commit);
     assert.equal(snapshot.handoff.metadata.relativePath, "portfolio/core/handoff/index.json");
     assert.equal(snapshot.handoff.metadata.repository, "chrisdortch/first");
+    assert.equal(snapshot.handoff.metadata.view, "historical-source-binding");
+    assert.equal(snapshot.handoff.metadata.resolvedSnapshotPath, `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0001.json`);
+    assert.equal(snapshot.handoff.metadata.chainVerified, true);
+    assert.equal(snapshot.currentHandoff.available, true);
+    assert.equal(snapshot.currentHandoff.data.indexHash, snapshot.handoff.data.indexHash);
+    assert.equal(snapshot.currentHandoff.metadata.view, "current-stable-root");
 
     const ownerGuide = store.fetch("clover://owner/start");
     assert.equal(ownerGuide.metadata.relativePath, "CLOVER_OWNER_START.md");
     assert.equal(ownerGuide.metadata.commit, commit);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("local Handoff successors preserve historical Today bindings while canonical fetch remains current", () => {
+  const root = fixtureRoot({ withCandidates: true });
+  try {
+    writePublicationFixture(root);
+    const chain = writeConsumedHandoffSuccessors(root);
+    const commit = "4".repeat(40);
+    const store = createContextStore({ root, sourceRef: "fixture", sourceCommit: commit });
+    const snapshot = store.snapshot();
+
+    assert.equal(snapshot.today.available, true);
+    assert.equal(snapshot.today.data.handoffIndexHash, chain.genesis.indexHash);
+    assert.equal(snapshot.handoff.available, true);
+    assert.equal(snapshot.handoff.data.indexHash, chain.genesis.indexHash);
+    assert.equal(snapshot.handoff.data.entries[0].lifecycle.state, "proposed");
+    assert.equal(snapshot.handoff.data.entries[0].ownerApproval.status, "pending");
+    assert.equal(snapshot.handoff.metadata.relativePath, "portfolio/core/handoff/index.json");
+    assert.equal(snapshot.handoff.metadata.resolvedSnapshotPath, chain.genesisPath);
+    assert.equal(snapshot.handoff.metadata.currentSnapshotPath, chain.consumedPath);
+    assert.equal(snapshot.handoff.metadata.currentIndexHash, chain.consumed.indexHash);
+    assert.equal(snapshot.handoff.metadata.chainDepth, 3);
+    assert.equal(snapshot.handoff.metadata.chainVerified, true);
+
+    assert.equal(snapshot.currentHandoff.available, true);
+    assert.equal(snapshot.currentHandoff.data.indexHash, chain.consumed.indexHash);
+    assert.equal(snapshot.currentHandoff.data.entries[0].lifecycle.state, "consumed");
+    assert.equal(snapshot.currentHandoff.data.entries[0].ownerApproval.status, "approved");
+    assert.equal(snapshot.currentHandoff.metadata.view, "current-stable-root");
+    assert.equal(snapshot.publicationReadback.available, true, "a current lifecycle successor must not invalidate historical publication evidence");
+
+    const fetched = store.fetch("clover://handoff/index");
+    assert.equal(JSON.parse(fetched.text).indexHash, chain.consumed.indexHash);
+    assert.equal(fetched.metadata.relativePath, "portfolio/core/handoff/index.json");
+    assert.equal(fetched.metadata.sourceType, "canonical-repository");
+    assert.equal(store.search("handoff action envelope").filter((item) => item.id === "clover://handoff/index").length, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Handoff chain contradictions fail closed without rewriting the canonical fetch identity", () => {
+  const contradictions = [
+    {
+      label: "missing historical ancestor",
+      mutate(root, chain) {
+        fs.rmSync(path.join(root, chain.genesisPath));
+      },
+    },
+    {
+      label: "broken predecessor hash",
+      mutate(root, chain) {
+        const current = structuredClone(chain.consumed);
+        current.previousIndexHash = "0".repeat(64);
+        const resealed = sealHandoffIndex(current);
+        writeFixture(root, chain.consumedPath, resealed);
+        writeFixture(root, "portfolio/core/handoff/index.json", resealed);
+      },
+    },
+    {
+      label: "stable root differs from immutable current snapshot",
+      mutate(root) {
+        fs.appendFileSync(path.join(root, "portfolio/core/handoff/index.json"), "\n");
+      },
+    },
+    {
+      label: "Today points at a substituted historical path",
+      mutate(root) {
+        const todayPath = "portfolio/core/today/2026-08-20/session.json";
+        const today = JSON.parse(fs.readFileSync(path.join(root, todayPath), "utf8"));
+        today.handoffIndexPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0002.json`;
+        today.sessionHash = selfHash(today, "sessionHash");
+        writeFixture(root, todayPath, today);
+      },
+    },
+    {
+      label: "resealed proposed-to-consumed lifecycle jump",
+      mutate(root, chain) {
+        const direct = structuredClone(chain.genesis);
+        direct.indexId = "handoff-index:synthetic:illegal-direct-consumption";
+        direct.createdAt = "2026-08-21T20:00:00.000Z";
+        direct.previousIndexPath = chain.genesisPath;
+        direct.previousIndexHash = chain.genesis.indexHash;
+        direct.entries[0].recordedAt = direct.createdAt;
+        direct.entries[0].status = "completed";
+        direct.entries[0].lifecycle = {
+          state: "consumed",
+          singleUse: true,
+          consumedAt: "2026-08-21T19:59:59.000Z",
+          consumedByReceiptId: "handoff-receipt:synthetic:illegal",
+          revokedAt: null,
+          revocationEvidenceHash: null,
+        };
+        direct.entries[0].receiptId = "handoff-receipt:synthetic:illegal";
+        direct.entries[0].receiptPath = "portfolio/core/handoff/versions/0.1.0/demonstration/illegal-receipt.json";
+        direct.entries[0].receiptHash = "7".repeat(64);
+        direct.entries[0].outcome = "succeeded";
+        const resealed = sealHandoffIndex(direct);
+        writeFixture(root, chain.approvedPath, resealed);
+        writeFixture(root, "portfolio/core/handoff/index.json", resealed);
+      },
+    },
+    {
+      label: "sensitive-looking value in a resealed index",
+      mutate(root, chain) {
+        const current = structuredClone(chain.consumed);
+        current.indexId = `ghp_${"x".repeat(24)}`;
+        const resealed = sealHandoffIndex(current);
+        writeFixture(root, chain.consumedPath, resealed);
+        writeFixture(root, "portfolio/core/handoff/index.json", resealed);
+      },
+    },
+  ];
+
+  for (const contradiction of contradictions) {
+    const root = fixtureRoot({ withCandidates: true });
+    try {
+      writePublicationFixture(root);
+      const chain = writeConsumedHandoffSuccessors(root);
+      contradiction.mutate(root, chain);
+      const store = createContextStore({ root, sourceRef: "fixture", sourceCommit: "5".repeat(40) });
+      const snapshot = store.snapshot();
+      assert.equal(snapshot.handoff.available, false, contradiction.label);
+      assert.equal(snapshot.currentHandoff.available, false, contradiction.label);
+      assert.equal(snapshot.publicationReadback.available, false, contradiction.label);
+      assert.equal(store.fetch("clover://handoff/index").id, "clover://handoff/index", contradiction.label);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("known Handoff genesis requires exact historical bytes in addition to its canonical hash", () => {
+  const root = fixtureRoot({ withCandidates: true });
+  try {
+    const genesisPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0001.json`;
+    const productionGenesis = JSON.parse(fs.readFileSync(
+      new URL("../../../portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json", import.meta.url),
+      "utf8",
+    ));
+    const rewrittenBytes = JSON.stringify(productionGenesis);
+    writeFixture(root, genesisPath, rewrittenBytes);
+    writeFixture(root, "portfolio/core/handoff/index.json", rewrittenBytes);
+    const todayPath = "portfolio/core/today/2026-08-20/session.json";
+    const today = JSON.parse(fs.readFileSync(path.join(root, todayPath), "utf8"));
+    const action002 = productionGenesis.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+    today.envelopePath = action002.envelopePath;
+    today.envelopeHash = action002.envelopeHash;
+    today.handoffIndexPath = genesisPath;
+    today.handoffIndexHash = productionGenesis.indexHash;
+    today.sessionHash = selfHash(today, "sessionHash");
+    writeFixture(root, todayPath, today);
+
+    const store = createContextStore({ root, sourceRef: "fixture", sourceCommit: "5".repeat(40) });
+    const snapshot = store.snapshot();
+    assert.equal(snapshot.handoff.available, false);
+    assert.equal(snapshot.currentHandoff.available, false);
+    assert.equal(JSON.parse(store.fetch("clover://handoff/index").text).indexHash, productionGenesis.indexHash);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -670,7 +925,7 @@ test("auto local mode binds Vercel's exact Git commit as component metadata", ()
     const snapshot = store.snapshot();
     assert.equal(snapshot.source.ref, commit);
     assert.equal(snapshot.source.commit, commit);
-    for (const key of ["candidateStatus", "registryCandidate", "today", "handoff"]) {
+    for (const key of ["candidateStatus", "registryCandidate", "today", "handoff", "currentHandoff"]) {
       assert.equal(snapshot[key].metadata.commit, commit);
     }
   } finally {
@@ -704,14 +959,22 @@ test("corrupt optional candidate JSON fails closed without replacing canonical v
 
 test("remote store lazily reads canonical GitHub context and binds the commit", async () => {
   const commit = "c".repeat(40);
+  const handoff = syntheticHandoffGenesis();
+  const handoffSnapshotPath = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0001.json`;
   const documents = new Map([
     ["CLOVER_MASTER_PLAN_POINTER.json", JSON.stringify({ currentVersion: "1.0.0", repository: "chrisdortch/first" })],
     ["portfolio/status/current.json", JSON.stringify({ asOf: "2026-08-17", overallMissionCompletionEstimate: 41 })],
     ["portfolio/registry/projects.json", JSON.stringify({ projects: [{ projectId: "rollindd", title: "RollinD", repository: "chrisdortch/rollindd-platform" }] })],
     ["portfolio/NEXT.md", "# Current Next Work\n"],
     ["portfolio/status/candidates/2026-08-20/status.json", JSON.stringify({ documentType: "clover-master-status-candidate", asOf: "2026-08-20" })],
-    ["portfolio/core/today/2026-08-20/session.json", JSON.stringify({ documentType: "clover-today-owner-session", topPriorities: ["Synthetic priority"] })],
-    ["portfolio/core/handoff/index.json", JSON.stringify({ documentType: "clover-handoff-ledger-index", entries: [] })],
+    ["portfolio/core/today/2026-08-20/session.json", JSON.stringify({
+      documentType: "clover-today-owner-session",
+      topPriorities: ["Synthetic priority"],
+      handoffIndexPath: handoffSnapshotPath,
+      handoffIndexHash: handoff.indexHash,
+    })],
+    ["portfolio/core/handoff/index.json", JSON.stringify(handoff)],
+    [handoffSnapshotPath, JSON.stringify(handoff)],
   ]);
   const calls = [];
   const fetchImpl = async (url) => {
@@ -744,6 +1007,8 @@ test("remote store lazily reads canonical GitHub context and binds the commit", 
   assert.equal(snapshot.today.available, true);
   assert.equal(snapshot.today.data.topPriorities[0], "Synthetic priority");
   assert.equal(snapshot.handoff.available, true);
+  assert.equal(snapshot.currentHandoff.available, true);
+  assert.equal(snapshot.handoff.metadata.resolvedSnapshotPath, handoffSnapshotPath);
   assert.equal(snapshot.registryCandidate.available, false);
   assert.equal(snapshot.registryCandidate.data, null);
 });
@@ -758,6 +1023,7 @@ test("remote publication mirrors are fetched only from the resolved commit and e
       previousIndexHash: first.index.publicationIndexHash,
       readbackName: "core-trunk-activation-publication-readback-0002",
     });
+    const handoffChain = writeConsumedHandoffSuccessors(root);
     const commit = "6".repeat(40);
     const documents = new Map([
       ["CLOVER_MASTER_PLAN_POINTER.json", fs.readFileSync(path.join(root, "CLOVER_MASTER_PLAN_POINTER.json"), "utf8")],
@@ -767,6 +1033,12 @@ test("remote publication mirrors are fetched only from the resolved commit and e
       ["portfolio/core/today/2026-08-20/session.json", fs.readFileSync(path.join(root, "portfolio/core/today/2026-08-20/session.json"), "utf8")],
       ["portfolio/core/handoff/index.json", fs.readFileSync(path.join(root, "portfolio/core/handoff/index.json"), "utf8")],
     ]);
+    for (const entry of fs.readdirSync(path.join(root, HANDOFF_INDEX_DIRECTORY), { recursive: true })) {
+      const absolute = path.join(root, HANDOFF_INDEX_DIRECTORY, entry);
+      if (fs.statSync(absolute).isFile()) {
+        documents.set(`${HANDOFF_INDEX_DIRECTORY}/${entry}`, fs.readFileSync(absolute, "utf8"));
+      }
+    }
     for (const entry of fs.readdirSync(path.join(root, "portfolio/core/publication"), { recursive: true })) {
       const absolute = path.join(root, "portfolio/core/publication", entry);
       if (fs.statSync(absolute).isFile()) {
@@ -789,12 +1061,38 @@ test("remote publication mirrors are fetched only from the resolved commit and e
     const store = createGitHubContextStore({ sourceRef: commit, fetchImpl, cacheTtlMs: 60000 });
     const snapshot = await store.snapshot();
     assert.equal(snapshot.publicationReadback.available, true);
+    assert.equal(snapshot.handoff.data.indexHash, handoffChain.genesis.indexHash);
+    assert.equal(snapshot.currentHandoff.data.indexHash, handoffChain.consumed.indexHash);
+    assert.equal(snapshot.handoff.metadata.chainDepth, 3);
     assert.equal(snapshot.publicationReadback.metadata.commit, commit);
     assert.equal((await store.fetch("clover://publication/report")).metadata.commit, commit);
     assert.equal((await store.fetch("clover://publication/receipt")).metadata.commit, commit);
     assert.equal((await store.fetch("clover://publication/review-prompt")).metadata.commit, commit);
     assert.equal((await store.fetch("clover://publication/review-decision")).metadata.commit, commit);
+    assert.equal(JSON.parse((await store.fetch("clover://handoff/index")).text).indexHash, handoffChain.consumed.indexHash);
     assert.equal(calls.some((url) => url.includes("raw.githubusercontent.com/chrisdortch/first/main/")), false);
+
+    const missingAncestorDocuments = new Map(documents);
+    missingAncestorDocuments.delete(handoffChain.approvedPath);
+    const missingAncestorStore = createGitHubContextStore({
+      sourceRef: commit,
+      cacheTtlMs: 60000,
+      fetchImpl: async (url) => {
+        if (String(url).includes(`/commits/${commit}`)) {
+          return new Response(JSON.stringify({ sha: commit }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        const prefix = `https://raw.githubusercontent.com/chrisdortch/first/${commit}/`;
+        const relativePath = String(url).slice(prefix.length);
+        return missingAncestorDocuments.has(relativePath)
+          ? new Response(missingAncestorDocuments.get(relativePath), { status: 200, headers: { "content-type": "text/plain" } })
+          : new Response("not found", { status: 404 });
+      },
+    });
+    const missingAncestor = await missingAncestorStore.snapshot();
+    assert.equal(missingAncestor.handoff.available, false);
+    assert.equal(missingAncestor.currentHandoff.available, false);
+    assert.equal(missingAncestor.publicationReadback.available, false);
+    assert.equal(JSON.parse((await missingAncestorStore.fetch("clover://handoff/index")).text).indexHash, handoffChain.consumed.indexHash);
 
     const superseded = JSON.parse(documents.get(first.paths.readbackPath));
     superseded.verdict = "APPROVE";
