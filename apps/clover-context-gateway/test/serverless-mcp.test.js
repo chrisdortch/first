@@ -661,33 +661,85 @@ test("MCP fetch resolves the stable publication readback and rejects an unbound 
   });
 });
 
-test("POST /api/prepare-command returns Today beside, never inside, Command Packet 1.2", async () => {
+test("POST /api/prepare-command routes the exact Day-1 matrix beside, never inside, Today", async () => {
   await withGateway(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/prepare-command`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        request: "What matters today? Show current versus candidate truth, the three highest priorities, one recommended next action, and the exact Action ID. Do not execute anything.",
-      }),
-    });
-    assert.equal(response.status, 200);
-    const body = await response.json();
+    const authority = {
+      previewOnlyByDefault: true,
+      mergeApproved: false,
+      productionDeploymentApproved: false,
+      productionDataAccessApproved: false,
+      domainOrDnsChangeApproved: false,
+      secretChangeApproved: false,
+      purchaseApproved: false,
+      externalMessageApproved: false,
+    };
+    const cases = [
+      {
+        request: "What matters today?",
+        mode: "brief",
+        projectId: null,
+        sources: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "source_health"],
+      },
+      {
+        request: "Why is Lakeside Essentials blocked?",
+        mode: "explain_priority",
+        projectId: "lakeside-essentials",
+        sources: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health"],
+      },
+      {
+        request: "What is the single best next thing for me to do?",
+        mode: "recommend_next",
+        projectId: null,
+        sources: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health", "financial_constraints", "deadline_constraints", "cost_policy"],
+      },
+      {
+        request: "Do only the safe parts of today's top priority.",
+        mode: "execute_safe_parts",
+        projectId: null,
+        sources: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health", "capability_registry", "backup_status", "project_vision"],
+      },
+      {
+        request: "What changed since the last accepted receipt?",
+        mode: "report_activity",
+        projectId: null,
+        sources: ["recent_events", "latest_receipts", "daily_log", "canonical_status", "source_health"],
+      },
+      {
+        request: "I feel overloaded. Reduce this to one decision without losing anything.",
+        mode: "recommend_next",
+        projectId: null,
+        sources: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health", "financial_constraints", "deadline_constraints", "cost_policy"],
+      },
+    ];
 
-    assert.equal(body.packet.schemaVersion, "1.2");
-    assert.equal(Object.hasOwn(body.packet, "today"), false);
-    assert.equal(body.packet.intent.id, "portfolio_operating_loop");
-    assert.equal(body.packet.intent.mode, "brief");
-    assert.equal(body.packet.intent.requiresProject, false);
-    assert.equal(body.packet.resolution.state, "resolved");
-    assert.equal(body.packet.project, null);
-    assert.equal(body.packet.ownerActionCards.length, 0);
-    assert.ok(body.packet.freshness.requiredSources.includes("canonical_status"));
-    assert.equal(body.packet.freshness.requiredSources.includes("repository"), false);
-    assert.equal(body.packet.freshness.requiredSources.includes("build_logs"), false);
-    assert.equal(body.packet.freshness.requiredSources.includes("runtime_errors"), false);
-    assert.equal(typeof body.today?.available, "boolean");
-    if (!body.today.available) assert.equal(body.today.data, null);
-    assert.equal(typeof body.followUpPrompt, "string");
-    assert.ok(body.followUpPrompt.length > 0);
+    for (const item of cases) {
+      const response = await fetch(`${baseUrl}/api/prepare-command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ request: item.request }),
+      });
+      assert.equal(response.status, 200, item.request);
+      const body = await response.json();
+
+      assert.equal(body.packet.schemaVersion, "1.2", item.request);
+      assert.equal(Object.hasOwn(body.packet, "today"), false, item.request);
+      assert.equal(Object.hasOwn(body.packet, "actionId"), false, item.request);
+      assert.equal(body.packet.intent.id, "portfolio_operating_loop", item.request);
+      assert.equal(body.packet.intent.mode, item.mode, item.request);
+      assert.equal(body.packet.intent.requiresProject, false, item.request);
+      assert.equal(body.packet.resolution.state, "resolved", item.request);
+      assert.equal(body.packet.project?.projectId || null, item.projectId, item.request);
+      assert.equal(body.packet.ownerActionCards.length, 0, item.request);
+      assert.equal(body.packet.state, "refresh-required-before-execution", item.request);
+      assert.deepEqual(body.packet.freshness.requiredSources, item.sources, item.request);
+      assert.deepEqual(body.packet.freshness.sourcePlan.map(({ sourceId }) => sourceId), item.sources, item.request);
+      assert.equal(body.packet.freshness.sourcePlan.some(({ connector }) => connector === "unresolved"), false, item.request);
+      assert.deepEqual(body.packet.authority, authority, item.request);
+      assert.equal(typeof body.today?.available, "boolean", item.request);
+      if (!body.today.available) assert.equal(body.today.data, null, item.request);
+      assert.equal(typeof body.followUpPrompt, "string", item.request);
+      assert.ok(body.followUpPrompt.length > 0, item.request);
+      assert.doesNotMatch(body.followUpPrompt, /\/Users\/|[a-f0-9]{40,64}|password|secret value|private key/i, item.request);
+    }
   });
 });
