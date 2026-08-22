@@ -3,6 +3,7 @@ name: Validate Clover Core Candidate
 on:
   push:
     branches:
+      - main
       - 'platform/clover-context-gateway-core-*'
       - 'platform/clover-core-*'
     paths:
