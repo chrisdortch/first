@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "1.2",
+  "protocolVersion": "1.2.0",
+  "status": "draft",
+  "enrolledAt": null,
+  "project": {
+    "id": "replace-me",
+    "repository": "owner/repository",
+    "productionBranch": "main"
+  },
+  "policy": {
+    "path": ".clover/project-policy.json",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "source": {
+    "baselineCommit": "0000000000000000000000000000000000000000",
+    "baselineTree": "0000000000000000000000000000000000000000",
+    "productionCommitAtEnrollment": "0000000000000000000000000000000000000000"
+  },
+  "authority": {
+    "releaseState": "not-authorized",
+    "productionEligible": false
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "clover-context-gateway",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "Read-only Clover context and command-packet gateway for ChatGPT, Codex, and CloverApps.",

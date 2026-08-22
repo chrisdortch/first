@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "0.1",
+  "capsuleId": "ctx_synthetic_example_0001",
+  "generatedAt": "2026-08-18T12:00:00-05:00",
+  "expiresAt": "2026-08-18T13:00:00-05:00",
+  "purpose": "Demonstrate least-knowledge context compilation with synthetic data.",
+  "question": "What is the next safe preview-only step for the example project?",
+  "target": {
+    "projectId": "example-project",
+    "cellIds": [
+      "public-portfolio"
+    ]
+  },
+  "sourcePointers": [
+    {
+      "sourceType": "synthetic-fixture",
+      "sourceId": "fixture://example/status",
+      "freshness": "current-task"
+    }
+  ],
+  "assertions": [
+    {
+      "claimId": "claim-example-preview-ready",
+      "truthStatus": "source-fact",
+      "value": true
+    }
+  ],
+  "policies": [
+    {
+      "policyId": "policy-preview-only",
+      "rule": "No production authority."
+    }
+  ],
+  "recentDecisions": [],
+  "authority": {
+    "mode": "preview-authorized",
+    "actionEnvelopeId": "act_synthetic_preview_0001",
+    "standingProductionAuthority": false
+  },
+  "freshness": {
+    "asOf": "2026-08-18T12:00:00-05:00",
+    "unknownSources": [],
+    "staleSources": []
+  },
+  "omissions": [
+    {
+      "dataClass": "private",
+      "reason": "Not needed for the synthetic preview task."
+    },
+    {
+      "dataClass": "secret",
+      "reason": "Plaintext secrets are never placed in a Context Capsule."
+    }
+  ],
+  "budget": {
+    "maxInputTokens": 2000,
+    "maxModelCostUsd": 0,
+    "ownerAttentionMinutes": 1
+  },
+  "containsPlaintextSecrets": false,
+  "contentHash": null
+}

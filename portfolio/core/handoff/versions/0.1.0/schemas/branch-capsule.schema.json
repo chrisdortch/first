@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core/handoff/0.1.0/branch-capsule.schema.json",
+  "title": "Clover Persistent Cell Branch Capsule 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "capsuleId",
+    "recordedAt",
+    "project",
+    "privacy",
+    "identities",
+    "links",
+    "verification",
+    "health",
+    "relationships",
+    "latestAcceptedReceipt",
+    "activeOwnerDecision",
+    "recommendedNextAction",
+    "rollbackAnchors",
+    "capsuleHash"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-handoff-branch-capsule" },
+    "schemaVersion": { "const": "0.1.0" },
+    "capsuleId": { "$ref": "#/$defs/identifier" },
+    "recordedAt": { "$ref": "#/$defs/timestamp" },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "title", "kind", "portfolioArea", "purpose"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/identifier" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "kind": { "enum": ["platform", "application", "infrastructure", "concept"] },
+        "portfolioArea": { "$ref": "#/$defs/identifier" },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sensitivity",
+        "containsRawCellData",
+        "containsSecretValues",
+        "containsPersonalData",
+        "publicCapsuleSafe",
+        "boundarySummary"
+      ],
+      "properties": {
+        "sensitivity": { "enum": ["public", "owner-internal", "private-sensitive", "mixed-sensitive"] },
+        "containsRawCellData": { "const": false },
+        "containsSecretValues": { "const": false },
+        "containsPersonalData": { "const": false },
+        "publicCapsuleSafe": { "const": true },
+        "boundarySummary": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "identities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["live", "current", "candidate"],
+      "properties": {
+        "live": { "$ref": "#/$defs/identityRecord" },
+        "current": { "$ref": "#/$defs/identityRecord" },
+        "candidate": { "$ref": "#/$defs/identityRecord" }
+      }
+    },
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "publicUrl", "sources"],
+      "properties": {
+        "repository": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "publicUrl": { "type": ["string", "null"], "pattern": "^https://[^\\s]+$" },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/sourceLink" }
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asOf", "freshness", "checkedSources", "unavailableSources"],
+      "properties": {
+        "asOf": { "$ref": "#/$defs/timestamp" },
+        "freshness": { "enum": ["current", "recent", "stale", "unknown"] },
+        "checkedSources": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "unavailableSources": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "blockers", "unknowns"],
+      "properties": {
+        "state": {
+          "enum": [
+            "verified-current",
+            "verified-candidate",
+            "partially-verified",
+            "reported-only",
+            "blocked",
+            "unknown"
+          ]
+        },
+        "blockers": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "unknowns": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "relationships": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dependencies", "dependents"],
+      "properties": {
+        "dependencies": {
+          "type": "array",
+          "maxItems": 30,
+          "items": { "$ref": "#/$defs/relationship" }
+        },
+        "dependents": {
+          "type": "array",
+          "maxItems": 30,
+          "items": { "$ref": "#/$defs/relationship" }
+        }
+      }
+    },
+    "latestAcceptedReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "receiptId", "receiptHash", "sourceRef"],
+      "properties": {
+        "status": { "enum": ["accepted", "none-known", "unknown"] },
+        "receiptId": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9._:-]*$" },
+        "receiptHash": { "type": ["string", "null"], "pattern": "^[a-f0-9]{64}$" },
+        "sourceRef": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "activeOwnerDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "decisionId", "summary", "sourceRef"],
+      "properties": {
+        "status": { "enum": ["active", "none-known", "unknown"] },
+        "decisionId": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9._:-]*$" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "sourceRef": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "recommendedNextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actionId", "summary", "state", "requiredApproval", "sourceBasis"],
+      "properties": {
+        "actionId": {
+          "oneOf": [
+            { "$ref": "#/$defs/identifier" },
+            { "$ref": "#/$defs/stableActionId" }
+          ]
+        },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "state": { "enum": ["recommended", "blocked", "owner-gated", "unknown"] },
+        "requiredApproval": { "enum": ["none", "exact-owner-approval", "unknown"] },
+        "sourceBasis": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "rollbackAnchors": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/rollbackAnchor" }
+    },
+    "capsuleHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "stableActionId": { "type": "string", "pattern": "^CLOVER-\\d{4}-\\d{2}-\\d{2}-\\d{3}$" },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "identityRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "repository",
+        "branch",
+        "commit",
+        "tree",
+        "version",
+        "deploymentId",
+        "url",
+        "observedAt",
+        "sourceRef",
+        "confidence"
+      ],
+      "properties": {
+        "status": { "enum": ["verified", "reported", "unknown", "not-applicable"] },
+        "repository": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "branch": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$" },
+        "commit": { "type": ["string", "null"], "pattern": "^[a-f0-9]{40}$" },
+        "tree": { "type": ["string", "null"], "pattern": "^[a-f0-9]{40}$" },
+        "version": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+        "deploymentId": { "type": ["string", "null"], "minLength": 1, "maxLength": 160 },
+        "url": { "type": ["string", "null"], "pattern": "^https://[^\\s]+$" },
+        "observedAt": { "type": ["string", "null"], "format": "date-time" },
+        "sourceRef": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+        "confidence": { "enum": ["high", "medium", "low", "unknown"] }
+      }
+    },
+    "sourceLink": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref", "status"],
+      "properties": {
+        "kind": { "enum": ["repository", "pull-request", "deployment", "site-version", "registry", "receipt", "public-url"] },
+        "ref": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "status": { "enum": ["verified", "reported", "unknown", "not-applicable"] }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "relationship", "status"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/identifier" },
+        "relationship": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "status": { "enum": ["verified", "reported", "proposed", "unknown"] }
+      }
+    },
+    "rollbackAnchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["anchorType", "identity", "status", "sourceRef"],
+      "properties": {
+        "anchorType": { "enum": ["git-commit", "deployment", "site-version", "source-version", "no-mutation"] },
+        "identity": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "status": { "enum": ["verified", "reported", "unknown"] },
+        "sourceRef": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "0.1",
+  "projectionId": "prjct_synthetic_example_0001",
+  "createdAt": "2026-08-18T12:00:00-05:00",
+  "expiresAt": "2026-08-19T12:00:00-05:00",
+  "purpose": "Publish a minimized synthetic project-status projection.",
+  "sourceCellId": "example-project-runtime",
+  "targetCellId": "public-portfolio",
+  "subject": {
+    "subjectType": "project",
+    "subjectId": "example-project"
+  },
+  "claims": [
+    {
+      "claimId": "claim-example-state",
+      "truthStatus": "source-fact",
+      "effectiveAt": "2026-08-18T12:00:00-05:00",
+      "sourceRefs": [
+        "fixture://example/status"
+      ],
+      "confidence": 1,
+      "value": "preview-ready"
+    }
+  ],
+  "omittedFields": [
+    "customerRecords",
+    "credentials",
+    "runtimeSecrets"
+  ],
+  "reviewStatus": "source-verified",
+  "containsRawSource": false,
+  "containsPlaintextSecrets": false,
+  "revocationRef": null,
+  "contentHash": null
+}

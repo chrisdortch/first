@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-priority-output.v0.1.schema.json",
+  "title": "Clover priority output 0.1 candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "modelVersion", "priorityInputHash", "asOf", "timezone", "scope", "sourceFreshness", "weights", "wipLimits", "ranking", "top3Overall", "top3Eligible", "recommendedAffiliatedTargetId", "activeByLane", "reservedByLane", "priorityOutputHash"],
+  "properties": {
+    "schemaVersion": {"const": "0.1"},
+    "modelVersion": {"const": "0.1-candidate"},
+    "priorityInputHash": {"$ref": "#/$defs/hash"},
+    "asOf": {"const": "2026-08-20"},
+    "timezone": {"const": "America/Chicago"},
+    "scope": {"const": "clover-core-trunk-activation-and-handoff-gate-0.1"},
+    "sourceFreshness": {"$ref": "#/$defs/freshness"},
+    "weights": {"$ref": "#/$defs/weights"},
+    "wipLimits": {"$ref": "#/$defs/wipLimits"},
+    "ranking": {"type": "array", "minItems": 19, "maxItems": 19, "items": {"$ref": "#/$defs/rankingItem"}},
+    "top3Overall": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/topOverallItem"}},
+    "top3Eligible": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/topItem"}},
+    "recommendedAffiliatedTargetId": {"type": ["string", "null"]},
+    "activeByLane": {"$ref": "#/$defs/laneState"},
+    "reservedByLane": {"$ref": "#/$defs/laneState"},
+    "priorityOutputHash": {"$ref": "#/$defs/hash"}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:@/-]*$"},
+    "freshness": {
+      "type": "object", "additionalProperties": false, "required": ["label", "observedAt"],
+      "properties": {"label": {"enum": ["current-task", "same-day", "historical", "unknown"]}, "observedAt": {"type": ["string", "null"]}}
+    },
+    "weights": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadlineSafetyContinuityRisk", "ownerCollaboratorWorkloadReduction", "revenueFinancialStability", "portfolioSynergyUnblockingValue", "readinessAndCostToFinish"],
+      "properties": {
+        "deadlineSafetyContinuityRisk": {"const": 30},
+        "ownerCollaboratorWorkloadReduction": {"const": 25},
+        "revenueFinancialStability": {"const": 20},
+        "portfolioSynergyUnblockingValue": {"const": 15},
+        "readinessAndCostToFinish": {"const": 10}
+      }
+    },
+    "wipLimits": {
+      "type": "object", "additionalProperties": false, "required": ["coreTrunk", "affiliatedBranch"],
+      "properties": {"coreTrunk": {"const": 1}, "affiliatedBranch": {"const": 1}}
+    },
+    "factorContributions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadlineSafetyContinuityRisk", "ownerCollaboratorWorkloadReduction", "revenueFinancialStability", "portfolioSynergyUnblockingValue", "readinessAndCostToFinish"],
+      "properties": {
+        "deadlineSafetyContinuityRisk": {"type": ["number", "null"], "minimum": 0, "maximum": 30},
+        "ownerCollaboratorWorkloadReduction": {"type": ["number", "null"], "minimum": 0, "maximum": 25},
+        "revenueFinancialStability": {"type": ["number", "null"], "minimum": 0, "maximum": 20},
+        "portfolioSynergyUnblockingValue": {"type": ["number", "null"], "minimum": 0, "maximum": 15},
+        "readinessAndCostToFinish": {"type": ["number", "null"], "minimum": 0, "maximum": 10}
+      }
+    },
+    "factorClassifications": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadlineSafetyContinuityRisk", "ownerCollaboratorWorkloadReduction", "revenueFinancialStability", "portfolioSynergyUnblockingValue", "readinessAndCostToFinish"],
+      "properties": {
+        "deadlineSafetyContinuityRisk": {"enum": ["source-fact", "owner-direction", "AI-inference", "unknown"]},
+        "ownerCollaboratorWorkloadReduction": {"enum": ["source-fact", "owner-direction", "AI-inference", "unknown"]},
+        "revenueFinancialStability": {"enum": ["source-fact", "owner-direction", "AI-inference", "unknown"]},
+        "portfolioSynergyUnblockingValue": {"enum": ["source-fact", "owner-direction", "AI-inference", "unknown"]},
+        "readinessAndCostToFinish": {"enum": ["source-fact", "owner-direction", "AI-inference", "unknown"]}
+      }
+    },
+    "factorRationales": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadlineSafetyContinuityRisk", "ownerCollaboratorWorkloadReduction", "revenueFinancialStability", "portfolioSynergyUnblockingValue", "readinessAndCostToFinish"],
+      "properties": {
+        "deadlineSafetyContinuityRisk": {"type": "string", "minLength": 1},
+        "ownerCollaboratorWorkloadReduction": {"type": "string", "minLength": 1},
+        "revenueFinancialStability": {"type": "string", "minLength": 1},
+        "portfolioSynergyUnblockingValue": {"type": "string", "minLength": 1},
+        "readinessAndCostToFinish": {"type": "string", "minLength": 1}
+      }
+    },
+    "rankingItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetId", "priority", "lane", "eligibility", "eligibilityReason", "requestedState", "weightedScore", "hasUnknownFactor", "factorContributions", "factorEvidenceClassifications", "factorRationales", "freshness", "provenance", "unknowns", "rank", "selected", "laneReservation", "status"],
+      "properties": {
+        "targetId": {"$ref": "#/$defs/identifier"},
+        "priority": {"enum": ["P0", "P1"]},
+        "lane": {"enum": ["coreTrunk", "affiliatedBranch"]},
+        "eligibility": {"enum": ["eligible", "blocked"]},
+        "eligibilityReason": {"$ref": "#/$defs/identifier"},
+        "requestedState": {"enum": ["active", "not-started"]},
+        "weightedScore": {"type": ["number", "null"], "minimum": 0, "maximum": 100},
+        "hasUnknownFactor": {"type": "boolean"},
+        "factorContributions": {"$ref": "#/$defs/factorContributions"},
+        "factorEvidenceClassifications": {"$ref": "#/$defs/factorClassifications"},
+        "factorRationales": {"$ref": "#/$defs/factorRationales"},
+        "freshness": {"$ref": "#/$defs/freshness"},
+        "provenance": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "unknowns": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "rank": {"type": ["integer", "null"], "minimum": 1},
+        "selected": {"type": "boolean"},
+        "laneReservation": {"type": "boolean"},
+        "status": {"enum": ["active", "queued", "blocked", "blocked-unknown", "selected-pending-owner-gate"]}
+      }
+    },
+    "topOverallItem": {
+      "type": "object", "additionalProperties": false, "required": ["targetId", "overallRank", "weightedScore", "eligibility", "status", "rationales"],
+      "properties": {
+        "targetId": {"$ref": "#/$defs/identifier"},
+        "overallRank": {"type": "integer", "minimum": 1, "maximum": 3},
+        "weightedScore": {"type": "number", "minimum": 0, "maximum": 100},
+        "eligibility": {"enum": ["eligible", "blocked"]},
+        "status": {"enum": ["active", "queued", "blocked", "selected-pending-owner-gate"]},
+        "rationales": {"$ref": "#/$defs/factorRationales"}
+      }
+    },
+    "topItem": {
+      "type": "object", "additionalProperties": false, "required": ["targetId", "eligibleRank", "overallRank", "weightedScore"],
+      "properties": {
+        "targetId": {"$ref": "#/$defs/identifier"},
+        "eligibleRank": {"type": "integer", "minimum": 1, "maximum": 3},
+        "overallRank": {"type": "integer", "minimum": 1},
+        "weightedScore": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "laneState": {
+      "type": "object", "additionalProperties": false, "required": ["coreTrunk", "affiliatedBranch"],
+      "properties": {
+        "coreTrunk": {"type": "array", "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "affiliatedBranch": {"type": "array", "maxItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}}
+      }
+    }
+  }
+}

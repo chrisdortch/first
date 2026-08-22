@@ -1,0 +1,18 @@
+{
+  "documentType": "clover-constitution-pointer",
+  "schemaVersion": "1.0",
+  "currentVersion": "0.1",
+  "status": "ratified-active",
+  "effectiveAt": "2026-08-18T18:58:08-05:00",
+  "constitutionPath": "portfolio/core/CLOVER_CONSTITUTION_CANDIDATE_V0.1.md",
+  "constitutionSha256": "82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e",
+  "ratificationReceipt": "portfolio/core/constitution/ratifications/2026-08-18-v0.1.json",
+  "approvedUnchanged": true,
+  "futureAmendmentsAllowed": true,
+  "amendmentPolicy": "Create a new numbered version and preserve version 0.1, its hash, ratification receipt, and decision history.",
+  "standingProductionAuthority": false,
+  "mergeAuthorityGranted": false,
+  "productionDeploymentAuthorityGranted": false,
+  "privateDataAuthorityGranted": false,
+  "secretRevealAuthorityGranted": false
+}

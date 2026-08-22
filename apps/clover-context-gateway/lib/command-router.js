@@ -1,6 +1,31 @@
 import crypto from "node:crypto";
 
+const PORTFOLIO_INTENT_ID = "portfolio_operating_loop";
+
 const INTENTS = [
+  {
+    id: PORTFOLIO_INTENT_ID,
+    patterns: [
+      "what should i know",
+      "what do i need to know",
+      "what matters today",
+      "across my current priorities",
+      "daily brief",
+      "morning brief",
+      "brief me",
+      "most important item",
+      "what do you recommend",
+      "highest value next step",
+      "do the safe parts",
+      "safe reversible",
+      "recommended step",
+      "what happened",
+      "what changed today",
+      "today s log",
+      "daily log",
+    ],
+    requiresProject: false,
+  },
   {
     id: "launch_project",
     patterns: ["plant a seed", "new seed", "new project", "launch a new project", "start a project", "create an app"],
@@ -53,6 +78,117 @@ const INTENTS = [
   },
 ];
 
+const PORTFOLIO_MODE_CUES = Object.freeze({
+  report_activity: Object.freeze([
+    "what happened",
+    "what changed today",
+    "what changed since",
+    "show activity since",
+    "what was completed and verified",
+    "update today s log",
+    "report what changed",
+    "today s log",
+    "daily log",
+    "last accepted receipt",
+    "last receipt",
+    "latest accepted receipt",
+  ]),
+  execute_safe_parts: Object.freeze([
+    "do only the safe",
+    "do only the safe parts",
+    "do the safe parts",
+    "complete only the reversible parts",
+    "move forward with what is already authorized and safe",
+    "prepare the safe preview only parts",
+    "do what you can safely do without creating new risk",
+    "do the recommended safe step",
+  ]),
+  recommend_next: Object.freeze([
+    "what is the single best next thing",
+    "single best next thing",
+    "best next thing",
+    "what should i do next",
+    "one best next action",
+    "one next action",
+    "what do you recommend now",
+    "what do you recommend",
+    "highest value next step",
+    "smallest highest value next step",
+    "smartest next",
+    "recommended step",
+    "feel overloaded",
+    "overloaded",
+    "overwhelmed",
+    "too much to manage",
+    "reduce this to one decision",
+    "one decision",
+    "safest thing you can do now",
+    "just recommend",
+    "recommend only",
+  ]),
+  explain_priority: Object.freeze([
+    "priority",
+    "priorities",
+    "ranked",
+    "ranking",
+    "dependency",
+    "dependencies",
+    "evidence behind",
+    "evidence is driving",
+    "readiness",
+    "most important item",
+    "top priority",
+  ]),
+  brief: Object.freeze([
+    "what matters today",
+    "what should i know",
+    "what do i need to know",
+    "brief me",
+    "daily brief",
+    "morning brief",
+    "across my priorities",
+    "across my current priorities",
+    "help me understand today",
+  ]),
+});
+
+const EXPLAIN_PRIORITY_WHEN_NONTECHNICAL_CUES = Object.freeze([
+  "blocked",
+  "explain why",
+  "why it matters",
+]);
+
+const DIAGNOSTIC_CUES = Object.freeze([
+  "fix",
+  "error",
+  "errors",
+  "broken",
+  "failing",
+  "failure",
+  "crash",
+  "bug",
+  "runtime failure",
+  "build failing",
+  "checkout failing",
+  "log",
+  "logs",
+  "reproduce the failure",
+  "diagnose",
+]);
+
+const NONAFFIRMATIVE_SAFE_PREFIXES = Object.freeze([
+  "do not",
+  "don t",
+  "dont",
+  "never",
+  "should i",
+  "should we",
+  "would i",
+  "would we",
+  "could i",
+  "could we",
+]);
+
 const PROJECT_ALIASES = {
   "clover apps": "cloverapps-ai",
   cloverapps: "cloverapps-ai",
@@ -84,6 +220,14 @@ const SOURCE_ADAPTERS = {
   canonical_plan: { connector: "clover-context", action: "search/fetch", freshness: "canonical-current-version" },
   canonical_status: { connector: "clover-context", action: "fetch clover://status/current", freshness: "current-canonical-snapshot" },
   project_registry: { connector: "clover-context", action: "fetch clover://projects", freshness: "current-canonical-snapshot" },
+  priority_context: { connector: "clover-context", action: "fetch clover://next plus current status priorities and known gaps", freshness: "current-canonical-snapshot" },
+  recent_decisions: { connector: "clover-context-and-github", action: "read current append-only decision ledger and applicable constitutional status", freshness: "current-task" },
+  recent_events: { connector: "clover-context-github-and-receipts", action: "read recent sanitized events and evidence-bound receipts; do not infer unrecorded activity", freshness: "current-task" },
+  daily_log: { connector: "clover-context-and-github", action: "read the current daily-log projection and its event/receipt basis", freshness: "current-task" },
+  source_health: { connector: "clover-context-and-native-connectors", action: "read connector availability, coverage, last successful observation, and delta cursor before opening raw content", freshness: "current-task" },
+  financial_constraints: { connector: "finances", action: "read an owner-authorized minimized cash/risk projection and account coverage; keep raw transactions inside the financial Cell", freshness: "current-task" },
+  deadline_constraints: { connector: "warroom-calendar-and-gmail", action: "read owner-authorized minimized deadline and commitment projections; keep raw legal evidence and private messages in their source Cells", freshness: "current-task" },
+  capability_registry: { connector: "clover-context", action: "read current capability and authority registry; default deny when unavailable", freshness: "current-task" },
   related_projects: { connector: "clover-context", action: "search then fetch relevant project records", freshness: "current-canonical-snapshot" },
   cost_policy: { connector: "clover-context", action: "fetch clover://cost-policy", freshness: "current-canonical-version" },
   project_vision: { connector: "clover-context-and-drive", action: "fetch canonical project record; read exact approved Drive sources only when needed", freshness: "canonical plus task-specific readback" },
@@ -132,8 +276,35 @@ const LIVE_SOURCE_REQUIREMENTS = {
   research: ["canonical_plan", "related_projects", "current_external_sources"],
 };
 
+const PORTFOLIO_SOURCE_REQUIREMENTS = {
+  brief: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "source_health"],
+  explain_priority: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health"],
+  recommend_next: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health", "financial_constraints", "deadline_constraints", "cost_policy"],
+  execute_safe_parts: ["canonical_status", "project_registry", "priority_context", "latest_receipts", "recent_events", "recent_decisions", "source_health", "capability_registry", "backup_status", "project_vision"],
+  report_activity: ["recent_events", "latest_receipts", "daily_log", "canonical_status", "source_health"],
+};
+
 function normalize(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function includesCue(normalized, cue) {
+  return ` ${normalized} `.includes(` ${normalize(cue)} `);
+}
+
+function includesAnyCue(normalized, cues) {
+  return cues.some((cue) => includesCue(normalized, cue));
+}
+
+function startsWithCue(normalized, cue) {
+  const normalizedCue = normalize(cue);
+  return normalized === normalizedCue || normalized.startsWith(`${normalizedCue} `);
+}
+
+function affirmativeSafeImperative(normalized) {
+  const withoutCourtesy = normalized.startsWith("please ") ? normalized.slice("please ".length) : normalized;
+  if (NONAFFIRMATIVE_SAFE_PREFIXES.some((cue) => startsWithCue(withoutCourtesy, cue))) return false;
+  return PORTFOLIO_MODE_CUES.execute_safe_parts.some((cue) => startsWithCue(withoutCourtesy, cue));
 }
 
 function meaningfulTokens(value) {
@@ -142,14 +313,52 @@ function meaningfulTokens(value) {
     .filter((token) => token.length > 2 && !STOPWORDS.has(token));
 }
 
-function detectIntent(request) {
-  const normalized = normalize(request);
-  const scored = INTENTS.map((intent, index) => ({
+function detectExplicitIntent(normalized) {
+  const scored = INTENTS
+    .filter((intent) => ![PORTFOLIO_INTENT_ID, "diagnose_project"].includes(intent.id))
+    .map((intent, index) => ({
     intent,
     index,
-    score: intent.patterns.reduce((total, pattern) => total + (normalized.includes(normalize(pattern)) ? normalize(pattern).length : 0), 0),
+    score: intent.patterns.reduce((total, pattern) => total + (includesCue(normalized, pattern) ? normalize(pattern).length : 0), 0),
   })).sort((a, b) => b.score - a.score || a.index - b.index);
-  return scored[0].score > 0 ? scored[0].intent : INTENTS.find((intent) => intent.id === "evolve_project");
+  return scored[0]?.score > 0 ? scored[0].intent : null;
+}
+
+function detectPortfolioMode(request) {
+  const normalized = normalize(request);
+  const technicalFailure = includesAnyCue(normalized, DIAGNOSTIC_CUES);
+  if (includesAnyCue(normalized, PORTFOLIO_MODE_CUES.report_activity)) return "report_activity";
+  if (affirmativeSafeImperative(normalized)) return "execute_safe_parts";
+  if (includesAnyCue(normalized, PORTFOLIO_MODE_CUES.recommend_next)) return "recommend_next";
+  if (includesAnyCue(normalized, PORTFOLIO_MODE_CUES.brief)) return "brief";
+  if (!technicalFailure && (
+    includesAnyCue(normalized, PORTFOLIO_MODE_CUES.explain_priority)
+    || includesAnyCue(normalized, EXPLAIN_PRIORITY_WHEN_NONTECHNICAL_CUES)
+  )) return "explain_priority";
+  return null;
+}
+
+function detectRouting(request) {
+  const normalized = normalize(request);
+  const portfolioMode = detectPortfolioMode(normalized);
+  if (portfolioMode) {
+    return {
+      intent: INTENTS.find((intent) => intent.id === PORTFOLIO_INTENT_ID),
+      portfolioMode,
+    };
+  }
+  if (includesAnyCue(normalized, DIAGNOSTIC_CUES)) {
+    return {
+      intent: INTENTS.find((intent) => intent.id === "diagnose_project"),
+      portfolioMode: null,
+    };
+  }
+  const explicitIntent = detectExplicitIntent(normalized);
+  if (explicitIntent) return { intent: explicitIntent, portfolioMode: null };
+  return {
+    intent: INTENTS.find((intent) => intent.id === PORTFOLIO_INTENT_ID),
+    portfolioMode: "brief",
+  };
 }
 
 function instructionBody(request) {
@@ -204,13 +413,18 @@ function resolveProject(request, projects) {
   };
 }
 
+function requiredSourcesFor(intentId, portfolioMode) {
+  if (intentId === PORTFOLIO_INTENT_ID) return PORTFOLIO_SOURCE_REQUIREMENTS[portfolioMode] || PORTFOLIO_SOURCE_REQUIREMENTS.brief;
+  return LIVE_SOURCE_REQUIREMENTS[intentId] || [];
+}
+
 function costLane(intentId) {
-  if (["inspect_status", "backup_project"].includes(intentId)) {
+  if ([PORTFOLIO_INTENT_ID, "inspect_status", "backup_project"].includes(intentId)) {
     return {
       defaultLane: "deterministic-and-chat-pro",
       additionalPurchaseExpected: false,
       purchaseTrigger: null,
-      explanation: "Use canonical files, connected read tools, CI, and ordinary Chat Pro reasoning first.",
+      explanation: "Use canonical records, connector delta/coverage metadata, deterministic checks, and ordinary Chat Pro reasoning first.",
     };
   }
   if (intentId === "update_openai_site") {
@@ -237,7 +451,47 @@ function costLane(intentId) {
   };
 }
 
-function executionSteps(intentId, project) {
+function portfolioExecutionSteps(mode) {
+  const common = [
+    "Read canonical Clover status, current priorities, known gaps, recent decisions, source-health metadata, and evidence-bound receipts.",
+    "Refresh only sources required for this operating mode; inspect coverage and deltas first, and label unavailable or stale sources as unknown.",
+    "Keep raw legal, financial, health, family, guest, staff, credential, and production data inside their responsible Cells; return only minimized authorized projections.",
+  ];
+  const specific = {
+    brief: [
+      "Rank one primary item and no more than two secondary material items.",
+      "Explain what changed, why each item matters now, and what remains uncertain.",
+      "Do not change any external system.",
+    ],
+    explain_priority: [
+      "Trace the selected priority to its exact evidence, freshness, dependencies, and prior decisions.",
+      "Show which deadline, risk, cash, strategic, confidence, reversibility, and owner-attention factors drove its position.",
+      "Identify the evidence that would materially change the conclusion.",
+    ],
+    recommend_next: [
+      "Compare the smallest credible next actions across the current priorities.",
+      "Select one highest-value reversible step using deadlines, harm avoided, cash constraints, strategic compounding, dependencies, confidence, cost, and owner attention.",
+      "Reduce the owner-facing result to one decision while preserving the complete source, uncertainty, alternative, authority, and rollback record.",
+      "Prepare the exact next command or Action Envelope, but do not execute it.",
+    ],
+    execute_safe_parts: [
+      "Resolve one exact target from the accepted recommendation and current evidence without asking the owner to repeat known context.",
+      "Create one narrow, expiring, single-use Action Envelope with exact resources, operations, cost, rollback, stop conditions, and approval gates.",
+      "Perform only currently authorized safe work such as readback, organization, drafting, testing, isolated branches, synthetic rehearsal, and preview preparation.",
+      "Stop before merge, production, private-data movement, secret reveal, spending, messaging, domain, permission, credential, or OpenAI Site changes, then return a readback receipt.",
+    ],
+    report_activity: [
+      "Reconstruct activity only from events, exact source readback, and receipts.",
+      "Separate completed, verified, failed, rolled-back, pending, and unknown work.",
+      "Project the result into today's human-readable log without inventing unrecorded activity.",
+    ],
+  };
+  return [...common, ...(specific[mode] || specific.brief)];
+}
+
+function executionSteps(intentId, project, portfolioMode) {
+  if (intentId === PORTFOLIO_INTENT_ID) return portfolioExecutionSteps(portfolioMode);
+
   const projectLabel = project?.title || "the selected project";
   const common = [
     `Read the canonical Clover context for ${projectLabel}.`,
@@ -287,17 +541,19 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
   const originalRequest = String(request || "").trim();
   if (!originalRequest) throw new Error("A command request is required.");
   const requestBody = instructionBody(originalRequest);
-  const intent = detectIntent(requestBody);
+  const { intent, portfolioMode } = detectRouting(requestBody);
   const resolution = resolveProject(requestBody, projects || []);
   const project = resolution.project;
+  const isPortfolio = intent.id === PORTFOLIO_INTENT_ID;
   const requiresProjectResolution = intent.requiresProject && !project;
-  const requiredSources = LIVE_SOURCE_REQUIREMENTS[intent.id] || [];
+  const requiredSources = requiredSourcesFor(intent.id, portfolioMode);
   const sourceIdentity = source?.commit || source?.ref || pointer?.currentVersion || "unknown";
-  const sourceFingerprint = `${sourceIdentity}:${status?.asOf || "unknown"}:${project?.projectId || "portfolio"}:${normalize(requestBody)}`;
+  const targetIdentity = isPortfolio ? "portfolio" : project?.projectId || "portfolio";
+  const sourceFingerprint = `${sourceIdentity}:${status?.asOf || "unknown"}:${targetIdentity}:${normalize(requestBody)}`;
   const commandId = `clover-${crypto.createHash("sha256").update(sourceFingerprint).digest("hex").slice(0, 16)}`;
 
   return {
-    schemaVersion: "1.1",
+    schemaVersion: "1.2",
     commandId,
     createdAt: new Date().toISOString(),
     originalRequest,
@@ -306,12 +562,19 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
     intent: {
       id: intent.id,
       requiresProject: intent.requiresProject,
+      ...(portfolioMode ? { mode: portfolioMode } : {}),
     },
-    resolution: {
-      state: project ? "resolved" : resolution.confidence === "ambiguous" ? "ambiguous" : "unresolved",
-      confidence: resolution.confidence,
-      candidates: resolution.candidates,
-    },
+    resolution: isPortfolio
+      ? {
+          state: "resolved",
+          confidence: project ? "portfolio-scope-with-project-context" : "portfolio-scope",
+          candidates: project ? [project.projectId] : [],
+        }
+      : {
+          state: project ? "resolved" : resolution.confidence === "ambiguous" ? "ambiguous" : "unresolved",
+          confidence: resolution.confidence,
+          candidates: resolution.candidates,
+        },
     project: project
       ? {
           projectId: project.projectId,
@@ -337,8 +600,12 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
     },
     contextBudget: {
       strategy: "pointer-first-target-only",
-      firstPassItems: ["clover://master-pointer", "clover://status/current", project ? `clover://project/${project.projectId}` : "clover://projects"],
-      instruction: "Fetch only the target project and policies needed for the current intent. Open full logs, traces, screenshots, or source trees only after a concrete failure or ambiguity is identified.",
+      firstPassItems: isPortfolio
+        ? ["clover://master-pointer", "clover://status/current", "clover://projects", "clover://next"]
+        : ["clover://master-pointer", "clover://status/current", project ? `clover://project/${project.projectId}` : "clover://projects"],
+      instruction: isPortfolio
+        ? "Compile the smallest portfolio-wide capsule needed for this mode. Read source-health and delta metadata before raw content; open private Cells only when the source plan, purpose, and current authority permit a minimized projection."
+        : "Fetch only the target project and policies needed for the current intent. Open full logs, traces, screenshots, or source trees only after a concrete failure or ambiguity is identified.",
     },
     freshness: {
       policy: "live-readback-before-mutation",
@@ -347,7 +614,7 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
       rule: "A source is current only when the execution thread reads it during the current task or imports a still-valid exact receipt.",
     },
     cost: costLane(intent.id),
-    executionPlan: executionSteps(intent.id, project),
+    executionPlan: executionSteps(intent.id, project, portfolioMode),
     ownerActionCards: ownerActionCards(intent.id, project),
     authority: {
       previewOnlyByDefault: true,
@@ -360,7 +627,7 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
       externalMessageApproved: false,
     },
     stopConditions: [
-      "Project identity or production baseline cannot be verified.",
+      "Project identity or production baseline cannot be verified when a concrete project action is selected.",
       "Required live context is stale, contradictory, or unavailable and would materially affect safety.",
       "The requested action crosses into production, private data, payment, messaging, domains, secrets, or legal commitments without exact approval.",
       "The candidate cannot be backed out to a verified rollback anchor.",
@@ -369,14 +636,20 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
 }
 
 export function commandPrompt(packet) {
-  const project = packet.project?.title || "the portfolio or a new seed";
+  const isPortfolio = packet.intent?.id === PORTFOLIO_INTENT_ID;
+  const project = isPortfolio ? "the Clover portfolio" : packet.project?.title || "the portfolio or a new seed";
   const requiredConnectors = [...new Set(packet.freshness.sourcePlan.map((item) => item.connector))].join(", ");
-  return [
+  const lines = [
     `Use CloverApps to ${packet.requestBody}`,
     `Clover command: ${packet.commandId}. Target: ${project}.`,
-    `Canonical context is already bound through the Clover context app; fetch only the target records required by this command.`,
+  ];
+  if (isPortfolio) lines.push(`Portfolio operating mode: ${packet.intent.mode}.`);
+  lines.push(
+    "Canonical context is already bound through the Clover context app; fetch only the records required by this command.",
     `Refresh live state through: ${requiredConnectors || "the supported authoritative connectors"}. Treat unavailable facts as unknown.`,
-    "Proceed preview-only unless I separately approve an exact irreversible action.",
-    "Return source identities, changes, checks, preview, cost lane, blockers, receipt, and any evidence-backed status change.",
-  ].join("\n");
+    "Keep raw private records in their source Cells and use only minimized, purpose-bound projections.",
+    "Proceed read-only or preview-only unless I separately approve an exact irreversible action.",
+    "Return source identities, evidence, freshness, changes, checks, cost lane, blockers, receipt, and any evidence-backed daily-log or status change.",
+  );
+  return lines.join("\n");
 }

@@ -1,0 +1,28 @@
+{
+  "documentType": "clover-portfolio-registry-pointer",
+  "pointerVersion": "1.0.0",
+  "current": {
+    "version": "1.0",
+    "path": "portfolio/registry/projects.json",
+    "sha256": "2aeb1d6ec42e89d95c6c78180242b78818d2274bf5c5f2f0e1d0fedccdab1821",
+    "status": "legacy-current-preserved"
+  },
+  "candidate": {
+    "version": "2.0.0",
+    "status": "candidate-unmerged-undeployed",
+    "schema": "portfolio/registry/schemas/clover-federated-portfolio-registry.v2.schema.json",
+    "schemaSha256": "6ad0afa5a5a07a33b81f7d368da413801854d1149667a63c8697d73729f831f9",
+    "document": "portfolio/registry/versions/2.0.0/registry.json",
+    "documentSha256": "4f2f7c02b878db23b02b68ced0c61c9ca7e3d891b611757ae320a0e59b9725e2",
+    "projectionSchema": "portfolio/registry/schemas/clover-core-portfolio-projection.v2.schema.json",
+    "projectionSchemaSha256": "fb5b00785225ab235f3e5eff1d03b8ad51656297581956ea13896c375d235da8",
+    "projection": "portfolio/registry/projections/core-project-index.v2.json",
+    "projectionSha256": "72208bd5c81298a3e0f8daad9a71c9284ed8a4f487c4b058a76796a7a0eb36fb"
+  },
+  "authority": {
+    "replacesCurrentRegistry": false,
+    "mergeApproved": false,
+    "deploymentApproved": false,
+    "productionDataAccessApproved": false
+  }
+}

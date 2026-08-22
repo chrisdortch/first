@@ -1,6 +1,6 @@
 {
   "documentType": "clover-data-change-protocol-pointer",
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "repository": "chrisdortch/first",
   "canonicalDirectory": "standards/clover-data-change-protocol",
   "currentVersion": "1.0.0",
@@ -12,14 +12,30 @@
   "validatedReusableRuntimeCommit": "d98d6abc402964e6327984f7fb768a34bf2c09c6",
   "validatedStandardWorkflowRunId": 32034444681,
   "validatedPilotWorkflowRunId": 31993387866,
+  "candidateVersion": "1.0.1",
+  "candidateDocument": "standards/clover-data-change-protocol/versions/1.0.1/CLOVER_DATA_CHANGE_PROTOCOL.md",
+  "candidateStatus": "security-hardening-candidate-unvalidated",
+  "candidateBaseCommit": "7d5d15bc2bc39a74725c9cfd6827bfe61dbb65ed",
+  "candidatePreparedLocalDate": "2026-08-19",
+  "candidateValidation": {
+    "exactHeadCiPassed": false,
+    "standardWorkflowRunId": null,
+    "disposablePilotPassed": false,
+    "pilotWorkflowRunId": null
+  },
   "standingProductionAuthority": false,
   "ownerApprovalRequiredForProductionDataAccess": true,
   "defaultAutomationMode": "disposable-database-only",
   "reusableWorkflow": ".github/workflows/clover-data-preview-v1.yml",
   "schemasDirectory": "standards/clover-data-change-protocol/schemas",
+  "currentRuntimeDirectory": "standards/clover-data-change-protocol/runtime/v1.0.0",
+  "candidateRuntimeDirectory": "standards/clover-data-change-protocol/runtime/v1.0.1",
+  "candidateSchemasDirectory": "standards/clover-data-change-protocol/schemas/1.0.1",
+  "candidatePolicyTemplate": "standards/clover-data-change-protocol/templates/data-change-policy.v1.0.1.template.json",
   "readFirst": [
     "AI_START_HERE.md",
     "standards/clover-data-change-protocol/CURRENT.md",
-    "standards/clover-data-change-protocol/registry/projects.json"
+    "standards/clover-data-change-protocol/registry/projects.json",
+    "standards/clover-data-change-protocol/versions/1.0.1/SECURITY_HARDENING.md"
   ]
 }

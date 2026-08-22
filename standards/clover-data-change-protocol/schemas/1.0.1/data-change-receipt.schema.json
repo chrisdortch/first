@@ -1,0 +1,363 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-data-change-receipt-1.0.1.json",
+  "title": "Clover Data Change Receipt 1.0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "generatedAt",
+    "status",
+    "project",
+    "source",
+    "database",
+    "checks",
+    "workflowOutcomes",
+    "observations",
+    "stages",
+    "sqlArtifacts",
+    "safety",
+    "authority",
+    "artifacts",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.1" },
+    "protocolVersion": { "const": "1.0.1" },
+    "generatedAt": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["passed", "failed"] },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "repository", "class"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "repository": { "type": "string", "pattern": "^[^/]+/[^/]+$" },
+        "class": {
+          "enum": [
+            "database-backed",
+            "payment-data",
+            "waiver-records",
+            "legal-evidence",
+            "operational-state"
+          ]
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineCommit",
+        "productionCommitAtEnrollment",
+        "productionCommitObserved",
+        "candidateCommitExpected",
+        "candidateCommit",
+        "branch",
+        "protocolRepository",
+        "protocolCommit",
+        "protocolCommitExpected",
+        "protocolCommitObserved",
+        "changedFiles"
+      ],
+      "properties": {
+        "baselineCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "productionCommitAtEnrollment": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "productionCommitObserved": { "$ref": "#/$defs/nullableCommit" },
+        "candidateCommitExpected": { "$ref": "#/$defs/nullableCommit" },
+        "candidateCommit": { "$ref": "#/$defs/nullableCommit" },
+        "branch": {
+          "anyOf": [
+            { "type": "string", "minLength": 1 },
+            { "type": "null" }
+          ]
+        },
+        "protocolRepository": { "const": "chrisdortch/first" },
+        "protocolCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "protocolCommitExpected": { "$ref": "#/$defs/nullableCommit" },
+        "protocolCommitObserved": { "$ref": "#/$defs/nullableCommit" },
+        "changedFiles": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "engine", "majorVersion", "hostClass", "databaseName", "roleName", "roleSecurity"],
+      "properties": {
+        "mode": { "const": "disposable-database-only" },
+        "engine": { "const": "postgresql" },
+        "majorVersion": { "const": 16 },
+        "hostClass": { "const": "local-ci-service" },
+        "databaseName": { "const": "clover_data" },
+        "roleName": { "const": "clover_rehearsal" },
+        "roleSecurity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["roleName", "superuser", "createDatabase", "createRole", "replication", "bypassRowLevelSecurity", "inherit", "canLogin", "memberships"],
+          "properties": {
+            "roleName": { "const": "clover_rehearsal" },
+            "superuser": { "const": false },
+            "createDatabase": { "const": false },
+            "createRole": { "const": false },
+            "replication": { "const": false },
+            "bypassRowLevelSecurity": { "const": false },
+            "inherit": { "const": false },
+            "canLogin": { "const": true },
+            "memberships": { "type": "array", "maxItems": 0 }
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policySchema",
+        "boundary",
+        "sourceBindings",
+        "productionAnchorUnchanged",
+        "candidateBasedOnProduction",
+        "protocolCommitBound",
+        "install",
+        "installIntegrity",
+        "projectVerify",
+        "verifyIntegrity",
+        "connectionBoundary",
+        "restrictedRehearsalRole",
+        "sqlPathIntegrity",
+        "psqlMetaCommandsRejected",
+        "sqlScreening",
+        "baseline",
+        "forward",
+        "forwardIdempotency",
+        "rollback",
+        "schemaRestored",
+        "reconciliationPreserved",
+        "namespace",
+        "rehearsalIntegrity",
+        "evidenceBindings",
+        "workflowOutcomes"
+      ],
+      "properties": {
+        "policySchema": { "$ref": "#/$defs/check" },
+        "boundary": { "$ref": "#/$defs/check" },
+        "sourceBindings": { "$ref": "#/$defs/check" },
+        "productionAnchorUnchanged": { "$ref": "#/$defs/check" },
+        "candidateBasedOnProduction": { "$ref": "#/$defs/check" },
+        "protocolCommitBound": { "$ref": "#/$defs/check" },
+        "install": { "$ref": "#/$defs/check" },
+        "installIntegrity": { "$ref": "#/$defs/check" },
+        "projectVerify": { "$ref": "#/$defs/check" },
+        "verifyIntegrity": { "$ref": "#/$defs/check" },
+        "connectionBoundary": { "$ref": "#/$defs/check" },
+        "restrictedRehearsalRole": { "$ref": "#/$defs/check" },
+        "sqlPathIntegrity": { "$ref": "#/$defs/check" },
+        "psqlMetaCommandsRejected": { "$ref": "#/$defs/check" },
+        "sqlScreening": { "$ref": "#/$defs/check" },
+        "baseline": { "$ref": "#/$defs/check" },
+        "forward": { "$ref": "#/$defs/check" },
+        "forwardIdempotency": { "$ref": "#/$defs/check" },
+        "rollback": { "$ref": "#/$defs/check" },
+        "schemaRestored": { "$ref": "#/$defs/check" },
+        "reconciliationPreserved": { "$ref": "#/$defs/check" },
+        "namespace": { "$ref": "#/$defs/check" },
+        "rehearsalIntegrity": { "$ref": "#/$defs/check" },
+        "evidenceBindings": { "$ref": "#/$defs/check" },
+        "workflowOutcomes": { "$ref": "#/$defs/check" }
+      }
+    },
+    "workflowOutcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identity",
+        "tooling",
+        "hardening",
+        "policySchema",
+        "boundary",
+        "preInstall",
+        "install",
+        "controlAfterInstall",
+        "installIntegrity",
+        "restoreAfterInstall",
+        "toolingAfterInstall",
+        "preVerify",
+        "verify",
+        "controlAfterVerify",
+        "verifyIntegrity",
+        "restoreAfterVerify",
+        "toolingAfterVerify",
+        "preRehearsal",
+        "postgresClient",
+        "postgresReady",
+        "rehearsalRole",
+        "rehearsal",
+        "controlAfterRehearsal",
+        "rehearsalIntegrity",
+        "restoreAfterRehearsal",
+        "toolingAfterRehearsal",
+        "finalControl"
+      ],
+      "properties": {
+        "identity": { "$ref": "#/$defs/outcome" },
+        "tooling": { "$ref": "#/$defs/outcome" },
+        "hardening": { "$ref": "#/$defs/outcome" },
+        "policySchema": { "$ref": "#/$defs/outcome" },
+        "boundary": { "$ref": "#/$defs/outcome" },
+        "preInstall": { "$ref": "#/$defs/outcome" },
+        "install": { "$ref": "#/$defs/outcome" },
+        "controlAfterInstall": { "$ref": "#/$defs/outcome" },
+        "installIntegrity": { "$ref": "#/$defs/outcome" },
+        "restoreAfterInstall": { "$ref": "#/$defs/outcome" },
+        "toolingAfterInstall": { "$ref": "#/$defs/outcome" },
+        "preVerify": { "$ref": "#/$defs/outcome" },
+        "verify": { "$ref": "#/$defs/outcome" },
+        "controlAfterVerify": { "$ref": "#/$defs/outcome" },
+        "verifyIntegrity": { "$ref": "#/$defs/outcome" },
+        "restoreAfterVerify": { "$ref": "#/$defs/outcome" },
+        "toolingAfterVerify": { "$ref": "#/$defs/outcome" },
+        "preRehearsal": { "$ref": "#/$defs/outcome" },
+        "postgresClient": { "$ref": "#/$defs/outcome" },
+        "postgresReady": { "$ref": "#/$defs/outcome" },
+        "rehearsalRole": { "$ref": "#/$defs/outcome" },
+        "rehearsal": { "$ref": "#/$defs/outcome" },
+        "controlAfterRehearsal": { "$ref": "#/$defs/outcome" },
+        "rehearsalIntegrity": { "$ref": "#/$defs/outcome" },
+        "restoreAfterRehearsal": { "$ref": "#/$defs/outcome" },
+        "toolingAfterRehearsal": { "$ref": "#/$defs/outcome" },
+        "finalControl": { "$ref": "#/$defs/outcome" }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectCommandExternalEffects", "seedDataProvenance", "install", "verify", "rehearsal"],
+      "properties": {
+        "projectCommandExternalEffects": { "$ref": "#/$defs/externalObservation" },
+        "seedDataProvenance": { "$ref": "#/$defs/externalObservation" },
+        "install": { "$ref": "#/$defs/nullableObject" },
+        "verify": { "$ref": "#/$defs/nullableObject" },
+        "rehearsal": { "$ref": "#/$defs/nullableObject" }
+      }
+    },
+    "stages": { "type": "object" },
+    "sqlArtifacts": { "type": "object" },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionAnchorMatched",
+        "productionCredentialsSuppliedByWorkflow",
+        "productionDatabaseAccessAuthorized",
+        "productionMigrationAuthorized",
+        "productionBackupOrRestoreAuthorized",
+        "trustedRehearsalProductionConnectionAccepted",
+        "trustedRehearsalRoleSuperuser",
+        "psqlMetaCommandsAcceptedByTrustedRehearsal",
+        "symbolicLinkSqlPathsAcceptedByTrustedRehearsal",
+        "disposableDatabaseEndsWithRunner"
+      ],
+      "properties": {
+        "productionAnchorMatched": { "type": "boolean" },
+        "productionCredentialsSuppliedByWorkflow": { "const": false },
+        "productionDatabaseAccessAuthorized": { "const": false },
+        "productionMigrationAuthorized": { "const": false },
+        "productionBackupOrRestoreAuthorized": { "const": false },
+        "trustedRehearsalProductionConnectionAccepted": { "const": false },
+        "trustedRehearsalRoleSuperuser": { "const": false },
+        "psqlMetaCommandsAcceptedByTrustedRehearsal": { "const": false },
+        "symbolicLinkSqlPathsAcceptedByTrustedRehearsal": { "const": false },
+        "disposableDatabaseEndsWithRunner": { "const": true }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "releaseState",
+        "productionEligible",
+        "productionDatabaseReadApproved",
+        "productionDatabaseWriteApproved",
+        "productionMigrationApproved",
+        "productionBackupOrRestoreApproved",
+        "mergeApproved",
+        "productionDeploymentApproved"
+      ],
+      "properties": {
+        "releaseState": { "const": "not-authorized" },
+        "productionEligible": { "const": false },
+        "productionDatabaseReadApproved": { "const": false },
+        "productionDatabaseWriteApproved": { "const": false },
+        "productionMigrationApproved": { "const": false },
+        "productionBackupOrRestoreApproved": { "const": false },
+        "mergeApproved": { "const": false },
+        "productionDeploymentApproved": { "const": false }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 13,
+      "maxItems": 13,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundary", "policySchema", "install", "projectVerify", "rehearsal", "installIntegrity", "verifyIntegrity", "rehearsalIntegrity"],
+      "properties": {
+        "boundary": { "const": "boundary.json" },
+        "policySchema": { "const": "policy-schema.json" },
+        "install": { "const": "commands/install.json" },
+        "projectVerify": { "const": "commands/verify.json" },
+        "rehearsal": { "const": "database/database-rehearsal.json" },
+        "installIntegrity": { "const": "integrity/after-install.json" },
+        "verifyIntegrity": { "const": "integrity/after-verify.json" },
+        "rehearsalIntegrity": { "const": "integrity/after-rehearsal.json" }
+      }
+    }
+  },
+  "$defs": {
+    "check": { "enum": ["passed", "failed"] },
+    "outcome": { "enum": ["success", "failure", "cancelled", "skipped", "unknown"] },
+    "nullableObject": {
+      "anyOf": [
+        { "type": "object" },
+        { "type": "null" }
+      ]
+    },
+    "externalObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "basis"],
+      "properties": {
+        "state": { "const": "unknown" },
+        "basis": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "expectedSha256", "matched"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }] },
+        "bytes": { "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "expectedSha256": { "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }] },
+        "matched": { "type": "boolean" },
+        "error": { "type": "string", "minLength": 1 }
+      }
+    },
+    "nullableCommit": {
+      "anyOf": [
+        { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        { "type": "null" }
+      ]
+    }
+  }
+}

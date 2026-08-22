@@ -1,0 +1,207 @@
+{
+  "documentType": "clover-handoff-action-envelope",
+  "schemaVersion": "0.1.0",
+  "actionId": "CLOVER-2026-08-20-001",
+  "envelopeId": "handoff-action:001:status-refresh",
+  "branchCapsuleId": "cell-capsule:clover-core:20260820",
+  "branchCapsuleHash": "9284103f45dde81732d04eaee79f04625a38ca78272218d3f0610eeffffb45d5",
+  "createdAt": "2026-08-20T21:19:42.000Z",
+  "expiresAt": "2026-08-20T21:34:42.000Z",
+  "lifecycle": {
+    "issuanceState": "available",
+    "singleUse": true,
+    "revocationStatus": "not-revoked",
+    "revokedAt": null,
+    "revocationEvidenceHash": null,
+    "consumptionStatus": "unconsumed-at-issuance",
+    "consumedAt": null,
+    "consumedByReceiptId": null
+  },
+  "operation": "refresh-public-candidate-status",
+  "requestedOutcome": "Refresh the minimized owner-session status for Core, Gateway, CloverApps, Serenity, and RollinD from exact public or sanitized source-bound metadata only.",
+  "target": {
+    "projectId": "clover-core",
+    "repository": "chrisdortch/first",
+    "branch": "platform/clover-core-trust-slice-v0.2-20260818",
+    "expectedCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "environment": "public-metadata"
+  },
+  "scope": {
+    "allowedConnectors": ["github", "vercel", "clover-context-gateway", "local-canonical-checkout"],
+    "allowedReadPaths": [
+      "CLOVER_CONTEXT_GATEWAY_POINTER.json",
+      "CLOVER_MASTER_PLAN_POINTER.json",
+      "portfolio/core/**",
+      "portfolio/status/candidates/2026-08-20/status.json",
+      "portfolio/status/current.json"
+    ],
+    "allowedWritePaths": [],
+    "allowedRecordingPaths": [
+      "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-receipt.json",
+      "portfolio/core/handoff/versions/0.1.0/reviews/**",
+      "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
+      "portfolio/core/handoff/index.json"
+    ],
+    "allowedActions": [
+      "read-public-metadata",
+      "verify-exact-identity",
+      "verify-local-cleanliness",
+      "verify-source-ancestry",
+      "assemble-sanitized-receipt",
+      "record-handoff-artifacts"
+    ],
+    "prohibitedActions": [
+      "merge",
+      "production-deployment",
+      "production-data-access",
+      "persistent-configuration-change",
+      "domain-or-alias-change",
+      "secret-change",
+      "external-message",
+      "payment-exercise",
+      "purchase"
+    ]
+  },
+  "sourceRequirements": [
+    {
+      "sourceRequirementId": "source:github-pr15",
+      "sourceId": "github",
+      "identityMode": "exact",
+      "expectedIdentity": "05dd1c8c4e14d8133bb78490f8108f6b3c62f518",
+      "required": true,
+      "privacyClass": "public-source-identity"
+    },
+    {
+      "sourceRequirementId": "source:github-pr16",
+      "sourceId": "github",
+      "identityMode": "exact",
+      "expectedIdentity": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "required": true,
+      "privacyClass": "public-source-identity"
+    },
+    {
+      "sourceRequirementId": "source:local-core",
+      "sourceId": "local-canonical-checkout",
+      "identityMode": "exact",
+      "expectedIdentity": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "required": true,
+      "privacyClass": "public-governance-metadata"
+    },
+    {
+      "sourceRequirementId": "source:local-cloverapps",
+      "sourceId": "local-canonical-checkout",
+      "identityMode": "exact",
+      "expectedIdentity": "live=7.4.2;Sites80=preserved;Sites81=029a4a1a18443277bd1e19804d1544ed798e6de8,undeployed",
+      "required": true,
+      "privacyClass": "sanitized-receipt-metadata"
+    },
+    {
+      "sourceRequirementId": "source:vercel-gateway",
+      "sourceId": "vercel",
+      "identityMode": "exact",
+      "expectedIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4",
+      "required": true,
+      "privacyClass": "public-source-identity"
+    },
+    {
+      "sourceRequirementId": "source:vercel-serenity",
+      "sourceId": "vercel",
+      "identityMode": "exact",
+      "expectedIdentity": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi",
+      "required": true,
+      "privacyClass": "public-source-identity"
+    },
+    {
+      "sourceRequirementId": "source:vercel-rollind",
+      "sourceId": "vercel",
+      "identityMode": "exact",
+      "expectedIdentity": "dpl_9jvysecyBL91t6bUg91k6sdSe67g",
+      "required": true,
+      "privacyClass": "public-source-identity"
+    },
+    {
+      "sourceRequirementId": "source:gateway-runtime",
+      "sourceId": "clover-context-gateway",
+      "identityMode": "exact",
+      "expectedIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4@364a9a96829f323aa00a679804fdd7ed879043b5",
+      "required": true,
+      "privacyClass": "public-governance-metadata"
+    }
+  ],
+  "evidenceRequirements": [
+    { "evidenceId": "evidence:exact-pr-identities", "kind": "source-identity", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true },
+    { "evidenceId": "evidence:local-cleanliness", "kind": "cleanliness", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true },
+    { "evidenceId": "evidence:stack-ancestry", "kind": "ancestry", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true },
+    { "evidenceId": "evidence:deployment-identities", "kind": "deployment", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true },
+    { "evidenceId": "evidence:sanitized-receipt", "kind": "receipt", "exactSourceRequired": true, "sourceBoundRequired": true, "required": true }
+  ],
+  "readbackRequirements": [
+    { "readbackId": "readback:github-pr15", "connector": "github", "subject": "chrisdortch/first pull request 15", "expectedIdentity": "05dd1c8c4e14d8133bb78490f8108f6b3c62f518", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:github-pr16", "connector": "github", "subject": "chrisdortch/first pull request 16", "expectedIdentity": "364a9a96829f323aa00a679804fdd7ed879043b5", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:local-pr16", "connector": "local-canonical-checkout", "subject": "canonical Clover Core checkout", "expectedIdentity": "364a9a96829f323aa00a679804fdd7ed879043b5", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:gateway", "connector": "clover-context-gateway", "subject": "Gateway 0.3.0 candidate", "expectedIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4@364a9a96829f323aa00a679804fdd7ed879043b5", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:gateway-deployment", "connector": "vercel", "subject": "Gateway candidate deployment", "expectedIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:cloverapps", "connector": "local-canonical-checkout", "subject": "CloverApps live and source checkpoints", "expectedIdentity": "live=7.4.2;Sites80=preserved;Sites81=029a4a1a18443277bd1e19804d1544ed798e6de8,undeployed", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:serenity-pr22", "connector": "github", "subject": "Serenity pull request 22", "expectedIdentity": "0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:serenity-preview", "connector": "vercel", "subject": "Serenity primary preview", "expectedIdentity": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:rollind-main", "connector": "github", "subject": "RollinD production main", "expectedIdentity": "6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:rollind-pr3", "connector": "github", "subject": "RollinD pull request 3", "expectedIdentity": "8db83f9c526915d2d58385b78da71ff344b18c99", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:rollind-pr6", "connector": "github", "subject": "RollinD pull request 6", "expectedIdentity": "ae2f1b0d2a649e645b1d2445b482f539670c6275", "required": true, "failIfUnavailable": true },
+    { "readbackId": "readback:rollind-pr6-preview", "connector": "vercel", "subject": "RollinD pull request 6 preview", "expectedIdentity": "dpl_9jvysecyBL91t6bUg91k6sdSe67g", "required": true, "failIfUnavailable": true }
+  ],
+  "requestedAuthority": {
+    "readPublicMetadata": true,
+    "createIsolatedBranch": false,
+    "commitCandidate": false,
+    "pushCandidateBranch": false,
+    "openDraftPullRequest": false,
+    "runNonProductionChecks": false,
+    "createNonProductionPreview": false,
+    "recordHandoffArtifacts": true,
+    "standingAuthority": false,
+    "mergeAuthorized": false,
+    "productionDeploymentAuthorized": false,
+    "productionDataAccessAuthorized": false,
+    "persistentConfigurationChangeAuthorized": false,
+    "externalMessageAuthorized": false,
+    "purchaseAuthorized": false
+  },
+  "authority": {
+    "readPublicMetadata": true,
+    "createIsolatedBranch": false,
+    "commitCandidate": false,
+    "pushCandidateBranch": false,
+    "openDraftPullRequest": false,
+    "runNonProductionChecks": false,
+    "createNonProductionPreview": false,
+    "recordHandoffArtifacts": true,
+    "standingAuthority": false,
+    "mergeAuthorized": false,
+    "productionDeploymentAuthorized": false,
+    "productionDataAccessAuthorized": false,
+    "persistentConfigurationChangeAuthorized": false,
+    "externalMessageAuthorized": false,
+    "purchaseAuthorized": false
+  },
+  "approval": {
+    "required": false,
+    "requiredApproverId": "owner:chris-dortch",
+    "status": "not-required",
+    "approvalEvidenceHash": null
+  },
+  "dataBoundary": {
+    "allowedClasses": ["public-governance-metadata", "public-source-identity"],
+    "rawCellDataAllowed": false,
+    "privateDataAllowed": false,
+    "secretValuesAllowed": false,
+    "productionDataReadAllowed": false
+  },
+  "costBoundary": {
+    "currency": "USD",
+    "maxExplicitPurchaseOrMoneyMovementUsd": 0,
+    "explicitPurchaseOrMoneyMovementAuthorized": false,
+    "providerMeteredUsageCostStatus": "unknown"
+  },
+  "stopConditions": ["source-identity-changed", "branch-not-clean", "connector-unavailable"],
+  "envelopeHash": "0f246dfa000fee8c8f7b24a0e21075236fe05f1cc647736747f9f9df8cd4afba"
+}

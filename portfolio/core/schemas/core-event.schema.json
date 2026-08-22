@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core-event.schema.json",
+  "title": "Clover Core Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "recordedAt",
+    "actor",
+    "subject",
+    "truthStatus",
+    "sensitivity",
+    "sources",
+    "payload",
+    "synthetic"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^evt_[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "source_observed",
+        "assertion_proposed",
+        "assertion_verified",
+        "assertion_disputed",
+        "assertion_superseded",
+        "decision_proposed",
+        "decision_ratified",
+        "approval_granted",
+        "approval_revoked",
+        "action_prepared",
+        "action_started",
+        "action_completed",
+        "action_verified",
+        "action_failed",
+        "action_rolled_back",
+        "projection_published",
+        "daily_log_projected"
+      ]
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "effectiveAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actorType",
+        "actorId"
+      ],
+      "properties": {
+        "actorType": {
+          "enum": [
+            "owner",
+            "human",
+            "ai-model",
+            "connector",
+            "deterministic-system"
+          ]
+        },
+        "actorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "modelVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjectType",
+        "subjectId"
+      ],
+      "properties": {
+        "subjectType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "subjectId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "projectId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        },
+        "cellId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 160
+        }
+      }
+    },
+    "truthStatus": {
+      "enum": [
+        "source-fact",
+        "owner-assertion",
+        "ai-inference",
+        "verified",
+        "disputed",
+        "superseded",
+        "unknown",
+        "not-applicable"
+      ]
+    },
+    "confidence": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "sensitivity": {
+      "enum": [
+        "public",
+        "internal",
+        "private",
+        "sensitive",
+        "strategically-sensitive",
+        "legal",
+        "credential",
+        "secret"
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceType",
+          "sourceId",
+          "observedAt"
+        ],
+        "properties": {
+          "sourceType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "observedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "contentHash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(sha256:)?[a-f0-9]{64}$"
+          },
+          "freshness": {
+            "enum": [
+              "current-task",
+              "current",
+              "stale",
+              "unknown",
+              "not-applicable"
+            ]
+          }
+        }
+      }
+    },
+    "authorityRef": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 240
+    },
+    "previousEventHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(sha256:)?[a-f0-9]{64}$"
+    },
+    "payloadHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(sha256:)?[a-f0-9]{64}$"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "notes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 2000
+    }
+  }
+}

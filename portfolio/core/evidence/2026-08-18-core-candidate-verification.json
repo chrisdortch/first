@@ -1,0 +1,98 @@
+{
+  "documentType": "clover-core-candidate-verification-receipt",
+  "schemaVersion": "0.1",
+  "recordedAt": "2026-08-18T18:38:33-05:00",
+  "timezone": "America/Chicago",
+  "status": "deterministic-passed-preview-pending",
+  "publicRepositorySafe": true,
+  "candidate": {
+    "repository": "chrisdortch/first",
+    "baseBranch": "main",
+    "rollbackAnchor": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+    "branch": "platform/clover-context-gateway-core-today-20260818",
+    "architectureCommit": "6874948de5cf099b4966e857489e57ea482a3cbf",
+    "implementationCommit": "a731ebb291c47ebca69a178f9d667a81608a8c31",
+    "pullRequest": 15,
+    "pullRequestState": "open-draft-unmerged",
+    "commitsAtImplementationReadback": 2,
+    "changedFilesAtImplementationReadback": 22,
+    "additionsAtImplementationReadback": 2790,
+    "deletionsAtImplementationReadback": 114
+  },
+  "liveUseObservation": {
+    "commandId": "clover-179fc586efe5eb28",
+    "request": "What should I know today across my current priorities?",
+    "observedBehavior": "The deployed router classified the portfolio request as evolve_project, left the target unresolved, and requested a project selection.",
+    "candidateCorrection": "portfolio_operating_loop with brief, explain_priority, recommend_next, execute_safe_parts, and report_activity modes",
+    "deployedCorrectionClaimed": false
+  },
+  "localValidation": {
+    "javascriptSyntax": "passed",
+    "routerRegressionTests": {
+      "status": "passed",
+      "tests": 7,
+      "dailyModesCovered": 5
+    },
+    "generatedPortfolioPacketSchemaValidation": "passed",
+    "productionAuthorityInGeneratedPacket": false
+  },
+  "githubActions": [
+    {
+      "runId": 32197960421,
+      "name": "Validate Clover master plan",
+      "commit": "a731ebb291c47ebca69a178f9d667a81608a8c31",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "runId": 32197960440,
+      "name": "Validate Clover Context Gateway",
+      "commit": "a731ebb291c47ebca69a178f9d667a81608a8c31",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "runId": 32197960465,
+      "name": "Validate Clover Core Candidate",
+      "commit": "a731ebb291c47ebca69a178f9d667a81608a8c31",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "vercel": {
+    "teamId": "team_kx19aCrSTnej6wpz0fLgmYDY",
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "projectName": "clover-context-gateway-preview",
+    "unchangedBaselineDeployment": "dpl_7nhkHzYK5tRJjKNRZCiqmjvJFwTn",
+    "baselineState": "READY",
+    "baselineTarget": null,
+    "baselineAliases": [],
+    "candidateDeploymentObserved": false,
+    "candidateVisualReadback": "not-run",
+    "reasonNotDeployed": "The available generic deploy action did not expose exact project and commit binding; using it would violate target verification and isolation requirements."
+  },
+  "authority": {
+    "standingProductionAuthority": false,
+    "mergeApproved": false,
+    "productionDeploymentApproved": false,
+    "productionDataAccessApproved": false,
+    "privateDataIngestionApproved": false,
+    "secretAccessApproved": false,
+    "externalMessageApproved": false,
+    "purchaseApproved": false,
+    "domainOrDnsChangeApproved": false,
+    "credentialOrPermissionChangeApproved": false,
+    "openAiSiteChangeApproved": false
+  },
+  "gates": {
+    "deterministic": "passed",
+    "exactCommitPreview": "pending",
+    "desktopVisual": "pending",
+    "mobileVisual": "pending",
+    "constitutionRatification": "pending",
+    "merge": "not-authorized",
+    "production": "not-authorized"
+  },
+  "missionCompletionEstimate": 41,
+  "missionEstimateChanged": false
+}

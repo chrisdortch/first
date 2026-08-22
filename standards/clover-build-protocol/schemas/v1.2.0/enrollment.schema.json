@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-build-enrollment-1.2.0.json",
+  "title": "Clover Build Enrollment 1.2.0 candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocolVersion", "status", "project", "policy", "source", "authority"],
+  "properties": {
+    "schemaVersion": { "const": "1.2" },
+    "protocolVersion": { "const": "1.2.0" },
+    "status": { "enum": ["draft", "enrolled", "revoked"] },
+    "enrolledAt": { "type": ["string", "null"] },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "productionBranch"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+        "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+        "productionBranch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+$" }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baselineCommit", "baselineTree", "productionCommitAtEnrollment"],
+      "properties": {
+        "baselineCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "baselineTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "productionCommitAtEnrollment": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseState", "productionEligible"],
+      "properties": {
+        "releaseState": { "const": "not-authorized" },
+        "productionEligible": { "const": false }
+      }
+    }
+  }
+}

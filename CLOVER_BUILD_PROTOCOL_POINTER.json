@@ -16,6 +16,20 @@
   "ownerApprovalRequiredForIrreversibleActions": true,
   "reusableWorkflow": ".github/workflows/clover-preview-v1.1.yml",
   "schemasDirectory": "standards/clover-build-protocol/schemas",
+  "candidate": {
+    "version": "1.2.0",
+    "status": "candidate-unvalidated-awaiting-exact-head-ci",
+    "document": "standards/clover-build-protocol/versions/1.2.0/CLOVER_BUILD_PROTOCOL.md",
+    "reusableWorkflow": ".github/workflows/clover-preview-v1.2.yml",
+    "runtimeDirectory": "standards/clover-build-protocol/runtime/v1.2.0",
+    "schemasDirectory": "standards/clover-build-protocol/schemas/v1.2.0",
+    "exactHeadCI": {
+      "status": "not-run",
+      "commit": null,
+      "runId": null
+    },
+    "standingProductionAuthority": false
+  },
   "readFirst": [
     "AI_START_HERE.md",
     "standards/clover-build-protocol/CURRENT.md",

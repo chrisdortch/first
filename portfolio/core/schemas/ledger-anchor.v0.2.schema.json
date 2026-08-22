@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/ledger-anchor.v0.2.schema.json",
+  "title": "Clover Ledger Anchor Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "status", "ledgerId", "eventCount", "firstSequence", "lastSequence", "headEventHash", "ledgerFileSha256", "recordedAt", "independentAttestation", "anchorHash"],
+  "properties": {
+    "documentType": { "const": "clover-ledger-anchor-request" },
+    "schemaVersion": { "const": "0.2" },
+    "status": { "const": "prepared-unanchored" },
+    "ledgerId": { "type": "string", "minLength": 1 },
+    "eventCount": { "type": "integer", "minimum": 1 },
+    "firstSequence": { "const": 1 },
+    "lastSequence": { "type": "integer", "minimum": 1 },
+    "headEventHash": { "$ref": "#/$defs/sha256" },
+    "ledgerFileSha256": { "$ref": "#/$defs/sha256" },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "independentAttestation": { "type": "null" },
+    "anchorHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

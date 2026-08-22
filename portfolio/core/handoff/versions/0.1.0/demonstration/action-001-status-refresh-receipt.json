@@ -1,0 +1,372 @@
+{
+  "documentType": "clover-handoff-execution-receipt",
+  "schemaVersion": "0.1.0",
+  "actionId": "CLOVER-2026-08-20-001",
+  "receiptId": "handoff-receipt:001:status-refresh",
+  "envelopeId": "handoff-action:001:status-refresh",
+  "envelopeHash": "0f246dfa000fee8c8f7b24a0e21075236fe05f1cc647736747f9f9df8cd4afba",
+  "branchCapsuleId": "cell-capsule:clover-core:20260820",
+  "branchCapsuleHash": "9284103f45dde81732d04eaee79f04625a38ca78272218d3f0610eeffffb45d5",
+  "startedAt": "2026-08-20T21:19:43.000Z",
+  "completedAt": "2026-08-20T21:19:44.000Z",
+  "executorLane": "connected-readback",
+  "source": {
+    "bindingRole": "target-source",
+    "repository": "chrisdortch/first",
+    "branch": "platform/clover-core-trust-slice-v0.2-20260818",
+    "commit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "tree": "7c65e5d49021e9255e0fa34bb27dce05b78c8123"
+  },
+  "reconciliation": {
+    "status": "not-applicable",
+    "inputCapsuleId": "cell-capsule:clover-core:20260820",
+    "inputCapsuleHash": "9284103f45dde81732d04eaee79f04625a38ca78272218d3f0610eeffffb45d5",
+    "resultCapsuleId": null,
+    "resultCapsulePath": null,
+    "resultCapsuleHash": null
+  },
+  "outcome": "succeeded",
+  "observations": [
+    {
+      "observationId": "observation:github-pr15",
+      "sourceId": "github",
+      "subject": "chrisdortch/first pull request 15",
+      "observedIdentity": "head=05dd1c8c4e14d8133bb78490f8108f6b3c62f518;base=be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+      "identityKey": "05dd1c8c4e14d8133bb78490f8108f6b3c62f518",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "open,draft,unmerged,mergeable",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/first/pull/15",
+      "evidenceHash": "560e15dfa8d87bc6893e6a5581bd9cba7e5bf3c11d37e76c5aa8c60baba4a35e"
+    },
+    {
+      "observationId": "observation:github-pr16",
+      "sourceId": "github",
+      "subject": "chrisdortch/first pull request 16",
+      "observedIdentity": "head=364a9a96829f323aa00a679804fdd7ed879043b5;base=05dd1c8c4e14d8133bb78490f8108f6b3c62f518",
+      "identityKey": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "open,draft,unmerged,mergeable",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/first/pull/16",
+      "evidenceHash": "839b51b78b9a36325b9077611976015a2d66347d204190094b924c3384890322"
+    },
+    {
+      "observationId": "observation:local-checkout",
+      "sourceId": "local-canonical-checkout",
+      "subject": "canonical Clover Core checkout",
+      "observedIdentity": "head=364a9a96829f323aa00a679804fdd7ed879043b5;tree=7c65e5d49021e9255e0fa34bb27dce05b78c8123",
+      "identityKey": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "clean,exact-upstream-head",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "git:status--porcelain-and-rev-parse",
+      "evidenceHash": "2f0cf0e5da949a8a56fa4b0ac63c75fd7968de44a6f15aeec22ebd064908df81"
+    },
+    {
+      "observationId": "observation:stack-ancestry",
+      "sourceId": "github",
+      "subject": "pull request 15 to pull request 16 ancestry",
+      "observedIdentity": "merge-base=05dd1c8c4e14d8133bb78490f8108f6b3c62f518;ahead=6;behind=0",
+      "identityKey": "05dd1c8c4e14d8133bb78490f8108f6b3c62f518...364a9a96829f323aa00a679804fdd7ed879043b5",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "exact-stacked-ancestry-confirmed",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/first/compare/05dd1c8c4e14d8133bb78490f8108f6b3c62f518...364a9a96829f323aa00a679804fdd7ed879043b5",
+      "evidenceHash": "10ab226396a8bde4a416c57779040db7614b2a7aaa9984ccd79836997a56107e"
+    },
+    {
+      "observationId": "observation:gateway-runtime",
+      "sourceId": "clover-context-gateway",
+      "subject": "Gateway 0.3.0 candidate",
+      "observedIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4@364a9a96829f323aa00a679804fdd7ed879043b5",
+      "identityKey": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4@364a9a96829f323aa00a679804fdd7ed879043b5",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "ready,target-null,aliases-empty,read-only,write-tools-disabled,standing-production-authority-false",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "portfolio/status/candidates/2026-08-20/status.json#gateway",
+      "evidenceHash": "bc975ffd67f44da9a1506e912e6c6b7da57179818b33c7f6949ca4820ab2588d"
+    },
+    {
+      "observationId": "observation:gateway-deployment",
+      "sourceId": "vercel",
+      "subject": "Gateway candidate deployment",
+      "observedIdentity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4;source=364a9a96829f323aa00a679804fdd7ed879043b5",
+      "identityKey": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "READY,target-null,aliases-empty",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "Clover_Gateway_PR16_Source_Bound_Receipt_2026-08-20.json",
+      "evidenceHash": "d997137f571d3be65ef87b46fb4240462253fa836e33c6a1c80b49d3611ed580"
+    },
+    {
+      "observationId": "observation:cloverapps-checkpoints",
+      "sourceId": "local-canonical-checkout",
+      "subject": "CloverApps live and source checkpoints",
+      "observedIdentity": "live=7.4.2;Sites80=preserved;Sites81=029a4a1a18443277bd1e19804d1544ed798e6de8,undeployed",
+      "identityKey": "live=7.4.2;Sites80=preserved;Sites81=029a4a1a18443277bd1e19804d1544ed798e6de8,undeployed",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "live-current-candidate-separated;Sites81-preview-none",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "CloverApps_7.4.3_Sites81_Source_Save_Receipt_2026-08-20.json",
+      "evidenceHash": "99c87f6f376af58b51444de497232bb779835497d24863fb5e9aff2bbe88d4cc"
+    },
+    {
+      "observationId": "observation:serenity-pr22",
+      "sourceId": "github",
+      "subject": "Serenity pull request 22",
+      "observedIdentity": "head=0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03;tree=37fcabb90c3accbeff63173a270a30d5002b87ab;run=32392241490",
+      "identityKey": "0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "open,draft,unmerged,unchanged",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/serenity-stores/pull/22",
+      "evidenceHash": "10d00e42225630a16ea1b5f972a9a8258a061638fcb47f61d74883183ff98c58"
+    },
+    {
+      "observationId": "observation:serenity-preview",
+      "sourceId": "vercel",
+      "subject": "Serenity primary preview",
+      "observedIdentity": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi;source=0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03",
+      "identityKey": "dpl_78YM77F4L7eVzVg3MWx7EtheBcBi",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "READY,target-null",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "Serenity_PR22_Source_Bound_Receipt_2026-08-20.json",
+      "evidenceHash": "31a2fcd5691719436e96c1f563656efa3afea38190fb405e80b4ecd5929804a8"
+    },
+    {
+      "observationId": "observation:rollind-main",
+      "sourceId": "github",
+      "subject": "RollinD production main",
+      "observedIdentity": "head=6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09;deployment=dpl_Bsudbp7aV4G2sbqJUEDQqcRS8mpQ",
+      "identityKey": "6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "unchanged-production-anchor",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/rollindd-platform/tree/main",
+      "evidenceHash": "f1621c3c81a2d151093fedd86cead9c37745a35d456a500373150482037770ec"
+    },
+    {
+      "observationId": "observation:rollind-pr3",
+      "sourceId": "github",
+      "subject": "RollinD pull request 3",
+      "observedIdentity": "head=8db83f9c526915d2d58385b78da71ff344b18c99;tree=dabb64b23f326cdb55705d526606e7fb11f3d12d",
+      "identityKey": "8db83f9c526915d2d58385b78da71ff344b18c99",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "open,draft,unmerged,unchanged",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/rollindd-platform/pull/3",
+      "evidenceHash": "e0872d28edaee5c3a79df80b9f68d373ed0f81a3b997d585a32782df98c535e4"
+    },
+    {
+      "observationId": "observation:rollind-pr6",
+      "sourceId": "github",
+      "subject": "RollinD pull request 6",
+      "observedIdentity": "head=ae2f1b0d2a649e645b1d2445b482f539670c6275;tree=1dd58bb2259f48341bbef94c048f22dcb68c8545;run=32409106490",
+      "identityKey": "ae2f1b0d2a649e645b1d2445b482f539670c6275",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "open,draft,unmerged,exact-head-ci-passed",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "https://github.com/chrisdortch/rollindd-platform/pull/6",
+      "evidenceHash": "4d2ae30982db9f342ed1c47863bf09917a9da0e2b0bb08c873fe45a0ff5e9869"
+    },
+    {
+      "observationId": "observation:rollind-pr6-preview",
+      "sourceId": "vercel",
+      "subject": "RollinD pull request 6 preview",
+      "observedIdentity": "dpl_9jvysecyBL91t6bUg91k6sdSe67g;source=ae2f1b0d2a649e645b1d2445b482f539670c6275",
+      "identityKey": "dpl_9jvysecyBL91t6bUg91k6sdSe67g",
+      "availability": "available",
+      "identityResolution": "exact-resolved",
+      "state": "READY,target-null;deployed-page-readback-unavailable-existing-sso",
+      "observedAt": "2026-08-20T21:19:43.000Z",
+      "evidenceRef": "RollinD_PR3_Candidate_Reconciliation_Receipt_2026-08-20.json",
+      "evidenceHash": "7a08b7a327e1fba929d04444b5981d59a0541d8916d9571f421327ed75d2f4ea"
+    }
+  ],
+  "checks": [
+    {
+      "checkId": "check:starting-identities",
+      "conclusion": "passed",
+      "summary": "Both reviewed pull requests retained their exact expected heads and draft, unmerged state.",
+      "checkHash": "837a1d4113c940a0cf7d6619de4bc5acb9309a21bb6343bd6cf7929e64fe698c"
+    },
+    {
+      "checkId": "check:local-cleanliness",
+      "conclusion": "passed",
+      "summary": "The canonical checkout contained no tracked or untracked changes and matched the PR 16 head.",
+      "checkHash": "8ce5e82c1bed15fa6eee6ce1a56be7fdb83c7509f0e508012fb616dab1cfd419"
+    },
+    {
+      "checkId": "check:stack-ancestry",
+      "conclusion": "passed",
+      "summary": "PR 16 remained exactly six commits ahead of PR 15 with PR 15 as its merge base.",
+      "checkHash": "eff5154c46a29b10c0b20605821d53fac65be1eb9f2b2090fb561473ebe2e01c"
+    },
+    {
+      "checkId": "check:gateway-boundary",
+      "conclusion": "passed",
+      "summary": "Gateway 0.3.0 remained exact-source-bound, read-only, target null, alias-free, with write tools and standing production authority disabled.",
+      "checkHash": "07a050fa6c34e9de7677b8f1ed0111eb054c9f55671557fa2a7b1ae2a179cbb0"
+    },
+    {
+      "checkId": "check:cloverapps-separation",
+      "conclusion": "passed",
+      "summary": "Live CloverApps 7.4.2, Sites 80, and saved undeployed Sites 81 remained separately identified; no preview or deployment was inferred.",
+      "checkHash": "c06c1ba1f3c862309bce8e08a0b9f93199a1125441b8103c3d38acb5dbd3075b"
+    },
+    {
+      "checkId": "check:serenity-anchor",
+      "conclusion": "passed",
+      "summary": "Serenity PR 22 and its primary target-null preview retained the exact reviewed source identities.",
+      "checkHash": "7f3f55eca9d1c1fed6c9103d3ea863a20ddc63214708344b9fa5987543d4cda6"
+    },
+    {
+      "checkId": "check:rollind-anchors",
+      "conclusion": "passed",
+      "summary": "RollinD production main, PR 3, PR 6, exact-head CI, and the target-null PR 6 preview remained distinctly and exactly identified.",
+      "checkHash": "b1602342675a7b95816e2ef0484221da57c49aa745db50124431de25bc48f46b"
+    }
+  ],
+  "actionsPerformed": [
+    "read-public-metadata",
+    "verify-exact-identity",
+    "verify-local-cleanliness",
+    "verify-source-ancestry",
+    "assemble-sanitized-receipt",
+    "record-handoff-artifacts"
+  ],
+  "evidenceBindings": [
+    {
+      "evidenceId": "evidence:exact-pr-identities",
+      "kind": "source-identity",
+      "bindingType": "observation",
+      "boundHashes": [
+        "560e15dfa8d87bc6893e6a5581bd9cba7e5bf3c11d37e76c5aa8c60baba4a35e",
+        "839b51b78b9a36325b9077611976015a2d66347d204190094b924c3384890322",
+        "2f0cf0e5da949a8a56fa4b0ac63c75fd7968de44a6f15aeec22ebd064908df81",
+        "bc975ffd67f44da9a1506e912e6c6b7da57179818b33c7f6949ca4820ab2588d",
+        "99c87f6f376af58b51444de497232bb779835497d24863fb5e9aff2bbe88d4cc",
+        "10d00e42225630a16ea1b5f972a9a8258a061638fcb47f61d74883183ff98c58",
+        "f1621c3c81a2d151093fedd86cead9c37745a35d456a500373150482037770ec",
+        "e0872d28edaee5c3a79df80b9f68d373ed0f81a3b997d585a32782df98c535e4",
+        "4d2ae30982db9f342ed1c47863bf09917a9da0e2b0bb08c873fe45a0ff5e9869"
+      ]
+    },
+    {
+      "evidenceId": "evidence:local-cleanliness",
+      "kind": "cleanliness",
+      "bindingType": "check",
+      "boundHashes": ["8ce5e82c1bed15fa6eee6ce1a56be7fdb83c7509f0e508012fb616dab1cfd419"]
+    },
+    {
+      "evidenceId": "evidence:stack-ancestry",
+      "kind": "ancestry",
+      "bindingType": "check",
+      "boundHashes": ["eff5154c46a29b10c0b20605821d53fac65be1eb9f2b2090fb561473ebe2e01c"]
+    },
+    {
+      "evidenceId": "evidence:deployment-identities",
+      "kind": "deployment",
+      "bindingType": "observation",
+      "boundHashes": [
+        "d997137f571d3be65ef87b46fb4240462253fa836e33c6a1c80b49d3611ed580",
+        "31a2fcd5691719436e96c1f563656efa3afea38190fb405e80b4ecd5929804a8",
+        "7a08b7a327e1fba929d04444b5981d59a0541d8916d9571f421327ed75d2f4ea"
+      ]
+    },
+    {
+      "evidenceId": "evidence:sanitized-receipt",
+      "kind": "receipt",
+      "bindingType": "resulting-state",
+      "boundHashes": ["435c58d75a546c792ecbc290180113f7af50c82c89f8e1e955b8db1621e92dba"]
+    }
+  ],
+  "changes": {
+    "targetSourceMutationPerformed": false,
+    "changedPaths": [],
+    "recordedHandoffPaths": [
+      "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-receipt.json",
+      "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
+      "portfolio/core/handoff/index.json"
+    ],
+    "summary": "No source, branch, pull request, deployment, or persistent configuration was changed; the action refreshed public and local source identities only."
+  },
+  "candidateEffects": {
+    "branch": { "performed": false, "repository": null, "branch": null, "baseCommit": null },
+    "commit": { "performed": false, "commit": null, "tree": null },
+    "push": { "performed": false, "remoteBranch": null, "commit": null },
+    "draftPullRequest": {
+      "performed": false,
+      "repository": null,
+      "number": null,
+      "url": null,
+      "baseBranch": null,
+      "headBranch": null,
+      "headCommit": null
+    }
+  },
+  "previews": [],
+  "resultingState": {
+    "projectId": "clover-core",
+    "sourceCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "summary": "The minimized owner-session refresh preserved exact live/current/candidate boundaries across Core, Gateway, CloverApps, Serenity, and RollinD; the sanitized receipt is the only durable result.",
+    "persistedReceiptRef": "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-receipt.json",
+    "productionStateChanged": false,
+    "unknowns": []
+  },
+  "authorityUsed": {
+    "readPublicMetadata": true,
+    "createIsolatedBranch": false,
+    "commitCandidate": false,
+    "pushCandidateBranch": false,
+    "openDraftPullRequest": false,
+    "runNonProductionChecks": false,
+    "createNonProductionPreview": false,
+    "recordHandoffArtifacts": true
+  },
+  "sideEffects": {
+    "mergePerformed": false,
+    "productionDeploymentPerformed": false,
+    "productionDataAccessed": false,
+    "persistentConfigurationChanged": false,
+    "domainOrAliasChanged": false,
+    "secretChanged": false,
+    "externalMessageSent": false,
+    "paymentExercised": false,
+    "purchaseMade": false,
+    "handoffLedgerArtifactsRecorded": true,
+    "productionTargetChanged": false
+  },
+  "cost": {
+    "lane": "existing-connected-plan",
+    "explicitPurchaseOrMoneyMovementUsd": 0,
+    "providerMeteredUsageCostUsd": null,
+    "providerMeteredUsageCostStatus": "unknown",
+    "paidExternalServicePurchased": false
+  },
+  "rollback": {
+    "anchorType": "git-commit",
+    "anchorIdentity": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "required": false,
+    "exercised": false
+  },
+  "unknowns": [
+    "Provider-metered usage cost for connected readback is unavailable and remains unknown.",
+    "The RollinD PR 6 deployed page remains unreadable through existing Vercel SSO; only its exact deployment metadata, source binding, target-null state, and CI evidence are verified."
+  ],
+  "receiptHash": "85a80a7aea223d2317477e6975a9f1a34bd5fed8ba2f1f1e48edf2e742a6f3d8"
+}

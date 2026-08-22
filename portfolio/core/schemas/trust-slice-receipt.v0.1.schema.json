@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/trust-slice-receipt.v0.1.schema.json",
+  "title": "Clover Synthetic Trust Slice Receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "result", "synthetic", "asOf", "ledgerId", "correction", "preDeletion", "postDeletion", "exactSourceCapture", "retentionPolicySha256", "runtimeBundleHash", "promptsInSourceGrantedNoPermission", "operationsPerformed", "receiptHash"],
+  "properties": {
+    "documentType": { "const": "clover-trust-slice-receipt" },
+    "schemaVersion": { "const": "0.1" },
+    "result": { "const": "passed" },
+    "synthetic": { "const": true },
+    "asOf": { "type": "string", "format": "date-time" },
+    "ledgerId": { "type": "string", "minLength": 1 },
+    "correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctedClaimEventId", "supersededClaimEventId", "explicitSupersessionVerified"],
+      "properties": {
+        "correctedClaimEventId": { "type": "string", "minLength": 1 },
+        "supersededClaimEventId": { "type": "string", "minLength": 1 },
+        "explicitSupersessionVerified": { "const": true }
+      }
+    },
+    "preDeletion": { "$ref": "#/$defs/phaseEvidence" },
+    "postDeletion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventCount", "headEventHash", "ledgerSha256", "derivedStateHash", "exportManifestHash", "restoreLedgerSha256", "restoreDerivedStateHash", "deletedContentHash", "tombstoneHash", "localAbsenceVerified", "localAbsenceScope", "knownLocalCopiesRetained", "knownLocalCopyCount", "externalCopiesUnknown", "externalErasureClaimed"],
+      "properties": {
+        "eventCount": { "type": "integer", "minimum": 1 },
+        "headEventHash": { "$ref": "#/$defs/sha256" },
+        "ledgerSha256": { "$ref": "#/$defs/sha256" },
+        "derivedStateHash": { "$ref": "#/$defs/sha256" },
+        "exportManifestHash": { "$ref": "#/$defs/sha256" },
+        "restoreLedgerSha256": { "$ref": "#/$defs/sha256" },
+        "restoreDerivedStateHash": { "$ref": "#/$defs/sha256" },
+        "deletedContentHash": { "$ref": "#/$defs/sha256" },
+        "tombstoneHash": { "$ref": "#/$defs/sha256" },
+        "localAbsenceVerified": { "const": true },
+        "localAbsenceScope": { "const": "active-content-addressed-store-and-post-deletion-export" },
+        "knownLocalCopiesRetained": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "knownLocalCopyCount": { "type": "integer", "minimum": 1 },
+        "externalCopiesUnknown": { "const": true },
+        "externalErasureClaimed": { "const": false }
+      }
+    },
+    "exactSourceCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceV1Sha256", "sourceV2Sha256"],
+      "properties": {
+        "sourceV1Sha256": { "$ref": "#/$defs/sha256" },
+        "sourceV2Sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "retentionPolicySha256": { "$ref": "#/$defs/sha256" },
+    "runtimeBundleHash": { "$ref": "#/$defs/sha256" },
+    "promptsInSourceGrantedNoPermission": { "const": true },
+    "operationsPerformed": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "receiptHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "phaseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventCount", "headEventHash", "ledgerSha256", "derivedStateHash", "exportManifestHash", "restoreLedgerSha256", "restoreDerivedStateHash"],
+      "properties": {
+        "eventCount": { "type": "integer", "minimum": 1 },
+        "headEventHash": { "$ref": "#/$defs/sha256" },
+        "ledgerSha256": { "$ref": "#/$defs/sha256" },
+        "derivedStateHash": { "$ref": "#/$defs/sha256" },
+        "exportManifestHash": { "$ref": "#/$defs/sha256" },
+        "restoreLedgerSha256": { "$ref": "#/$defs/sha256" },
+        "restoreDerivedStateHash": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

@@ -5,13 +5,27 @@ on:
     branches:
       - main
       - 'platform/clover-context-gateway*'
+      - 'platform/clover-core-*'
     paths:
       - 'AGENTS.md'
       - 'AI_START_HERE.md'
+      - 'CHATGPT_PROJECT_INSTRUCTIONS.md'
+      - 'CLOVER_CONNECTOR_ROUTING.md'
       - 'CLOVER_CONTEXT_GATEWAY_POINTER.json'
+      - 'CLOVER_HANDOFF_LEDGER.md'
+      - 'CLOVER_OWNER_START.md'
+      - 'CODEX_CLOVER_OPERATOR.md'
       - 'apps/clover-context-gateway/**'
+      - 'portfolio/core/handoff/**'
+      - 'portfolio/core/lib/publication-finalization.mjs'
+      - 'portfolio/core/publication/**'
+      - 'portfolio/core/scripts/verify-publication-finalization.mjs'
+      - 'portfolio/core/today/**'
       - 'portfolio/context/**'
+      - 'portfolio/registry/projections/core-project-index.v2.json'
+      - 'portfolio/status/candidates/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
+      - 'portfolio/schemas/clover-command-packet-1.2.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
       - 'portfolio/schemas/clover-project-context-pointer.schema.json'
       - '.github/workflows/validate-clover-context-gateway.yml'
@@ -19,10 +33,23 @@ on:
     paths:
       - 'AGENTS.md'
       - 'AI_START_HERE.md'
+      - 'CHATGPT_PROJECT_INSTRUCTIONS.md'
+      - 'CLOVER_CONNECTOR_ROUTING.md'
       - 'CLOVER_CONTEXT_GATEWAY_POINTER.json'
+      - 'CLOVER_HANDOFF_LEDGER.md'
+      - 'CLOVER_OWNER_START.md'
+      - 'CODEX_CLOVER_OPERATOR.md'
       - 'apps/clover-context-gateway/**'
+      - 'portfolio/core/handoff/**'
+      - 'portfolio/core/lib/publication-finalization.mjs'
+      - 'portfolio/core/publication/**'
+      - 'portfolio/core/scripts/verify-publication-finalization.mjs'
+      - 'portfolio/core/today/**'
       - 'portfolio/context/**'
+      - 'portfolio/registry/projections/core-project-index.v2.json'
+      - 'portfolio/status/candidates/**'
       - 'portfolio/schemas/clover-command-packet.schema.json'
+      - 'portfolio/schemas/clover-command-packet-1.2.schema.json'
       - 'portfolio/schemas/clover-refresh-receipt.schema.json'
       - 'portfolio/schemas/clover-project-context-pointer.schema.json'
       - '.github/workflows/validate-clover-context-gateway.yml'
@@ -42,13 +69,21 @@ jobs:
         node-version: ['22', '24']
     env:
       CONTEXT_SOURCE_MODE: local
+      CONTEXT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
       PUBLIC_BASE_URL: http://127.0.0.1:8787
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+
+      - name: Verify exact candidate HEAD
+        shell: bash
+        run: |
+          [[ "$CONTEXT_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CONTEXT_SOURCE_COMMIT"
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -57,6 +92,201 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clover-context-gateway/package-lock.json
 
+      - name: Prove pull-request integration context
+        shell: bash
+        env:
+          CLOVER_EVENT_NAME: ${{ github.event_name }}
+          CLOVER_REPOSITORY: ${{ github.repository }}
+          CLOVER_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          CLOVER_EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CLOVER_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CLOVER_PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          CLOVER_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          CLOVER_EVENT_MERGE_SHA: ${{ github.sha }}
+        run: |
+          # BEGIN CLOVER PR INTEGRATION CONTEXT V1
+          set -Eeuo pipefail
+
+          evidence_path="$RUNNER_TEMP/clover-pr-integration-context.json"
+          export CLOVER_RESULT="failed"
+          export CLOVER_FAILURE_STAGE="initialize"
+          export CLOVER_ACTUAL_HEAD_SHA=""
+          export CLOVER_HEAD_TREE=""
+          export CLOVER_FETCHED_BASE_SHA=""
+          export CLOVER_FETCHED_BASE_SHA_SECOND_READ=""
+          export CLOVER_MERGE_BASE=""
+          export CLOVER_FETCHED_MERGE_SHA=""
+          export CLOVER_FETCHED_MERGE_SHA_SECOND_READ=""
+          export CLOVER_SYNTHETIC_PARENT_1=""
+          export CLOVER_SYNTHETIC_PARENT_2=""
+          export CLOVER_SYNTHETIC_MERGE_TREE=""
+          export CLOVER_BASE_IS_ANCESTOR=""
+          export CLOVER_MERGE_TREE_EQUALS_HEAD_TREE=""
+
+          is_sha() {
+            [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+          }
+
+          write_evidence() {
+            node <<'NODE' > "$evidence_path"
+          const nullable = (name) => {
+            const value = process.env[name];
+            return value === undefined || value === '' ? null : value;
+          };
+          const integerOrNull = (name) => {
+            const value = nullable(name);
+            return value === null ? null : Number.parseInt(value, 10);
+          };
+          const booleanOrNull = (name) => {
+            const value = nullable(name);
+            if (value === null) return null;
+            if (value !== 'true' && value !== 'false') throw new Error(`${name} is not boolean`);
+            return value === 'true';
+          };
+          const result = process.env.CLOVER_RESULT;
+          const evidence = {
+            schemaVersion: 'clover-pr-integration-context-v1',
+            eventName: process.env.CLOVER_EVENT_NAME,
+            repository: process.env.CLOVER_REPOSITORY,
+            pullRequestNumber: integerOrNull('CLOVER_PR_NUMBER'),
+            headRef: nullable('CLOVER_EVENT_HEAD_REF'),
+            headSha: nullable('CLOVER_EXPECTED_HEAD_SHA'),
+            checkedOutHeadSha: nullable('CLOVER_ACTUAL_HEAD_SHA'),
+            headTree: nullable('CLOVER_HEAD_TREE'),
+            baseRef: nullable('CLOVER_PR_BASE_REF'),
+            baseSha: nullable('CLOVER_PR_BASE_SHA'),
+            fetchedBaseSha: nullable('CLOVER_FETCHED_BASE_SHA'),
+            fetchedBaseShaSecondRead: nullable('CLOVER_FETCHED_BASE_SHA_SECOND_READ'),
+            mergeBase: nullable('CLOVER_MERGE_BASE'),
+            eventSyntheticMergeSha: process.env.CLOVER_EVENT_NAME === 'pull_request'
+              ? nullable('CLOVER_EVENT_MERGE_SHA')
+              : null,
+            fetchedSyntheticMergeSha: nullable('CLOVER_FETCHED_MERGE_SHA'),
+            fetchedSyntheticMergeShaSecondRead: nullable('CLOVER_FETCHED_MERGE_SHA_SECOND_READ'),
+            syntheticMergeParent1: nullable('CLOVER_SYNTHETIC_PARENT_1'),
+            syntheticMergeParent2: nullable('CLOVER_SYNTHETIC_PARENT_2'),
+            syntheticMergeTree: nullable('CLOVER_SYNTHETIC_MERGE_TREE'),
+            baseIsAncestorOfHead: booleanOrNull('CLOVER_BASE_IS_ANCESTOR'),
+            syntheticMergeTreeEqualsHeadTree: booleanOrNull('CLOVER_MERGE_TREE_EQUALS_HEAD_TREE'),
+            result,
+            failureStage: result === 'failed' ? nullable('CLOVER_FAILURE_STAGE') : null
+          };
+          process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+          NODE
+          }
+
+          write_summary() {
+            {
+              printf '### Clover PR integration context\n\n'
+              printf -- '- Result: %s\n' "$CLOVER_RESULT"
+              printf -- '- Event: %s\n' "$CLOVER_EVENT_NAME"
+              printf -- '- Head: %s\n' "${CLOVER_ACTUAL_HEAD_SHA:-not-applicable}"
+              printf -- '- Head tree: %s\n' "${CLOVER_HEAD_TREE:-not-applicable}"
+              printf -- '- Base: %s\n' "${CLOVER_FETCHED_BASE_SHA:-not-applicable}"
+              printf -- '- Merge base: %s\n' "${CLOVER_MERGE_BASE:-not-applicable}"
+              printf -- '- Synthetic merge: %s\n' "${CLOVER_FETCHED_MERGE_SHA:-not-applicable}"
+              printf -- '- Synthetic merge tree: %s\n' "${CLOVER_SYNTHETIC_MERGE_TREE:-not-applicable}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          on_error() {
+            local exit_code=$?
+            trap - ERR
+            CLOVER_RESULT="failed"
+            write_evidence || true
+            write_summary || true
+            exit "$exit_code"
+          }
+          trap on_error ERR
+
+          CLOVER_FAILURE_STAGE="validate-common-event-identity"
+          [[ "$CLOVER_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          is_sha "$CLOVER_EXPECTED_HEAD_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          CLOVER_ACTUAL_HEAD_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+          is_sha "$CLOVER_ACTUAL_HEAD_SHA"
+          test "$CLOVER_ACTUAL_HEAD_SHA" = "$CLOVER_EXPECTED_HEAD_SHA"
+          CLOVER_HEAD_TREE="$(git rev-parse --verify "${CLOVER_ACTUAL_HEAD_SHA}^{tree}")"
+          is_sha "$CLOVER_HEAD_TREE"
+          remote_url="$(git config --get remote.origin.url)"
+          case "$remote_url" in
+            "https://github.com/${CLOVER_REPOSITORY}"|"https://github.com/${CLOVER_REPOSITORY}.git"|"git@github.com:${CLOVER_REPOSITORY}.git") ;;
+            *) false ;;
+          esac
+
+          case "$CLOVER_EVENT_NAME" in
+            push|workflow_dispatch)
+              CLOVER_RESULT="not-applicable-non-pr-event"
+              CLOVER_FAILURE_STAGE="write-non-pr-evidence"
+              write_evidence
+              write_summary
+              trap - ERR
+              exit 0
+              ;;
+            pull_request) ;;
+            *) false ;;
+          esac
+
+          CLOVER_FAILURE_STAGE="validate-pull-request-event-identity"
+          [[ "$CLOVER_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          test -n "$CLOVER_EVENT_HEAD_REF"
+          test -n "$CLOVER_PR_BASE_REF"
+          git check-ref-format "refs/heads/${CLOVER_EVENT_HEAD_REF}" > /dev/null
+          git check-ref-format "refs/heads/${CLOVER_PR_BASE_REF}" > /dev/null
+          is_sha "$CLOVER_PR_BASE_SHA"
+          is_sha "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_FAILURE_STAGE="fetch-first-pull-request-context"
+          git fetch --no-tags --force origin \
+            "+refs/heads/${CLOVER_PR_BASE_REF}:refs/clover/pr-integration-context/base-first"
+          git fetch --no-tags --force origin \
+            "+refs/pull/${CLOVER_PR_NUMBER}/merge:refs/clover/pr-integration-context/merge-first"
+          CLOVER_FETCHED_BASE_SHA="$(git rev-parse --verify 'refs/clover/pr-integration-context/base-first^{commit}')"
+          CLOVER_FETCHED_MERGE_SHA="$(git rev-parse --verify 'refs/clover/pr-integration-context/merge-first^{commit}')"
+          is_sha "$CLOVER_FETCHED_BASE_SHA"
+          is_sha "$CLOVER_FETCHED_MERGE_SHA"
+          test "$CLOVER_FETCHED_BASE_SHA" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA" = "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_FAILURE_STAGE="validate-linear-integration-context"
+          CLOVER_MERGE_BASE="$(git merge-base "$CLOVER_PR_BASE_SHA" "$CLOVER_ACTUAL_HEAD_SHA")"
+          is_sha "$CLOVER_MERGE_BASE"
+          test "$CLOVER_MERGE_BASE" = "$CLOVER_PR_BASE_SHA"
+          CLOVER_BASE_IS_ANCESTOR="false"
+          git merge-base --is-ancestor "$CLOVER_PR_BASE_SHA" "$CLOVER_ACTUAL_HEAD_SHA"
+          CLOVER_BASE_IS_ANCESTOR="true"
+          read -r -a synthetic_parents <<< "$(git show -s --format='%P' "$CLOVER_FETCHED_MERGE_SHA")"
+          test "${#synthetic_parents[@]}" -eq 2
+          CLOVER_SYNTHETIC_PARENT_1="${synthetic_parents[0]}"
+          CLOVER_SYNTHETIC_PARENT_2="${synthetic_parents[1]}"
+          test "$CLOVER_SYNTHETIC_PARENT_1" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_SYNTHETIC_PARENT_2" = "$CLOVER_ACTUAL_HEAD_SHA"
+          CLOVER_SYNTHETIC_MERGE_TREE="$(git rev-parse --verify "${CLOVER_FETCHED_MERGE_SHA}^{tree}")"
+          is_sha "$CLOVER_SYNTHETIC_MERGE_TREE"
+          CLOVER_MERGE_TREE_EQUALS_HEAD_TREE="false"
+          test "$CLOVER_SYNTHETIC_MERGE_TREE" = "$CLOVER_HEAD_TREE"
+          CLOVER_MERGE_TREE_EQUALS_HEAD_TREE="true"
+
+          CLOVER_FAILURE_STAGE="verify-context-stability"
+          git fetch --no-tags --force origin \
+            "+refs/heads/${CLOVER_PR_BASE_REF}:refs/clover/pr-integration-context/base-second"
+          git fetch --no-tags --force origin \
+            "+refs/pull/${CLOVER_PR_NUMBER}/merge:refs/clover/pr-integration-context/merge-second"
+          CLOVER_FETCHED_BASE_SHA_SECOND_READ="$(git rev-parse --verify 'refs/clover/pr-integration-context/base-second^{commit}')"
+          CLOVER_FETCHED_MERGE_SHA_SECOND_READ="$(git rev-parse --verify 'refs/clover/pr-integration-context/merge-second^{commit}')"
+          is_sha "$CLOVER_FETCHED_BASE_SHA_SECOND_READ"
+          is_sha "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ"
+          test "$CLOVER_FETCHED_BASE_SHA_SECOND_READ" = "$CLOVER_FETCHED_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ" = "$CLOVER_FETCHED_MERGE_SHA"
+          test "$CLOVER_FETCHED_BASE_SHA_SECOND_READ" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ" = "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_RESULT="passed"
+          CLOVER_FAILURE_STAGE="write-passed-evidence"
+          write_evidence
+          write_summary
+          trap - ERR
+          # END CLOVER PR INTEGRATION CONTEXT V1
       - name: Install pinned dependencies
         working-directory: apps/clover-context-gateway
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -71,26 +301,47 @@ jobs:
           set -euo pipefail
           node <<'NODE' > "$RUNNER_TEMP/control-plane-validation.json"
           const fs = require('node:fs');
+          const crypto = require('node:crypto');
           const files = [
             'CLOVER_CONTEXT_GATEWAY_POINTER.json',
             'portfolio/context/control-plane.json',
             'portfolio/context/LIVE_ADAPTER_REGISTRY.json',
             'portfolio/context/PROJECT_CONTEXT_POINTER.template.json',
             'portfolio/schemas/clover-command-packet.schema.json',
+            'portfolio/schemas/clover-command-packet-1.2.schema.json',
             'portfolio/schemas/clover-refresh-receipt.schema.json',
             'portfolio/schemas/clover-project-context-pointer.schema.json'
           ];
           for (const file of files) JSON.parse(fs.readFileSync(file, 'utf8'));
           const pointer = JSON.parse(fs.readFileSync('CLOVER_CONTEXT_GATEWAY_POINTER.json', 'utf8'));
           const plane = JSON.parse(fs.readFileSync('portfolio/context/control-plane.json', 'utf8'));
+          const legacyCommandSchemaBytes = fs.readFileSync('portfolio/schemas/clover-command-packet.schema.json');
+          const legacyCommandSchema = JSON.parse(legacyCommandSchemaBytes);
+          const candidateCommandSchema = JSON.parse(fs.readFileSync('portfolio/schemas/clover-command-packet-1.2.schema.json', 'utf8'));
+          if (crypto.createHash('sha256').update(legacyCommandSchemaBytes).digest('hex') !== 'b22cdb1a82852bc7fe419257d1bc79c9537a5483c753b79b5ac08002c14a1a36') process.exit(1);
+          if (legacyCommandSchema.properties?.schemaVersion?.const !== '1.1') process.exit(1);
+          if (candidateCommandSchema.properties?.schemaVersion?.const !== '1.2') process.exit(1);
           if ((pointer.currentVersion || pointer.version) !== '0.2.0') process.exit(1);
+          if (pointer.candidate?.version !== '0.3.1') process.exit(1);
+          if (pointer.candidate?.status !== 'draft-unmerged-preview-verified') process.exit(1);
+          if (pointer.candidate?.reviewedImplementation?.headCommit !== '2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334') process.exit(1);
+          if (pointer.candidate?.publicationReadback?.connectorId !== 'clover://publication/readback') process.exit(1);
+          if (pointer.candidate?.publicationReadback?.indexHash !== '92bd597a10beba1a2a4324ebd9f500a6bf62c590dc07693f6c84e076ba83c062') process.exit(1);
+          if (pointer.candidate?.publicationReadback?.recordHash !== '1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a') process.exit(1);
+          if (pointer.candidate?.amendmentContainer?.status !== 'awaiting-post-commit-source-bound-readback' || pointer.candidate.amendmentContainer.commit !== null) process.exit(1);
+          const packageJson = JSON.parse(fs.readFileSync('apps/clover-context-gateway/package.json', 'utf8'));
+          if (packageJson.version !== '0.3.1') process.exit(1);
           if (!fs.existsSync(pointer.currentDocument)) process.exit(1);
           if (pointer.writeToolsEnabled !== false || pointer.standingProductionAuthority !== false) process.exit(1);
           if (plane.authority.writeToolsEnabled !== false || plane.authority.productionDataAccessEnabled !== false) process.exit(1);
           if (!fs.readFileSync('AGENTS.md', 'utf8').includes('Use CloverApps to')) process.exit(1);
           if (!fs.readFileSync('AI_START_HERE.md', 'utf8').includes('prepare_clover_command')) process.exit(1);
-          console.log(JSON.stringify({ status: 'passed', version: '0.2.0', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
+          console.log(JSON.stringify({ status: 'passed', deployedVersion: '0.2.0', preservedCandidateVersion: '0.3.0', candidateVersion: '0.3.1', node: process.version, writeToolsEnabled: false, standingProductionAuthority: false }));
           NODE
+
+      - name: Verify publication finalization catalog
+        shell: bash
+        run: node portfolio/core/scripts/verify-publication-finalization.mjs > "$RUNNER_TEMP/publication-finalization-validation.json"
 
       - name: Smoke-test HTTP, exact target resolution, and MCP
         shell: bash
@@ -107,24 +358,61 @@ jobs:
           curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center'
           curl --fail --silent 'http://127.0.0.1:8787/api/search?q=RollinD' > "$RUNNER_TEMP/search.json"
           curl --fail --silent --get --data-urlencode 'id=clover://project/rollindd' http://127.0.0.1:8787/api/fetch > "$RUNNER_TEMP/fetch.json"
+          curl --fail --silent --get --data-urlencode 'id=clover://publication/readback' http://127.0.0.1:8787/api/fetch > "$RUNNER_TEMP/publication-readback.json"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' --get --data-urlencode 'id=clover://publication/readback/current' http://127.0.0.1:8787/api/fetch)" = "404"
           curl --fail --silent \
             -H 'content-type: application/json' \
             -d '{"request":"Use CloverApps to evolve RollinD through a preview only"}' \
             http://127.0.0.1:8787/api/prepare-command > "$RUNNER_TEMP/command.json"
-          node -e 'const fs=require("node:fs"); const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); if(x.packet.schemaVersion!=="1.1"||x.packet.project.projectId!=="rollindd"||x.packet.authority.productionDeploymentApproved!==false||!x.packet.freshness.sourcePlan.length) process.exit(1)' "$RUNNER_TEMP/command.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const readReceipt = (name) => JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, 'utf8'));
+          const expectedCommit = process.env.CONTEXT_SOURCE_COMMIT;
+          const health = readReceipt('health.json');
+          const fetched = readReceipt('fetch.json');
+          const command = readReceipt('command.json');
+          const publication = readReceipt('publication-readback.json');
+          if (!/^[a-f0-9]{40}$/.test(expectedCommit || '')) process.exit(1);
+          if (health.version !== '0.3.1') process.exit(1);
+          if (health.contextSource?.commit !== expectedCommit) process.exit(1);
+          if (fetched.metadata?.commit !== expectedCommit) process.exit(1);
+          if (command.packet?.canonicalContext?.sourceCommit !== expectedCommit) process.exit(1);
+          if (command.packet?.schemaVersion !== '1.2') process.exit(1);
+          if (command.packet?.project?.projectId !== 'rollindd') process.exit(1);
+          if (command.packet?.authority?.productionDeploymentApproved !== false) process.exit(1);
+          if (!command.packet?.freshness?.sourcePlan?.length) process.exit(1);
+          if (command.today?.available !== true) process.exit(1);
+          if (command.today?.data?.actionId !== 'CLOVER-2026-08-20-002') process.exit(1);
+          if (!/^[a-f0-9]{64}$/.test(command.today?.data?.envelopeHash || '')) process.exit(1);
+          if (command.today?.data?.privacy?.publicSanitizedProjection !== true) process.exit(1);
+          if (command.today?.data?.privacy?.containsRawCellData !== false) process.exit(1);
+          if (publication.id !== 'clover://publication/readback') process.exit(1);
+          if (publication.metadata?.hashVerified !== true) process.exit(1);
+          if (publication.metadata?.contentHash !== '1c0e95512f90d4cc99bfcc616823d70895c8923df23c06ece7a074b72fedec3a') process.exit(1);
+          if (command.today?.publicationReadback?.available !== true) process.exit(1);
+          if (command.today?.publicationReadback?.metadata?.containerSource?.commit !== expectedCommit) process.exit(1);
+          if (command.today?.evidencePrecedence?.reviewedImplementationHead !== '2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334') process.exit(1);
+          if (command.today?.evidencePrecedence?.status !== 'verified-publication-readback-preferred') process.exit(1);
+          for (const component of Object.values(command.today?.components || {})) {
+            if (component?.metadata?.commit !== expectedCommit) process.exit(1);
+          }
+          NODE
           npm run smoke:mcp > "$RUNNER_TEMP/mcp-smoke.json"
 
       - name: Upload source, command-packet, and MCP evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-context-gateway-v0.2-node-${{ matrix.node-version }}-${{ github.sha }}
+          name: clover-context-gateway-v0.3.1-candidate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             apps/clover-context-gateway/package-lock.json
+            ${{ runner.temp }}/clover-pr-integration-context.json
             ${{ runner.temp }}/control-plane-validation.json
+            ${{ runner.temp }}/publication-finalization-validation.json
             ${{ runner.temp }}/health.json
             ${{ runner.temp }}/search.json
             ${{ runner.temp }}/fetch.json
+            ${{ runner.temp }}/publication-readback.json
             ${{ runner.temp }}/command.json
             ${{ runner.temp }}/mcp-smoke.json
             ${{ runner.temp }}/clover-context-gateway.log

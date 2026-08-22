@@ -3,83 +3,380 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Clover Command Center</title>
+  <meta name="color-scheme" content="dark" />
+  <title>Clover Command Center — Today</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --bg: #06110c;
+      --panel: rgba(5, 22, 14, .92);
+      --panel-soft: rgba(255, 255, 255, .055);
+      --border: rgba(255, 255, 255, .14);
+      --text: #f2fff7;
+      --muted: #afcdbd;
+      --accent: #89efb4;
+      --accent-ink: #052014;
+      --warning: #ffd99b;
+      --locked: #f3b2aa;
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #1e6245 0, transparent 35%), linear-gradient(145deg, #06120d, #0c281c 58%, #123a29); color: #f3fff8; }
-    main { width: min(1040px, 100%); margin: 0 auto; padding: 24px; }
-    .shell { border: 1px solid rgba(255,255,255,.16); border-radius: 24px; background: rgba(4,17,11,.86); box-shadow: 0 24px 80px rgba(0,0,0,.38); overflow: hidden; }
-    header { padding: 26px 26px 18px; border-bottom: 1px solid rgba(255,255,255,.12); }
-    h1 { margin: 0; font-size: clamp(1.55rem,4vw,2.5rem); letter-spacing: -.035em; }
-    h2 { font-size: 1.1rem; }
-    header p { margin: 8px 0 0; color: #b9dcca; line-height: 1.5; }
-    .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-    .pill { padding: 6px 10px; border: 1px solid rgba(151,244,193,.28); border-radius: 999px; color: #cef9e0; background: rgba(35,112,72,.22); font-size: .82rem; }
-    section { padding: 22px 26px; }
-    label { display: block; margin-bottom: 8px; font-weight: 750; }
-    textarea { width: 100%; min-height: 160px; resize: vertical; border: 1px solid rgba(255,255,255,.18); border-radius: 16px; padding: 16px; font: inherit; color: inherit; background: rgba(255,255,255,.06); outline: none; }
-    textarea:focus { border-color: #75e8a8; box-shadow: 0 0 0 3px rgba(117,232,168,.15); }
-    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; }
-    .example { min-height: 34px; font-size: .78rem; font-weight: 650; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 90% 0%, rgba(46, 138, 91, .52), transparent 34%),
+        radial-gradient(circle at 0% 70%, rgba(29, 77, 58, .46), transparent 38%),
+        linear-gradient(145deg, #04100a, #0b281b 58%, #123a29);
+      color: var(--text);
+    }
+    button, textarea { font: inherit; }
+    button { -webkit-tap-highlight-color: transparent; }
+    main { width: min(1120px, 100%); margin: 0 auto; padding: 22px; }
+    .shell {
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      background: var(--panel);
+      box-shadow: 0 28px 90px rgba(0, 0, 0, .38);
+      overflow: hidden;
+    }
+    header { padding: 28px 28px 22px; border-bottom: 1px solid var(--border); }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 850;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(1.8rem, 5vw, 3rem); letter-spacing: -.045em; line-height: 1; }
+    h2 { margin: 0; font-size: 1.08rem; }
+    header p { max-width: 760px; margin: 12px 0 0; color: var(--muted); line-height: 1.55; }
+    .status { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .pill {
+      padding: 7px 11px;
+      border: 1px solid rgba(137, 239, 180, .28);
+      border-radius: 999px;
+      color: #d4fae4;
+      background: rgba(35, 112, 72, .22);
+      font-size: .8rem;
+      font-weight: 720;
+    }
+    .pill.locked { color: #ffd7d2; border-color: rgba(243, 178, 170, .28); background: rgba(120, 46, 38, .18); }
+    section { padding: 24px 28px; }
+    section + section { border-top: 1px solid var(--border); }
+    .section-head { display: flex; gap: 16px; align-items: end; justify-content: space-between; margin-bottom: 14px; }
+    .section-head p { margin: 4px 0 0; color: var(--muted); font-size: .9rem; line-height: 1.45; }
+    .today-grid, .result-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 15px;
+      background: var(--panel-soft);
+    }
+    .card-label {
+      display: block;
+      color: var(--muted);
+      font-size: .73rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .card strong { display: block; margin-top: 7px; line-height: 1.3; }
+    .card p { margin: 7px 0 0; color: var(--muted); line-height: 1.45; font-size: .88rem; }
+    .owner-session[hidden] { display: none; }
+    .priority-list { margin: 8px 0 0; padding-left: 22px; color: var(--muted); line-height: 1.55; }
+    .priority-list li + li { margin-top: 5px; }
+    .question-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(150px, 1fr));
+      gap: 9px;
+      margin: 14px 0 18px;
+      overflow-x: auto;
+      padding-bottom: 3px;
+    }
+    .question {
+      min-height: 74px;
+      text-align: left;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 13px;
+      color: var(--text);
+      background: rgba(255, 255, 255, .07);
+      cursor: pointer;
+      font-weight: 780;
+      line-height: 1.3;
+    }
+    .question span { display: block; margin-top: 5px; color: var(--muted); font-size: .74rem; font-weight: 620; }
+    .question:hover, .question:focus-visible { border-color: rgba(137, 239, 180, .7); background: rgba(137, 239, 180, .1); outline: none; }
+    label { display: block; margin-bottom: 8px; font-weight: 780; }
+    textarea {
+      width: 100%;
+      min-height: 154px;
+      resize: vertical;
+      border: 1px solid rgba(255, 255, 255, .19);
+      border-radius: 17px;
+      padding: 16px;
+      color: var(--text);
+      background: rgba(255, 255, 255, .06);
+      outline: none;
+      line-height: 1.5;
+    }
+    textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(137, 239, 180, .14); }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
-    button { min-height: 44px; border: 0; border-radius: 999px; padding: 0 16px; font: inherit; font-weight: 750; cursor: pointer; }
-    .primary { background: #88efb4; color: #062013; }
-    .secondary, .example { background: rgba(255,255,255,.1); color: #f4fff8; border: 1px solid rgba(255,255,255,.16); }
-    button:disabled { opacity: .45; cursor: not-allowed; }
-    .transcript { min-height: 28px; margin-top: 12px; color: #b9e5cc; font-size: .92rem; }
-    .result { display: none; margin-top: 20px; border-top: 1px solid rgba(255,255,255,.12); padding-top: 20px; }
+    .action {
+      min-height: 46px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 17px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .primary { background: var(--accent); color: var(--accent-ink); }
+    .secondary { background: rgba(255, 255, 255, .1); color: var(--text); border: 1px solid var(--border); }
+    .action:focus-visible { outline: 3px solid rgba(137, 239, 180, .3); outline-offset: 2px; }
+    .action:disabled { opacity: .45; cursor: not-allowed; }
+    .transcript { min-height: 28px; margin-top: 12px; color: #c0ead2; font-size: .91rem; }
+    .muted { color: var(--muted); font-size: .87rem; line-height: 1.5; }
+    .warning { color: var(--warning); }
+    .locked-text { color: var(--locked); }
+    .result { display: none; }
     .result.visible { display: block; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 12px; margin: 14px 0; }
-    .card { border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 14px; background: rgba(255,255,255,.045); }
-    .card strong { display: block; margin-bottom: 5px; }
-    .card p { margin: 0; color: #c5dbcf; line-height: 1.45; font-size: .9rem; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #020d08; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; padding: 14px; max-height: 360px; overflow: auto; color: #dffbea; }
-    .warning { color: #ffdca0; }
-    .muted { color: #9dbbaa; font-size: .88rem; line-height: 1.5; }
-    details summary { cursor: pointer; font-weight: 700; }
-    @media (max-width: 600px) { main { padding: 0; } .shell { border-radius: 0; min-height: 100vh; } header, section { padding-inline: 18px; } }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #020c08;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      padding: 15px;
+      max-height: 390px;
+      overflow: auto;
+      color: #dffbea;
+      font-size: .84rem;
+      line-height: 1.5;
+    }
+    details { margin-top: 14px; }
+    details summary { cursor: pointer; font-weight: 760; }
+    .boundary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .loop { border: 1px solid var(--border); border-radius: 16px; padding: 15px; background: var(--panel-soft); }
+    .loop ol { margin: 10px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.55; font-size: .87rem; }
+    .footer-note { margin: 0; padding: 18px 28px 24px; color: var(--muted); font-size: .82rem; line-height: 1.5; border-top: 1px solid var(--border); }
+    @media (max-width: 760px) {
+      main { padding: 0; }
+      .shell { border-radius: 0; min-height: 100vh; }
+      header, section, .footer-note { padding-inline: 18px; }
+      .boundary { grid-template-columns: 1fr; }
+      .question-grid { grid-template-columns: repeat(5, minmax(174px, 1fr)); }
+    }
   </style>
 </head>
 <body>
 <main>
   <div class="shell">
     <header>
-      <h1>Clover Command Center</h1>
-      <p>Speak or type one instruction. Clover binds it to the current master plan, exact project record, live-source refresh map, cost lane, and owner-controlled safety boundary.</p>
-      <div class="status" id="statusPills">
+      <p class="eyebrow">Clover Command Center</p>
+      <h1>Clover Today</h1>
+      <p>One governed place to understand what changed, inspect why it matters, choose the smallest high-value next move, let Clover complete only the safe parts, and receive a trustworthy record of what happened.</p>
+      <div class="status" id="statusPills" aria-label="Current authority boundary">
+        <span class="pill">Truth Loop active</span>
+        <span class="pill locked">Action Loop locked</span>
         <span class="pill">Read-only context</span>
         <span class="pill">Preview-first</span>
-        <span class="pill">No production authority</span>
+        <span class="pill locked">No production authority</span>
       </div>
     </header>
-    <section>
-      <label for="request">What should CloverApps help you do?</label>
-      <textarea id="request" placeholder="Use CloverApps to evolve SongAndStage toward the strongest show-night experience, refresh the latest project state, and build a preview only."></textarea>
-      <div class="examples" aria-label="Example instructions">
-        <button class="example" data-example="Use CloverApps to show my current portfolio status.">Show status</button>
-        <button class="example" data-example="Use CloverApps to evolve RollinD through a preview only.">Evolve a project</button>
-        <button class="example" data-example="Use CloverApps to plant a new seed for a communication app.">Plant a seed</button>
+
+    <section aria-labelledby="today-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="today-heading">Current truth snapshot</h2>
+          <p>Only recorded context is shown. Missing live readback remains unknown.</p>
+        </div>
       </div>
+      <div class="today-grid" id="todayGrid">
+        <div class="card">
+          <span class="card-label">Mission</span>
+          <strong id="missionValue">Loading current context…</strong>
+          <p id="missionDetail">The date and source state will appear when available.</p>
+        </div>
+        <div class="card">
+          <span class="card-label">Priority</span>
+          <strong id="priorityValue">Refresh required</strong>
+          <p>The command packet decides which sources must be checked before action.</p>
+        </div>
+        <div class="card">
+          <span class="card-label">Unknowns</span>
+          <strong id="unknownValue">Visible, never guessed</strong>
+          <p>Unavailable, stale, or contradictory facts stay labeled.</p>
+        </div>
+        <div class="card">
+          <span class="card-label">Owner attention</span>
+          <strong>One decision at a time</strong>
+          <p>Clover should perform safe work first and surface only genuine owner gates.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="owner-session-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="owner-session-heading">Minimum Useful Core</h2>
+          <p>The dated owner session is shown only when supplied by the connected Clover app context.</p>
+        </div>
+      </div>
+      <p class="muted" id="ownerSessionState">Owner session context has not been supplied. No candidate priority or source identity is inferred.</p>
+      <div class="owner-session" id="ownerSession" hidden>
+        <div class="today-grid">
+          <div class="card">
+            <span class="card-label">What works now</span>
+            <strong id="worksNowValue">Recorded owner loop available</strong>
+            <p id="worksNowDetail">Awaiting the dated session.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">What changed</span>
+            <strong id="changedValue">Recorded changes available</strong>
+            <p id="changedDetail">Awaiting the dated session.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Live versus candidate</span>
+            <strong id="stateValue">State separation preserved</strong>
+            <p id="stateDetail">Awaiting the dated session.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Source freshness</span>
+            <strong id="freshnessValue">Unavailable</strong>
+            <p id="freshnessDetail">Unavailable sources remain unknown.</p>
+          </div>
+        </div>
+        <div class="today-grid" style="margin-top: 12px">
+          <div class="card">
+            <span class="card-label">Top three priorities</span>
+            <strong>Current candidate ranking</strong>
+            <ol class="priority-list" id="topPriorities"></ol>
+          </div>
+          <div class="card">
+            <span class="card-label">Recommended next action</span>
+            <strong id="recommendationValue">Unavailable</strong>
+            <p id="recommendationDetail">No action is implied by a recommendation.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Action ID and envelope</span>
+            <strong id="actionIdValue">Unavailable</strong>
+            <p id="envelopeValue">No durable envelope supplied.</p>
+          </div>
+          <div class="card">
+            <span class="card-label">Connector plan and authority</span>
+            <strong id="connectorValue">Unavailable</strong>
+            <p id="authorityValue">No standing authority.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="command-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="command-heading">What do you need from Clover?</h2>
+          <p>Choose a core question or speak/type your own instruction.</p>
+        </div>
+      </div>
+
+      <div class="question-grid" aria-label="Clover's five core questions">
+        <button class="question" type="button" data-example="Use CloverApps to tell me what I should know today across my current priorities, grounded in current sources and without changing anything.">
+          What should I know?
+          <span>Material changes and priorities</span>
+        </button>
+        <button class="question" type="button" data-example="Use CloverApps to explain why the most important item matters, show its sources, freshness, uncertainty, and consequences, without changing anything.">
+          Why?
+          <span>Evidence and uncertainty</span>
+        </button>
+        <button class="question" type="button" data-example="Use CloverApps to recommend the smallest highest-value next step, considering deadlines, risk, cash, owner attention, and project dependencies. Prepare only.">
+          What do you recommend?
+          <span>Smallest high-value move</span>
+        </button>
+        <button class="question" type="button" data-example="Use CloverApps to do only the safe, reversible, preview-only parts of the recommended step, preserve rollback, and stop before any approval-gated action.">
+          Do the safe parts.
+          <span>Act only inside the envelope</span>
+        </button>
+        <button class="question" type="button" data-example="Use CloverApps to report what changed, what was verified, what remains unknown, what authority was used, and what should be recorded in today's log.">
+          What happened?
+          <span>Receipt and daily log</span>
+        </button>
+      </div>
+
+      <label for="request">Instruction</label>
+      <textarea id="request" placeholder="Use CloverApps to tell me what I should know today across my current priorities, grounded in current sources and without changing anything."></textarea>
       <div class="actions">
-        <button class="primary" id="prepare">Prepare command</button>
-        <button class="secondary" id="mic">Start live transcription</button>
-        <button class="secondary" id="copy" disabled>Copy bounded prompt</button>
-        <button class="secondary" id="send" disabled>Continue in ChatGPT</button>
+        <button class="action primary" id="prepare" type="button">Prepare bounded command</button>
+        <button class="action secondary" id="mic" type="button">Start live transcription</button>
+        <button class="action secondary" id="copy" type="button" disabled>Copy bounded prompt</button>
+        <button class="action secondary" id="send" type="button" disabled>Continue in ChatGPT</button>
       </div>
       <div class="transcript" id="transcript" aria-live="polite"></div>
       <p class="muted">Browser speech recognition is used only when available. This page does not call the OpenAI API for transcription. Browser support and processing location vary; device dictation or ChatGPT Voice remains the fallback.</p>
-      <div class="result" id="result">
-        <h2>Bounded Clover command</h2>
-        <p id="summary"></p>
-        <div class="grid" id="cards"></div>
-        <pre id="prompt"></pre>
-        <details>
-          <summary>Machine-readable packet</summary>
-          <pre id="packet"></pre>
-        </details>
-      </div>
     </section>
+
+    <section class="result" id="result" aria-labelledby="result-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="result-heading">Bounded Clover command</h2>
+          <p id="summary">Prepared context and authority will appear here.</p>
+        </div>
+      </div>
+      <div class="result-grid" id="cards"></div>
+      <details open>
+        <summary>Prompt for the next bounded step</summary>
+        <pre id="prompt"></pre>
+      </details>
+      <details>
+        <summary>Machine-readable packet</summary>
+        <pre id="packet"></pre>
+      </details>
+    </section>
+
+    <section aria-labelledby="boundary-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="boundary-heading">How Clover stays useful without becoming dangerous</h2>
+          <p>The Truth Loop and Action Loop never share implied authority.</p>
+        </div>
+      </div>
+      <div class="boundary">
+        <div class="loop">
+          <strong>Truth Loop — available now</strong>
+          <ol>
+            <li>Read approved sources.</li>
+            <li>Label fact, assertion, inference, dispute, and unknown.</li>
+            <li>Preserve provenance and time.</li>
+            <li>Compile only the context needed.</li>
+            <li>Project a concise Today view.</li>
+          </ol>
+        </div>
+        <div class="loop">
+          <strong class="locked-text">Action Loop — locked by default</strong>
+          <ol>
+            <li>Bind exact resources and operations.</li>
+            <li>Set cost, expiration, and rollback.</li>
+            <li>Obtain version-bound approval.</li>
+            <li>Execute least privilege.</li>
+            <li>Read back and issue a receipt.</li>
+          </ol>
+        </div>
+      </div>
+      <p class="muted warning">This candidate does not merge, deploy production, access private data or secrets, send messages, spend money, change domains, or edit any OpenAI Site.</p>
+    </section>
+
+    <p class="footer-note">Clover Today is a replaceable window over canonical records. The public repository may contain policies, public metadata, and sanitized receipts only. Raw legal, financial, health, family, guest, staff, credential, and production data remain in authenticated bounded systems.</p>
   </div>
 </main>
 <script>
@@ -95,6 +392,28 @@
   const summaryEl = document.getElementById('summary');
   const cardsEl = document.getElementById('cards');
   const pillsEl = document.getElementById('statusPills');
+  const missionValueEl = document.getElementById('missionValue');
+  const missionDetailEl = document.getElementById('missionDetail');
+  const priorityValueEl = document.getElementById('priorityValue');
+  const unknownValueEl = document.getElementById('unknownValue');
+  const ownerSessionStateEl = document.getElementById('ownerSessionState');
+  const ownerSessionEl = document.getElementById('ownerSession');
+  const worksNowValueEl = document.getElementById('worksNowValue');
+  const worksNowDetailEl = document.getElementById('worksNowDetail');
+  const changedValueEl = document.getElementById('changedValue');
+  const changedDetailEl = document.getElementById('changedDetail');
+  const stateValueEl = document.getElementById('stateValue');
+  const stateDetailEl = document.getElementById('stateDetail');
+  const freshnessValueEl = document.getElementById('freshnessValue');
+  const freshnessDetailEl = document.getElementById('freshnessDetail');
+  const topPrioritiesEl = document.getElementById('topPriorities');
+  const recommendationValueEl = document.getElementById('recommendationValue');
+  const recommendationDetailEl = document.getElementById('recommendationDetail');
+  const actionIdValueEl = document.getElementById('actionIdValue');
+  const envelopeValueEl = document.getElementById('envelopeValue');
+  const connectorValueEl = document.getElementById('connectorValue');
+  const authorityValueEl = document.getElementById('authorityValue');
+
   let currentPrompt = '';
   let recognition;
   let listening = false;
@@ -103,52 +422,249 @@
     return window.openai?.toolOutput || null;
   }
 
-  function addCard(title, text) {
+  function textFromPriority(status) {
+    const candidates = [
+      status?.priorities,
+      status?.currentPriorities,
+      status?.immediatePriorities,
+      status?.prioritySequence,
+      status?.next
+    ];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate) && candidate.length) {
+        const first = candidate[0];
+        if (typeof first === 'string') return first;
+        if (first && typeof first === 'object') return first.title || first.name || first.summary || 'Priority record available';
+      }
+    }
+    return 'Ask Clover to refresh the current priority queue';
+  }
+
+  function countUnknowns(status) {
+    const candidates = [status?.knownGaps, status?.gaps, status?.unknowns, status?.unresolved];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) return `${candidate.length} recorded gap${candidate.length === 1 ? '' : 's'}`;
+    }
+    return 'Visible, never guessed';
+  }
+
+  function firstDefined(value, keys) {
+    if (!value || typeof value !== 'object') return null;
+    for (const key of keys) {
+      if (value[key] !== undefined && value[key] !== null) return value[key];
+    }
+    return null;
+  }
+
+  function safeSummary(value, fallback = 'Unavailable') {
+    if (typeof value === 'string') return value || fallback;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      const summaries = value.map((entry) => safeSummary(entry, '')).filter(Boolean);
+      return summaries.length ? summaries.join('; ') : fallback;
+    }
+    if (value && typeof value === 'object') {
+      const summary = firstDefined(value, [
+        'summary', 'title', 'label', 'name', 'state', 'status', 'value', 'outcome',
+        'recommendation', 'recommendedAction', 'projectId', 'connector', 'sourceId'
+      ]);
+      if (summary !== value) return safeSummary(summary, fallback);
+    }
+    return fallback;
+  }
+
+  function listValue(value) {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => safeSummary(entry, '')).filter(Boolean);
+  }
+
+  function priorityValue(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return safeSummary(value, '');
+    const title = safeSummary(value.title || value.targetId, 'Priority');
+    const score = typeof value.weightedScore === 'number' ? `score ${value.weightedScore}` : null;
+    const status = typeof value.status === 'string' ? value.status : null;
+    return [title, score, status].filter(Boolean).join(' · ');
+  }
+
+  function addPill(text, className = '') {
+    if ([...pillsEl.children].some((child) => child.textContent === text)) return;
+    const pill = document.createElement('span');
+    pill.className = `pill ${className}`.trim();
+    pill.textContent = text;
+    pillsEl.append(pill);
+  }
+
+  function addCard(label, title, text) {
     const card = document.createElement('div');
     card.className = 'card';
+
+    const small = document.createElement('span');
+    small.className = 'card-label';
+    small.textContent = label;
+
     const strong = document.createElement('strong');
     strong.textContent = title;
+
     const paragraph = document.createElement('p');
     paragraph.textContent = text;
-    card.append(strong, paragraph);
+
+    card.append(small, strong, paragraph);
     cardsEl.append(card);
   }
 
-  function render(data) {
+  function renderSnapshot(status, source, allowOwnerContext) {
+    const estimate = status?.overallMissionCompletionEstimate;
+    const asOf = status?.asOf || status?.statusAsOf || 'date unknown';
+    if (estimate != null) {
+      missionValueEl.textContent = `${estimate}% broad mission`;
+      missionDetailEl.textContent = `Status as of ${asOf}. Percentages are planning estimates, not release authority.`;
+      addPill(`Mission ${estimate}% · ${asOf}`);
+    } else {
+      missionValueEl.textContent = 'Current mission value unknown';
+      missionDetailEl.textContent = 'Prepare a command to refresh the authoritative status.';
+    }
+
+    const commit = source?.commit || source?.sourceCommit || source?.canonicalSourceCommit;
+    if (allowOwnerContext && commit) addPill(`Context ${String(commit).slice(0, 8)}`);
+
+    priorityValueEl.textContent = textFromPriority(status);
+    unknownValueEl.textContent = countUnknowns(status);
+  }
+
+  function renderOwnerSession(todayWrapper, allowOwnerContext) {
+    ownerSessionEl.hidden = true;
+    topPrioritiesEl.replaceChildren();
+
+    if (!allowOwnerContext) {
+      ownerSessionStateEl.textContent = 'Open this surface through the connected Clover app to receive the dated owner session. Anonymous view remains context-free.';
+      return;
+    }
+    if (!todayWrapper || todayWrapper.available !== true || !todayWrapper.data) {
+      ownerSessionStateEl.textContent = 'The candidate owner session is unavailable at this exact source. No current state or priority is substituted.';
+      return;
+    }
+
+    const today = todayWrapper.data;
+    const worksNow = firstDefined(today, ['whatWorksNow', 'whatWorks', 'workingNow', 'currentCapabilities']);
+    const changed = firstDefined(today, ['whatChanged', 'recentChanges', 'changes']);
+    const state = firstDefined(today, ['liveVsCandidate', 'liveVersusCandidate', 'stateComparison', 'currentVsCandidate']);
+    const freshness = firstDefined(today, ['sourceFreshness', 'freshness', 'currentSourceFreshness']);
+    const priorityRecords = firstDefined(today, ['topPriorities', 'priorities', 'topThreePriorities']);
+    const priorities = Array.isArray(priorityRecords)
+      ? priorityRecords.map(priorityValue).filter(Boolean).slice(0, 3)
+      : [];
+    const recommendation = firstDefined(today, ['recommendedNextAction', 'recommendation', 'recommendedBranch']);
+    const actionId = firstDefined(today, ['actionId', 'nextActionId', 'recommendedActionId']);
+    const envelopePath = firstDefined(today, ['envelopePath', 'actionEnvelopePath', 'durableEnvelopePath']);
+    const envelopeHash = firstDefined(today, ['envelopeHash', 'actionEnvelopeHash']);
+    const connectorPlan = firstDefined(today, ['connectorPlan', 'connectors', 'sourcePlan']);
+    const authorityRequired = firstDefined(today, ['authorityRequired', 'ownerAuthorityRequired', 'ownerGates']);
+    const asOf = firstDefined(today, ['asOf', 'generatedAt', 'observedAt']);
+    const candidateStatus = firstDefined(today, ['candidateStatus']);
+    const publication = todayWrapper.publicationReadback?.available === true
+      ? todayWrapper.publicationReadback.data
+      : null;
+    const publicationMetadata = todayWrapper.publicationReadback?.metadata || null;
+    const evidencePrecedence = todayWrapper.evidencePrecedence || null;
+
+    if (candidateStatus && typeof candidateStatus === 'object') {
+      const metrics = Array.isArray(candidateStatus.metrics) ? candidateStatus.metrics : [];
+      const broadMission = metrics.find((metric) => metric?.id === 'broad-mission-completion');
+      if (broadMission?.completionEstimate != null) {
+        missionValueEl.textContent = `${broadMission.completionEstimate}% broad mission candidate`;
+        missionDetailEl.textContent = `Candidate status as of ${candidateStatus.asOf || 'date unknown'} · confidence ${broadMission.confidence || 'unknown'} · not current or live.`;
+        addPill(`Candidate mission ${broadMission.completionEstimate}%`);
+      }
+      unknownValueEl.textContent = countUnknowns(candidateStatus);
+    }
+
+    worksNowValueEl.textContent = safeSummary(worksNow, 'Recorded current capabilities');
+    worksNowDetailEl.textContent = asOf ? `Candidate session as of ${safeSummary(asOf)}.` : 'Candidate session date unavailable.';
+    changedValueEl.textContent = safeSummary(changed, 'No recorded change summary');
+    changedDetailEl.textContent = 'Only source-bound recorded changes are shown.';
+    stateValueEl.textContent = safeSummary(state, 'Live and candidate state remain separate');
+    stateDetailEl.textContent = 'A candidate is never represented as current or live.';
+    freshnessValueEl.textContent = safeSummary(freshness, 'Source freshness unavailable');
+    freshnessDetailEl.textContent = 'Stale, contradictory, and unavailable sources remain labeled.';
+
+    if (publication && evidencePrecedence?.applied === true) {
+      const implementation = publication.reviewedImplementation || {};
+      const github = publication.github || {};
+      const vercel = publication.vercel || {};
+      const successfulWorkflows = Array.isArray(github.workflows)
+        ? github.workflows.filter((workflow) => workflow?.conclusion === 'success').length
+        : 0;
+      const container = publicationMetadata?.containerSource || {};
+      changedValueEl.textContent = `Publication evidence verified · verdict ${safeSummary(publication.verdict, 'unknown')}`;
+      changedDetailEl.textContent = `${successfulWorkflows} exact-head workflow${successfulWorkflows === 1 ? '' : 's'} passed for ${safeSummary(implementation.headCommit, 'reviewed source unavailable')}.`;
+      stateValueEl.textContent = `Gateway preview ${safeSummary(vercel.state, 'unknown')} · target ${vercel.target === null ? 'null' : 'contradictory'} · ${Array.isArray(vercel.aliases) ? vercel.aliases.length : 'unknown'} aliases`;
+      stateDetailEl.textContent = `Reviewed implementation ${safeSummary(implementation.headCommit, 'unknown')} remains draft and unmerged; this does not change live or production state.`;
+      freshnessValueEl.textContent = safeSummary(publication.evidenceStatus, 'Publication freshness unavailable');
+      freshnessDetailEl.textContent = `Observed ${safeSummary(publication.observedAt, 'time unavailable')} · runtime container ${safeSummary(container.commit, 'commit unavailable')} contains the finalization records.`;
+      addPill('Publication readback verified');
+    }
+
+    for (const priority of priorities) {
+      const item = document.createElement('li');
+      item.textContent = priority;
+      topPrioritiesEl.append(item);
+    }
+    if (!priorities.length) {
+      const item = document.createElement('li');
+      item.textContent = 'No supported priority ranking is available.';
+      topPrioritiesEl.append(item);
+    }
+
+    recommendationValueEl.textContent = safeSummary(recommendation, 'No supported recommendation');
+    recommendationDetailEl.textContent = 'Recommendation only; execution still requires exact authority.';
+    actionIdValueEl.textContent = safeSummary(actionId, 'No Action ID supplied');
+    envelopeValueEl.textContent = envelopePath && envelopeHash
+      ? `Path: ${safeSummary(envelopePath)} · SHA-256: ${safeSummary(envelopeHash)}`
+      : 'No complete durable envelope path and hash supplied.';
+    connectorValueEl.textContent = safeSummary(connectorPlan, 'No connector plan supplied');
+    authorityValueEl.textContent = safeSummary(authorityRequired, 'No standing authority; exact owner gate remains required.');
+
+    ownerSessionStateEl.textContent = publication
+      ? 'Dated candidate owner session plus a later verified publication-evidence sibling supplied through the connected Clover app. The sibling changes only its declared CI and preview claims; it does not replace priorities, Action ID, Handoff lifecycle, or authority.'
+      : 'Dated candidate owner session supplied through the connected Clover app. It grants no authority.';
+    ownerSessionEl.hidden = false;
+    if (actionId) addPill(`Action ${safeSummary(actionId)}`);
+  }
+
+  function render(data, { allowOwnerContext = false } = {}) {
     const packet = data?.packet || null;
     const status = data?.status || null;
     const source = data?.source || packet?.canonicalContext || null;
     currentPrompt = data?.followUpPrompt || '';
 
-    if (status?.overallMissionCompletionEstimate != null && !pillsEl.dataset.statusAdded) {
-      const pill = document.createElement('span');
-      pill.className = 'pill';
-      pill.textContent = `Mission ${status.overallMissionCompletionEstimate}% · ${status.asOf || 'dated status'}`;
-      pillsEl.append(pill);
-      pillsEl.dataset.statusAdded = 'true';
-    }
-    if (source?.commit && !pillsEl.dataset.sourceAdded) {
-      const pill = document.createElement('span');
-      pill.className = 'pill';
-      pill.textContent = `Context ${String(source.commit).slice(0, 8)}`;
-      pillsEl.append(pill);
-      pillsEl.dataset.sourceAdded = 'true';
-    }
+    if (status) renderSnapshot(status, source, allowOwnerContext);
+    renderOwnerSession(data?.today || null, allowOwnerContext);
+
     if (!packet && !currentPrompt) return;
 
     promptEl.textContent = currentPrompt;
-    packetEl.textContent = JSON.stringify(packet, null, 2);
+    packetEl.textContent = allowOwnerContext
+      ? JSON.stringify(packet, null, 2)
+      : 'Machine-readable source identities are shown only inside the connected Clover app context.';
     summaryEl.textContent = packet
-      ? `${packet.intent.id} · ${packet.project?.title || packet.resolution?.state || 'project resolution needed'} · ${packet.cost.defaultLane}`
+      ? `${packet.intent?.id || 'bounded request'} · ${packet.project?.title || packet.resolution?.state || 'project resolution required'} · ${packet.cost?.defaultLane || 'cost lane unknown'}`
       : 'Prepared Clover follow-up';
+
     cardsEl.replaceChildren();
     if (packet) {
-      addCard('Project', packet.project?.title || `Resolution ${packet.resolution?.state || 'required'}`);
-      addCard('Live refresh', `${packet.freshness.requiredSources.length} source checks · ${[...new Set(packet.freshness.sourcePlan.map((item) => item.connector))].join(', ')}`);
-      addCard('Cost lane', `${packet.cost.defaultLane}. ${packet.cost.additionalPurchaseExpected ? 'Paid escalation is conditional.' : 'No additional purchase expected.'}`);
-      addCard('Authority', 'Preview-only. No merge, production, data, domain, secret, purchase, or messaging authority.');
-      for (const action of packet.ownerActionCards || []) addCard(action.title, `${action.instruction} Cost: ${action.cost}.`);
+      const connectors = [...new Set((packet.freshness?.sourcePlan || []).map((item) => item.connector))];
+      addCard('Target', packet.project?.title || `Resolution ${packet.resolution?.state || 'required'}`, `Command ${packet.commandId || 'ID unavailable'}.`);
+      addCard('Truth coverage', `${packet.freshness?.requiredSources?.length || 0} live-source checks`, connectors.length ? connectors.join(', ') : 'Source plan unavailable.');
+      addCard('Action boundary', 'Preview-only by default', 'No merge, production, data, domain, secret, purchase, or messaging authority.');
+      addCard('Cost', packet.cost?.defaultLane || 'Unknown', packet.cost?.additionalPurchaseExpected ? 'Paid escalation remains conditional.' : 'No additional purchase expected.');
+      const rollback = packet.stopConditions?.find((item) => /rollback/i.test(item));
+      addCard('Rollback', rollback ? 'Required' : 'Must be verified', rollback || 'Stop if a verified rollback anchor is unavailable.');
+
+      for (const action of packet.ownerActionCards || []) {
+        addCard('Owner decision', action.title, `${action.instruction} Cost: ${action.cost}.`);
+      }
     }
+
     resultEl.classList.add('visible');
     copyButton.disabled = !currentPrompt;
     sendButton.disabled = !currentPrompt || !window.openai?.sendFollowUpMessage;
@@ -156,25 +672,27 @@
 
   async function prepare() {
     const request = requestEl.value.trim();
-    if (!request) return;
+    if (!request) {
+      transcriptEl.textContent = 'Choose a core question or enter an instruction.';
+      requestEl.focus();
+      return;
+    }
+
     prepareButton.disabled = true;
-    transcriptEl.textContent = 'Binding your instruction to current Clover context…';
+    transcriptEl.textContent = 'Binding the request to current Clover context and authority…';
+
     try {
+      let response;
       if (window.openai?.callTool) {
-        const response = await window.openai.callTool('prepare_clover_command', { request });
-        render(response?.structuredContent || response);
+        response = await window.openai.callTool('prepare_clover_command', { request });
+        render(response?.structuredContent || response, { allowOwnerContext: true });
       } else {
-        const response = await fetch('/api/prepare-command', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ request })
-        });
-        if (!response.ok) throw new Error(await response.text());
-        render(await response.json());
+        transcriptEl.textContent = 'Open this page through the connected Clover app to bind owner-session context. No anonymous candidate context was loaded.';
+        return;
       }
-      transcriptEl.textContent = 'Command prepared. No project was changed.';
+      transcriptEl.textContent = 'Bounded command prepared. No project or production system was changed.';
     } catch (error) {
-      transcriptEl.textContent = `Could not prepare command: ${error.message || error}`;
+      transcriptEl.textContent = `Could not prepare command: ${error?.message || error}`;
     } finally {
       prepareButton.disabled = false;
     }
@@ -185,13 +703,15 @@
     if (!SpeechRecognition) {
       micButton.disabled = true;
       micButton.textContent = 'Use device dictation';
-      transcriptEl.textContent = 'This browser does not expose live speech recognition. Use the microphone on your keyboard or ChatGPT Voice.';
+      transcriptEl.textContent = 'Live browser speech recognition is unavailable. Use keyboard dictation or ChatGPT Voice.';
       return;
     }
+
     recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
+
     recognition.onresult = (event) => {
       let finalText = '';
       let interimText = '';
@@ -203,40 +723,64 @@
       if (finalText) requestEl.value = `${requestEl.value.trim()} ${finalText.trim()}`.trim();
       transcriptEl.textContent = interimText || 'Listening…';
     };
+
     recognition.onend = () => {
       if (listening) recognition.start();
-      else { micButton.textContent = 'Start live transcription'; transcriptEl.textContent = 'Transcription stopped.'; }
+      else {
+        micButton.textContent = 'Start live transcription';
+        transcriptEl.textContent = 'Transcription stopped.';
+      }
     };
-    recognition.onerror = (event) => { transcriptEl.textContent = `Speech recognition: ${event.error}`; };
+
+    recognition.onerror = (event) => {
+      transcriptEl.textContent = `Speech recognition: ${event.error}`;
+    };
   }
+
+  document.querySelectorAll('[data-example]').forEach((button) => {
+    button.addEventListener('click', () => {
+      requestEl.value = button.dataset.example || '';
+      requestEl.focus();
+    });
+  });
 
   micButton.addEventListener('click', () => {
     if (!recognition) return;
     listening = !listening;
-    if (listening) { recognition.start(); micButton.textContent = 'Stop transcription'; transcriptEl.textContent = 'Listening…'; }
-    else recognition.stop();
+    if (listening) {
+      recognition.start();
+      micButton.textContent = 'Stop transcription';
+      transcriptEl.textContent = 'Listening…';
+    } else {
+      recognition.stop();
+    }
   });
+
   prepareButton.addEventListener('click', prepare);
+
   copyButton.addEventListener('click', async () => {
     await navigator.clipboard.writeText(currentPrompt);
     copyButton.textContent = 'Copied';
     setTimeout(() => { copyButton.textContent = 'Copy bounded prompt'; }, 1200);
   });
+
   sendButton.addEventListener('click', async () => {
     if (!window.openai?.sendFollowUpMessage || !currentPrompt) return;
     await window.openai.sendFollowUpMessage({ prompt: currentPrompt });
   });
-  document.querySelectorAll('[data-example]').forEach((button) => {
-    button.addEventListener('click', () => { requestEl.value = button.dataset.example || ''; requestEl.focus(); });
-  });
 
   setupSpeech();
+
   const initial = hostOutput();
   if (initial) {
     if (initial.packet?.originalRequest) requestEl.value = initial.packet.originalRequest;
-    render(initial);
+    render(initial, { allowOwnerContext: true });
   } else {
-    fetch('/api/context').then((response) => response.ok ? response.json() : null).then((snapshot) => snapshot && render(snapshot)).catch(() => {});
+    missionValueEl.textContent = 'Owner context not loaded';
+    missionDetailEl.textContent = 'Open through the connected Clover app. Anonymous view does not fetch registry, candidate, or source identity data.';
+    priorityValueEl.textContent = 'Owner session required';
+    unknownValueEl.textContent = 'No state inferred';
+    renderOwnerSession(null, false);
   }
 </script>
 </body>

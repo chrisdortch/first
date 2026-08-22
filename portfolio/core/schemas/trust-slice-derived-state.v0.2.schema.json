@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/trust-slice-derived-state.v0.2.schema.json",
+  "title": "Clover Trust Slice Derived State 0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "synthetic", "asOf", "capsule", "today", "derivedStateHash"],
+  "properties": {
+    "documentType": { "const": "clover-trust-slice-derived-state" },
+    "schemaVersion": { "const": "0.2" },
+    "synthetic": { "const": true },
+    "asOf": { "type": "string", "format": "date-time" },
+    "capsule": { "$ref": "minimum-context-capsule.v0.2.schema.json" },
+    "today": { "$ref": "today-brief.v0.2.schema.json" },
+    "derivedStateHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

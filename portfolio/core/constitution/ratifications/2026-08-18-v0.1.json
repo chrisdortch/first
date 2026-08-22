@@ -1,0 +1,65 @@
+{
+  "documentType": "clover-constitution-ratification-receipt",
+  "schemaVersion": "1.0",
+  "ratificationId": "clover-constitution-0.1-ratification-2026-08-18",
+  "status": "ratified-active",
+  "constitutionVersion": "0.1",
+  "effectiveAt": "2026-08-18T18:58:08-05:00",
+  "timezone": "America/Chicago",
+  "owner": {
+    "name": "Chris Dortch",
+    "role": "owner",
+    "decision": "approved-unchanged",
+    "sourceStatement": "I approve unchanged (but we may choose to modify it later)."
+  },
+  "approvedArtifact": {
+    "path": "portfolio/core/CLOVER_CONSTITUTION_CANDIDATE_V0.1.md",
+    "sha256": "82b90697389503182e44838df537268510680acffdff95b924967d11bb44169e",
+    "sizeBytes": 4995,
+    "textModifiedByRatification": false
+  },
+  "ratificationEffect": {
+    "governanceStatus": "binding-current-version",
+    "truthLoopGovernanceActive": true,
+    "futureAmendmentsAllowed": true,
+    "amendmentRule": "Any modification must be adopted as a new identified version. Version 0.1, its exact approved text, hash, and ratification history remain preserved.",
+    "silentAmendmentAllowed": false,
+    "operationalAuthorityGranted": []
+  },
+  "explicitlyNotApproved": [
+    "merge of pull request 15 or any other branch",
+    "production deployment or promotion",
+    "production-data or private-data access",
+    "secret access or reveal",
+    "external messages or publication",
+    "purchases or money movement",
+    "domain or DNS changes",
+    "credential or permission changes",
+    "OpenAI Site changes",
+    "changes to any existing application runtime",
+    "standing broad authority"
+  ],
+  "command": {
+    "commandId": "clover-038dc5368b0ae323",
+    "preparedAt": "2026-08-18T18:58:39.438-05:00",
+    "authorityBoundary": "record ratification only; stop before merge or deployment"
+  },
+  "missionCompletionEstimateChanged": false,
+  "notes": "The approved Constitution text is preserved byte-for-byte. Current ratified status is carried by this receipt and the constitution pointer rather than by rewriting the approved artifact.",
+  "recordingScope": {
+    "scope": "portable local governance commit prepared from the candidate snapshot",
+    "canonicalRepositoryPushConfirmed": false,
+    "pullRequestUpdatedConfirmed": false,
+    "mergePerformed": false,
+    "deploymentPerformed": false
+  },
+  "validation": {
+    "completedAt": "2026-08-18T19:03:00-05:00",
+    "constitutionByteForByteUnchanged": true,
+    "constitutionSha256Verified": true,
+    "todaySurfaceTestsPassed": 5,
+    "jsonAndJsonlParse": "passed",
+    "secretPatternScan": "passed",
+    "authorityInvariants": "passed"
+  }
+}

@@ -1,0 +1,333 @@
+name: Validate Clover Core Candidate
+
+on:
+  push:
+    branches:
+      - 'platform/clover-context-gateway-core-*'
+      - 'platform/clover-core-*'
+    paths:
+      - 'CHATGPT_PROJECT_INSTRUCTIONS.md'
+      - 'CLOVER_CONNECTOR_ROUTING.md'
+      - 'CLOVER_HANDOFF_LEDGER.md'
+      - 'CLOVER_OWNER_START.md'
+      - 'CODEX_CLOVER_OPERATOR.md'
+      - 'apps/clover-context-gateway/public/command-center.html'
+      - 'apps/clover-context-gateway/test/today-surface.test.js'
+      - 'portfolio/PROGRESS_METHODOLOGY_V0.2_CANDIDATE.md'
+      - 'portfolio/core/**'
+      - 'portfolio/daily/**'
+      - 'portfolio/ledger/decisions.jsonl'
+      - 'portfolio/ledger/progress-history.jsonl'
+      - 'portfolio/runtime/priority-engine.mjs'
+      - 'portfolio/runtime/validate-core-activation.mjs'
+      - 'portfolio/status/candidates/**'
+      - 'portfolio/test/**'
+      - '.github/workflows/validate-clover-core-candidate.yml'
+  pull_request:
+    paths:
+      - 'CHATGPT_PROJECT_INSTRUCTIONS.md'
+      - 'CLOVER_CONNECTOR_ROUTING.md'
+      - 'CLOVER_HANDOFF_LEDGER.md'
+      - 'CLOVER_OWNER_START.md'
+      - 'CODEX_CLOVER_OPERATOR.md'
+      - 'apps/clover-context-gateway/public/command-center.html'
+      - 'apps/clover-context-gateway/test/today-surface.test.js'
+      - 'portfolio/PROGRESS_METHODOLOGY_V0.2_CANDIDATE.md'
+      - 'portfolio/core/**'
+      - 'portfolio/daily/**'
+      - 'portfolio/ledger/decisions.jsonl'
+      - 'portfolio/ledger/progress-history.jsonl'
+      - 'portfolio/runtime/priority-engine.mjs'
+      - 'portfolio/runtime/validate-core-activation.mjs'
+      - 'portfolio/status/candidates/**'
+      - 'portfolio/test/**'
+      - '.github/workflows/validate-clover-core-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Boundary and schema validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CLOVER_VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify exact candidate checkout
+        shell: bash
+        run: test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Prove pull-request integration context
+        shell: bash
+        env:
+          CLOVER_EVENT_NAME: ${{ github.event_name }}
+          CLOVER_REPOSITORY: ${{ github.repository }}
+          CLOVER_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          CLOVER_EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CLOVER_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CLOVER_PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          CLOVER_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          CLOVER_EVENT_MERGE_SHA: ${{ github.sha }}
+        run: |
+          # BEGIN CLOVER PR INTEGRATION CONTEXT V1
+          set -Eeuo pipefail
+
+          evidence_path="$RUNNER_TEMP/clover-pr-integration-context.json"
+          export CLOVER_RESULT="failed"
+          export CLOVER_FAILURE_STAGE="initialize"
+          export CLOVER_ACTUAL_HEAD_SHA=""
+          export CLOVER_HEAD_TREE=""
+          export CLOVER_FETCHED_BASE_SHA=""
+          export CLOVER_FETCHED_BASE_SHA_SECOND_READ=""
+          export CLOVER_MERGE_BASE=""
+          export CLOVER_FETCHED_MERGE_SHA=""
+          export CLOVER_FETCHED_MERGE_SHA_SECOND_READ=""
+          export CLOVER_SYNTHETIC_PARENT_1=""
+          export CLOVER_SYNTHETIC_PARENT_2=""
+          export CLOVER_SYNTHETIC_MERGE_TREE=""
+          export CLOVER_BASE_IS_ANCESTOR=""
+          export CLOVER_MERGE_TREE_EQUALS_HEAD_TREE=""
+
+          is_sha() {
+            [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+          }
+
+          write_evidence() {
+            node <<'NODE' > "$evidence_path"
+          const nullable = (name) => {
+            const value = process.env[name];
+            return value === undefined || value === '' ? null : value;
+          };
+          const integerOrNull = (name) => {
+            const value = nullable(name);
+            return value === null ? null : Number.parseInt(value, 10);
+          };
+          const booleanOrNull = (name) => {
+            const value = nullable(name);
+            if (value === null) return null;
+            if (value !== 'true' && value !== 'false') throw new Error(`${name} is not boolean`);
+            return value === 'true';
+          };
+          const result = process.env.CLOVER_RESULT;
+          const evidence = {
+            schemaVersion: 'clover-pr-integration-context-v1',
+            eventName: process.env.CLOVER_EVENT_NAME,
+            repository: process.env.CLOVER_REPOSITORY,
+            pullRequestNumber: integerOrNull('CLOVER_PR_NUMBER'),
+            headRef: nullable('CLOVER_EVENT_HEAD_REF'),
+            headSha: nullable('CLOVER_EXPECTED_HEAD_SHA'),
+            checkedOutHeadSha: nullable('CLOVER_ACTUAL_HEAD_SHA'),
+            headTree: nullable('CLOVER_HEAD_TREE'),
+            baseRef: nullable('CLOVER_PR_BASE_REF'),
+            baseSha: nullable('CLOVER_PR_BASE_SHA'),
+            fetchedBaseSha: nullable('CLOVER_FETCHED_BASE_SHA'),
+            fetchedBaseShaSecondRead: nullable('CLOVER_FETCHED_BASE_SHA_SECOND_READ'),
+            mergeBase: nullable('CLOVER_MERGE_BASE'),
+            eventSyntheticMergeSha: process.env.CLOVER_EVENT_NAME === 'pull_request'
+              ? nullable('CLOVER_EVENT_MERGE_SHA')
+              : null,
+            fetchedSyntheticMergeSha: nullable('CLOVER_FETCHED_MERGE_SHA'),
+            fetchedSyntheticMergeShaSecondRead: nullable('CLOVER_FETCHED_MERGE_SHA_SECOND_READ'),
+            syntheticMergeParent1: nullable('CLOVER_SYNTHETIC_PARENT_1'),
+            syntheticMergeParent2: nullable('CLOVER_SYNTHETIC_PARENT_2'),
+            syntheticMergeTree: nullable('CLOVER_SYNTHETIC_MERGE_TREE'),
+            baseIsAncestorOfHead: booleanOrNull('CLOVER_BASE_IS_ANCESTOR'),
+            syntheticMergeTreeEqualsHeadTree: booleanOrNull('CLOVER_MERGE_TREE_EQUALS_HEAD_TREE'),
+            result,
+            failureStage: result === 'failed' ? nullable('CLOVER_FAILURE_STAGE') : null
+          };
+          process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+          NODE
+          }
+
+          write_summary() {
+            {
+              printf '### Clover PR integration context\n\n'
+              printf -- '- Result: %s\n' "$CLOVER_RESULT"
+              printf -- '- Event: %s\n' "$CLOVER_EVENT_NAME"
+              printf -- '- Head: %s\n' "${CLOVER_ACTUAL_HEAD_SHA:-not-applicable}"
+              printf -- '- Head tree: %s\n' "${CLOVER_HEAD_TREE:-not-applicable}"
+              printf -- '- Base: %s\n' "${CLOVER_FETCHED_BASE_SHA:-not-applicable}"
+              printf -- '- Merge base: %s\n' "${CLOVER_MERGE_BASE:-not-applicable}"
+              printf -- '- Synthetic merge: %s\n' "${CLOVER_FETCHED_MERGE_SHA:-not-applicable}"
+              printf -- '- Synthetic merge tree: %s\n' "${CLOVER_SYNTHETIC_MERGE_TREE:-not-applicable}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          on_error() {
+            local exit_code=$?
+            trap - ERR
+            CLOVER_RESULT="failed"
+            write_evidence || true
+            write_summary || true
+            exit "$exit_code"
+          }
+          trap on_error ERR
+
+          CLOVER_FAILURE_STAGE="validate-common-event-identity"
+          [[ "$CLOVER_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          is_sha "$CLOVER_EXPECTED_HEAD_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          CLOVER_ACTUAL_HEAD_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+          is_sha "$CLOVER_ACTUAL_HEAD_SHA"
+          test "$CLOVER_ACTUAL_HEAD_SHA" = "$CLOVER_EXPECTED_HEAD_SHA"
+          CLOVER_HEAD_TREE="$(git rev-parse --verify "${CLOVER_ACTUAL_HEAD_SHA}^{tree}")"
+          is_sha "$CLOVER_HEAD_TREE"
+          remote_url="$(git config --get remote.origin.url)"
+          case "$remote_url" in
+            "https://github.com/${CLOVER_REPOSITORY}"|"https://github.com/${CLOVER_REPOSITORY}.git"|"git@github.com:${CLOVER_REPOSITORY}.git") ;;
+            *) false ;;
+          esac
+
+          case "$CLOVER_EVENT_NAME" in
+            push|workflow_dispatch)
+              CLOVER_RESULT="not-applicable-non-pr-event"
+              CLOVER_FAILURE_STAGE="write-non-pr-evidence"
+              write_evidence
+              write_summary
+              trap - ERR
+              exit 0
+              ;;
+            pull_request) ;;
+            *) false ;;
+          esac
+
+          CLOVER_FAILURE_STAGE="validate-pull-request-event-identity"
+          [[ "$CLOVER_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          test -n "$CLOVER_EVENT_HEAD_REF"
+          test -n "$CLOVER_PR_BASE_REF"
+          git check-ref-format "refs/heads/${CLOVER_EVENT_HEAD_REF}" > /dev/null
+          git check-ref-format "refs/heads/${CLOVER_PR_BASE_REF}" > /dev/null
+          is_sha "$CLOVER_PR_BASE_SHA"
+          is_sha "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_FAILURE_STAGE="fetch-first-pull-request-context"
+          git fetch --no-tags --force origin \
+            "+refs/heads/${CLOVER_PR_BASE_REF}:refs/clover/pr-integration-context/base-first"
+          git fetch --no-tags --force origin \
+            "+refs/pull/${CLOVER_PR_NUMBER}/merge:refs/clover/pr-integration-context/merge-first"
+          CLOVER_FETCHED_BASE_SHA="$(git rev-parse --verify 'refs/clover/pr-integration-context/base-first^{commit}')"
+          CLOVER_FETCHED_MERGE_SHA="$(git rev-parse --verify 'refs/clover/pr-integration-context/merge-first^{commit}')"
+          is_sha "$CLOVER_FETCHED_BASE_SHA"
+          is_sha "$CLOVER_FETCHED_MERGE_SHA"
+          test "$CLOVER_FETCHED_BASE_SHA" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA" = "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_FAILURE_STAGE="validate-linear-integration-context"
+          CLOVER_MERGE_BASE="$(git merge-base "$CLOVER_PR_BASE_SHA" "$CLOVER_ACTUAL_HEAD_SHA")"
+          is_sha "$CLOVER_MERGE_BASE"
+          test "$CLOVER_MERGE_BASE" = "$CLOVER_PR_BASE_SHA"
+          CLOVER_BASE_IS_ANCESTOR="false"
+          git merge-base --is-ancestor "$CLOVER_PR_BASE_SHA" "$CLOVER_ACTUAL_HEAD_SHA"
+          CLOVER_BASE_IS_ANCESTOR="true"
+          read -r -a synthetic_parents <<< "$(git show -s --format='%P' "$CLOVER_FETCHED_MERGE_SHA")"
+          test "${#synthetic_parents[@]}" -eq 2
+          CLOVER_SYNTHETIC_PARENT_1="${synthetic_parents[0]}"
+          CLOVER_SYNTHETIC_PARENT_2="${synthetic_parents[1]}"
+          test "$CLOVER_SYNTHETIC_PARENT_1" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_SYNTHETIC_PARENT_2" = "$CLOVER_ACTUAL_HEAD_SHA"
+          CLOVER_SYNTHETIC_MERGE_TREE="$(git rev-parse --verify "${CLOVER_FETCHED_MERGE_SHA}^{tree}")"
+          is_sha "$CLOVER_SYNTHETIC_MERGE_TREE"
+          CLOVER_MERGE_TREE_EQUALS_HEAD_TREE="false"
+          test "$CLOVER_SYNTHETIC_MERGE_TREE" = "$CLOVER_HEAD_TREE"
+          CLOVER_MERGE_TREE_EQUALS_HEAD_TREE="true"
+
+          CLOVER_FAILURE_STAGE="verify-context-stability"
+          git fetch --no-tags --force origin \
+            "+refs/heads/${CLOVER_PR_BASE_REF}:refs/clover/pr-integration-context/base-second"
+          git fetch --no-tags --force origin \
+            "+refs/pull/${CLOVER_PR_NUMBER}/merge:refs/clover/pr-integration-context/merge-second"
+          CLOVER_FETCHED_BASE_SHA_SECOND_READ="$(git rev-parse --verify 'refs/clover/pr-integration-context/base-second^{commit}')"
+          CLOVER_FETCHED_MERGE_SHA_SECOND_READ="$(git rev-parse --verify 'refs/clover/pr-integration-context/merge-second^{commit}')"
+          is_sha "$CLOVER_FETCHED_BASE_SHA_SECOND_READ"
+          is_sha "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ"
+          test "$CLOVER_FETCHED_BASE_SHA_SECOND_READ" = "$CLOVER_FETCHED_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ" = "$CLOVER_FETCHED_MERGE_SHA"
+          test "$CLOVER_FETCHED_BASE_SHA_SECOND_READ" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ" = "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_RESULT="passed"
+          CLOVER_FAILURE_STAGE="write-passed-evidence"
+          write_evidence
+          write_summary
+          trap - ERR
+          # END CLOVER PR INTEGRATION CONTEXT V1
+      - name: Verify dependency-free Core v0.2 contracts and Trust Slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test portfolio/core/test/*.test.mjs
+          node --test portfolio/test/*.test.mjs
+          node portfolio/core/scripts/verify-core.mjs > "$RUNNER_TEMP/clover-core-v02-verification.json"
+          node portfolio/runtime/validate-core-activation.mjs > "$RUNNER_TEMP/clover-core-activation-v01-verification.json"
+          node portfolio/core/scripts/verify-publication-finalization.mjs > "$RUNNER_TEMP/clover-core-publication-finalization-v01-verification.json"
+
+      - name: Install pinned gateway dependencies
+        working-directory: apps/clover-context-gateway
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate existing gateway and new Core candidate
+        working-directory: apps/clover-context-gateway
+        run: npm run validate
+
+      - name: Record authority boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/clover-core-boundary.json"
+          const fs = require('node:fs');
+          const registry = JSON.parse(fs.readFileSync('portfolio/core/CAPABILITY_AUTHORITY_REGISTRY.json', 'utf8'));
+          if (registry.defaultDeny !== true) process.exit(1);
+          if (registry.standingProductionAuthority !== false) process.exit(1);
+          if (registry.standingPrivateDataAuthority !== false) process.exit(1);
+          if (registry.standingSecretRevealAuthority !== false) process.exit(1);
+          for (const system of registry.systems) {
+            if (system.capabilities.execute_production === 'allow') process.exit(1);
+          }
+          const fixtures = fs.readFileSync('portfolio/core/fixtures/events.synthetic.jsonl', 'utf8').trim().split(/\r?\n/).map(JSON.parse);
+          if (!fixtures.length || fixtures.some((event) => event.synthetic !== true)) process.exit(1);
+          console.log(JSON.stringify({
+            status: 'passed',
+            node: process.version,
+            defaultDeny: true,
+            standingProductionAuthority: false,
+            standingPrivateDataAuthority: false,
+            standingSecretRevealAuthority: false,
+            syntheticFixtureCount: fixtures.length
+          }, null, 2));
+          NODE
+
+      - name: Upload deterministic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clover-core-candidate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/clover-pr-integration-context.json
+            ${{ runner.temp }}/clover-core-boundary.json
+            ${{ runner.temp }}/clover-core-v02-verification.json
+            ${{ runner.temp }}/clover-core-activation-v01-verification.json
+            ${{ runner.temp }}/clover-core-publication-finalization-v01-verification.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6

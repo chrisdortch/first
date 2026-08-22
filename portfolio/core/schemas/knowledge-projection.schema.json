@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/knowledge-projection.schema.json",
+  "title": "Clover Knowledge Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectionId",
+    "createdAt",
+    "expiresAt",
+    "purpose",
+    "sourceCellId",
+    "targetCellId",
+    "subject",
+    "claims",
+    "omittedFields",
+    "reviewStatus",
+    "containsRawSource",
+    "containsPlaintextSecrets"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1"
+    },
+    "projectionId": {
+      "type": "string",
+      "pattern": "^prjct_[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "sourceCellId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "targetCellId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 160
+    },
+    "subject": {
+      "type": "object"
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "claimId",
+          "truthStatus",
+          "effectiveAt",
+          "sourceRefs",
+          "value"
+        ],
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "truthStatus": {
+            "enum": [
+              "source-fact",
+              "owner-assertion",
+              "ai-inference",
+              "verified",
+              "disputed",
+              "superseded",
+              "unknown"
+            ]
+          },
+          "effectiveAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "sourceRefs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            }
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "value": {}
+        }
+      },
+      "maxItems": 500
+    },
+    "omittedFields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "reviewStatus": {
+      "enum": [
+        "generated",
+        "source-verified",
+        "owner-approved",
+        "rejected",
+        "expired",
+        "revoked"
+      ]
+    },
+    "containsRawSource": {
+      "const": false
+    },
+    "containsPlaintextSecrets": {
+      "const": false
+    },
+    "revocationRef": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 240
+    },
+    "contentHash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^(sha256:)?[a-f0-9]{64}$"
+    }
+  }
+}

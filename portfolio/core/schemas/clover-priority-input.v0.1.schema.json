@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-priority-input.v0.1.schema.json",
+  "title": "Clover priority input 0.1 candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "modelVersion", "priorityInputHash", "asOf", "timezone", "scope", "sourceFreshness", "wipLimits", "sources", "targets"],
+  "properties": {
+    "schemaVersion": {"const": "0.1"},
+    "modelVersion": {"const": "0.1-candidate"},
+    "priorityInputHash": {"$ref": "#/$defs/hash"},
+    "asOf": {"const": "2026-08-20"},
+    "timezone": {"const": "America/Chicago"},
+    "scope": {"const": "clover-core-trunk-activation-and-handoff-gate-0.1"},
+    "sourceFreshness": {"$ref": "#/$defs/freshness"},
+    "wipLimits": {"$ref": "#/$defs/wipLimits"},
+    "sources": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/source"}},
+    "targets": {"type": "array", "minItems": 19, "maxItems": 19, "items": {"$ref": "#/$defs/target"}}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "identifier": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._:@/-]*$"},
+    "freshness": {
+      "type": "object", "additionalProperties": false, "required": ["label", "observedAt"],
+      "properties": {
+        "label": {"enum": ["current-task", "same-day", "historical", "unknown"]},
+        "observedAt": {"type": ["string", "null"], "pattern": "^2026-08-[0-9]{2}(T.*)?$"}
+      }
+    },
+    "wipLimits": {
+      "type": "object", "additionalProperties": false, "required": ["coreTrunk", "affiliatedBranch"],
+      "properties": {"coreTrunk": {"const": 1}, "affiliatedBranch": {"const": 1}}
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sourceId", "observedAt", "evidenceStatus", "freshness", "stateClass", "exactIdentity"],
+      "properties": {
+        "sourceId": {"$ref": "#/$defs/identifier"},
+        "observedAt": {"type": ["string", "null"]},
+        "evidenceStatus": {"enum": ["verified", "partially-verified", "reported", "unverified", "unknown"]},
+        "freshness": {"enum": ["current-task", "same-day", "historical", "unknown"]},
+        "stateClass": {"enum": ["live", "current", "candidate", "historical"]},
+        "exactIdentity": {"type": ["string", "null"]}
+      }
+    },
+    "factor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["value", "rationale", "evidenceClassification", "evidenceRefs"],
+      "properties": {
+        "value": {"type": ["integer", "null"], "minimum": 0, "maximum": 100},
+        "rationale": {"type": "string", "minLength": 1, "maxLength": 240},
+        "evidenceClassification": {"enum": ["source-fact", "owner-direction", "AI-inference", "unknown"]},
+        "evidenceRefs": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}}
+      },
+      "if": {"properties": {"value": {"const": null}}, "required": ["value"]},
+      "then": {"properties": {"evidenceClassification": {"const": "unknown"}}},
+      "else": {"properties": {"evidenceClassification": {"enum": ["source-fact", "owner-direction", "AI-inference"]}, "evidenceRefs": {"minItems": 1}}}
+    },
+    "factors": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadlineSafetyContinuityRisk", "ownerCollaboratorWorkloadReduction", "revenueFinancialStability", "portfolioSynergyUnblockingValue", "readinessAndCostToFinish"],
+      "properties": {
+        "deadlineSafetyContinuityRisk": {"$ref": "#/$defs/factor"},
+        "ownerCollaboratorWorkloadReduction": {"$ref": "#/$defs/factor"},
+        "revenueFinancialStability": {"$ref": "#/$defs/factor"},
+        "portfolioSynergyUnblockingValue": {"$ref": "#/$defs/factor"},
+        "readinessAndCostToFinish": {"$ref": "#/$defs/factor"}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["targetId", "priority", "lane", "eligibility", "eligibilityReason", "requestedState", "factors", "provenance", "freshness", "unknowns"],
+      "properties": {
+        "targetId": {"enum": ["cloverapps-ai", "clover-core", "clover-core-hq", "clover-warroom", "clover-companion", "clover-launchpad", "knowledge-hub-window-vault", "lakeside-essentials", "poolside-pulse", "boat-rentals", "cart-waiver", "propertycare-booking-central", "serenity-shores-app", "serenity-shores-maps", "operations-hub", "songandstage", "rollindd", "vibe-translator", "property-opportunity-finder"]},
+        "priority": {"enum": ["P0", "P1"]},
+        "lane": {"enum": ["coreTrunk", "affiliatedBranch"]},
+        "eligibility": {"enum": ["eligible", "blocked"]},
+        "eligibilityReason": {"$ref": "#/$defs/identifier"},
+        "requestedState": {"enum": ["active", "not-started"]},
+        "factors": {"$ref": "#/$defs/factors"},
+        "provenance": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}},
+        "freshness": {"$ref": "#/$defs/freshness"},
+        "unknowns": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/identifier"}}
+      }
+    }
+  }
+}

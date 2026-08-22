@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/ratification-evidence.v0.2.schema.json",
+  "title": "Clover Ratification Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "ceremonyId", "artifact", "displayedDecision", "attestation", "validationReceipt", "validationReceiptHash", "authorityGranted"],
+  "properties": {
+    "documentType": { "const": "clover-ratification-evidence" },
+    "schemaVersion": { "const": "0.2" },
+    "ceremonyId": { "type": "string", "minLength": 1 },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "path", "byteCount", "sha256"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "byteCount": { "type": "integer", "minimum": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "displayedDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisionType", "statement", "statementSha256"],
+      "properties": {
+        "decisionType": { "enum": ["ratify-exact-artifact", "reject", "defer"] },
+        "statement": { "type": "string", "minLength": 1 },
+        "statementSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "attestation": { "$ref": "authenticated-attestation.v0.2.schema.json" },
+    "validationReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentType", "schemaVersion", "result", "policyValidation", "artifactSha256", "validatorId", "validatedAt", "authorityGranted"],
+      "properties": {
+        "documentType": { "const": "clover-constitution-validation-receipt" },
+        "schemaVersion": { "const": "0.2" },
+        "result": { "const": "passed" },
+        "policyValidation": { "const": "passed" },
+        "artifactSha256": { "$ref": "#/$defs/sha256" },
+        "validatorId": { "type": "string", "minLength": 1 },
+        "validatedAt": { "type": "string", "format": "date-time" },
+        "authorityGranted": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "validationReceiptHash": { "$ref": "#/$defs/sha256" },
+    "authorityGranted": { "type": "array", "maxItems": 0 }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

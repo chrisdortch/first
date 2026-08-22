@@ -1,0 +1,433 @@
+{
+  "documentType": "clover-core-trunk-activation-source-bound-receipt",
+  "schemaVersion": "0.1.0",
+  "evidenceStatus": "current",
+  "issuedAt": "2026-08-20T23:20:53Z",
+  "timezone": "America/Chicago",
+  "verdict": "AMEND",
+  "verdictBasis": {
+    "candidatePublication": "complete",
+    "readOnlyOwnerLoop": "verified-candidate",
+    "firstImplementationBranchEnvelope": "not-created",
+    "affiliatedBranchActivation": "hold",
+    "summary": "The Core trunk, read-only Today brief, Handoff Ledger, exact-head CI, and target-null Gateway preview are verified. The required first implementation-branch envelope is not truthful yet because WarRoom repository, source, deployment, and rollback identities remain unknown."
+  },
+  "source": {
+    "repository": "chrisdortch/first",
+    "branch": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "commit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "tree": "a027db19d8b177fe52d45fc0c0153ca1189f728e",
+    "directParent": "9006dcb78ee9412b57321cbd0fbdfa617d7bf96c",
+    "rollbackCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "rollbackTree": "7c65e5d49021e9255e0fa34bb27dce05b78c8123",
+    "commitCountFromRollback": 2,
+    "changedFileCount": 62,
+    "additions": 10325,
+    "deletions": 68,
+    "worktreeCleanAfterPublication": true
+  },
+  "pullRequest": {
+    "repository": "chrisdortch/first",
+    "number": 17,
+    "url": "https://github.com/chrisdortch/first/pull/17",
+    "baseBranch": "platform/clover-core-trust-slice-v0.2-20260818",
+    "baseCommit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+    "headBranch": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "state": "open",
+    "draft": true,
+    "merged": false,
+    "mergeable": true,
+    "bodyUpdatedToCurrentHead": true
+  },
+  "changedPathAllowlist": [
+    ".github/workflows/validate-clover-context-gateway.yml",
+    ".github/workflows/validate-clover-core-candidate.yml",
+    ".github/workflows/validate-clover-master-plan.yml",
+    "CHATGPT_PROJECT_INSTRUCTIONS.md",
+    "CLOVER_CONNECTOR_ROUTING.md",
+    "CLOVER_CONTEXT_GATEWAY_POINTER.json",
+    "CLOVER_HANDOFF_LEDGER.md",
+    "CLOVER_OWNER_START.md",
+    "CODEX_CLOVER_OPERATOR.md",
+    "apps/clover-context-gateway/README.md",
+    "apps/clover-context-gateway/lib/command-router.js",
+    "apps/clover-context-gateway/lib/context-store.js",
+    "apps/clover-context-gateway/package-lock.json",
+    "apps/clover-context-gateway/package.json",
+    "apps/clover-context-gateway/public/command-center.html",
+    "apps/clover-context-gateway/server.js",
+    "apps/clover-context-gateway/test/command-router.test.js",
+    "apps/clover-context-gateway/test/context-store.test.js",
+    "apps/clover-context-gateway/test/owner-operator-docs.test.js",
+    "apps/clover-context-gateway/test/serverless-mcp.test.js",
+    "apps/clover-context-gateway/test/today-surface.test.js",
+    "apps/clover-context-gateway/test/version-identity.test.js",
+    "portfolio/PROGRESS_METHODOLOGY_V0.2_CANDIDATE.md",
+    "portfolio/context/versions/0.3.1/CANDIDATE_STATUS.md",
+    "portfolio/core/CORE_TRUNK_ACTIVATION_IMPLEMENTATION_RECORD_V0.1.md",
+    "portfolio/core/handoff/index.json",
+    "portfolio/core/handoff/versions/0.1.0/cells/clover-core.branch-capsule.json",
+    "portfolio/core/handoff/versions/0.1.0/cells/clover-warroom.branch-capsule.json",
+    "portfolio/core/handoff/versions/0.1.0/cells/cloverapps-ai.branch-capsule.json",
+    "portfolio/core/handoff/versions/0.1.0/cells/knowledge-hub-window-vault.branch-capsule.json",
+    "portfolio/core/handoff/versions/0.1.0/cells/lakeside-essentials.branch-capsule.json",
+    "portfolio/core/handoff/versions/0.1.0/cells/propertycare-booking-central.branch-capsule.json",
+    "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-envelope.json",
+    "portfolio/core/handoff/versions/0.1.0/demonstration/action-001-status-refresh-receipt.json",
+    "portfolio/core/handoff/versions/0.1.0/demonstration/action-002-warroom-identity-envelope.json",
+    "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
+    "portfolio/core/handoff/versions/0.1.0/schemas/action-envelope.schema.json",
+    "portfolio/core/handoff/versions/0.1.0/schemas/action-receipt-index.schema.json",
+    "portfolio/core/handoff/versions/0.1.0/schemas/branch-capsule.schema.json",
+    "portfolio/core/handoff/versions/0.1.0/schemas/execution-receipt.schema.json",
+    "portfolio/core/handoff/versions/0.1.0/schemas/independent-review-decision.schema.json",
+    "portfolio/core/handoff/versions/0.1.0/schemas/owner-approval-attestation.schema.json",
+    "portfolio/core/lib/handoff-ledger.mjs",
+    "portfolio/core/review/Chat_Pro_Core_Trunk_Activation_Review_Prompt_2026-08-20.md",
+    "portfolio/core/schemas/clover-priority-input.v0.1.schema.json",
+    "portfolio/core/schemas/clover-priority-output.v0.1.schema.json",
+    "portfolio/core/schemas/clover-status-candidate.v0.1.schema.json",
+    "portfolio/core/schemas/today-session.v0.1.schema.json",
+    "portfolio/core/scripts/verify-core.mjs",
+    "portfolio/core/test/core-activation.test.mjs",
+    "portfolio/core/test/handoff-ledger.test.mjs",
+    "portfolio/core/today/2026-08-20/session.json",
+    "portfolio/daily/2026-08-20.md",
+    "portfolio/ledger/decisions.jsonl",
+    "portfolio/ledger/progress-history.jsonl",
+    "portfolio/runtime/priority-engine.mjs",
+    "portfolio/runtime/validate-core-activation.mjs",
+    "portfolio/status/candidates/2026-08-20/CONNECTION_STATUS_REPORT.md",
+    "portfolio/status/candidates/2026-08-20/priority-input.json",
+    "portfolio/status/candidates/2026-08-20/priority-output.json",
+    "portfolio/status/candidates/2026-08-20/status.json",
+    "portfolio/test/priority-engine.test.mjs"
+  ],
+  "completionMetrics": [
+    {
+      "id": "broad-mission-completion",
+      "value": 45,
+      "stateClass": "candidate",
+      "confidence": "medium-low"
+    },
+    {
+      "id": "owner-usable-operating-loop-completion",
+      "value": 25,
+      "stateClass": "current",
+      "confidence": "medium"
+    },
+    {
+      "id": "live-production-completion",
+      "value": 35,
+      "stateClass": "live",
+      "confidence": "medium-low"
+    },
+    {
+      "id": "verified-candidate-completion",
+      "value": 70,
+      "stateClass": "candidate",
+      "confidence": "medium"
+    }
+  ],
+  "priorityModel": {
+    "weights": {
+      "deadlineSafetyContinuityRisk": 30,
+      "ownerCollaboratorWorkloadReduction": 25,
+      "revenueFinancialStability": 20,
+      "portfolioSynergyUnblocking": 15,
+      "readinessCostToFinish": 10
+    },
+    "evaluatedCurrentP0P1Targets": 19,
+    "workInProgressLimit": {
+      "activeCoreTrunk": 1,
+      "activeAffiliatedBranch": 1
+    },
+    "topThreeOverall": [
+      {
+        "rank": 1,
+        "targetId": "clover-core",
+        "score": 81.5,
+        "status": "active"
+      },
+      {
+        "rank": 2,
+        "targetId": "lakeside-essentials",
+        "score": 79.5,
+        "status": "blocked"
+      },
+      {
+        "rank": 3,
+        "targetId": "boat-rentals",
+        "score": 75,
+        "status": "blocked"
+      }
+    ],
+    "recommendedEligiblePrecursor": {
+      "targetId": "clover-warroom",
+      "score": 67.75,
+      "mode": "proposal-only-read-only-identity-reconciliation",
+      "implementationBranchAuthorized": false
+    }
+  },
+  "handoff": {
+    "todaySessionHash": "56e5d0342c3f4d47dcaf5cec8cf2c6f52341ea57115bdecdc3751e7df7afd208",
+    "action001EnvelopeHash": "0f246dfa000fee8c8f7b24a0e21075236fe05f1cc647736747f9f9df8cd4afba",
+    "action001ReceiptHash": "85a80a7aea223d2317477e6975a9f1a34bd5fed8ba2f1f1e48edf2e742a6f3d8",
+    "action002Id": "CLOVER-2026-08-20-002",
+    "action002EnvelopeHash": "71873de93355ec1301b2a398b34d72860339f19f52c937fffdc3c95638550214",
+    "action002Lifecycle": "proposed",
+    "action002OwnerApproval": "pending",
+    "action002Consumed": false,
+    "action002Revoked": false,
+    "handoffIndexHash": "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c",
+    "standingWriteAuthority": false
+  },
+  "localVerification": {
+    "coreTests": {
+      "passed": 63,
+      "failed": 0
+    },
+    "priorityStatusTests": {
+      "passed": 18,
+      "failed": 0
+    },
+    "registryTests": {
+      "passed": 5,
+      "failed": 0
+    },
+    "gatewayTests": {
+      "passed": 38,
+      "failed": 0
+    },
+    "coreActivationValidator": "passed",
+    "coreVerifier": "passed",
+    "masterPlanValidator": "passed",
+    "jsonAndJsonlParsing": "passed",
+    "privacyScan": "passed",
+    "gitDiffCheck": "passed"
+  },
+  "exactHeadCi": [
+    {
+      "workflow": "Validate Clover master plan",
+      "runId": 32427471833,
+      "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "jobId": 96612271757,
+          "conclusion": "success"
+        }
+      ],
+      "artifacts": []
+    },
+    {
+      "workflow": "Validate Clover Context Gateway",
+      "runId": 32427471937,
+      "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "jobId": 96612272190,
+          "node": 24,
+          "conclusion": "success"
+        },
+        {
+          "jobId": 96612272373,
+          "node": 22,
+          "conclusion": "success"
+        }
+      ],
+      "artifacts": [
+        {
+          "artifactId": 9427917664,
+          "node": 24,
+          "sha256": "2a1ea1978c8b18b6ab98894b88dd862fc015467bb6ec2f0ac347f3f3d6dfab0f",
+          "expiresAt": "2026-09-19T23:10:03Z"
+        },
+        {
+          "artifactId": 9427917765,
+          "node": 22,
+          "sha256": "d37b1047abf8aec386feea75fe48ae6cbefb6fbfb013f9d700645d95122d5b6e",
+          "expiresAt": "2026-09-19T23:10:05Z"
+        }
+      ]
+    },
+    {
+      "workflow": "Validate Clover Core Candidate",
+      "runId": 32427471892,
+      "headCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "jobId": 96612272080,
+          "node": 24,
+          "conclusion": "success"
+        },
+        {
+          "jobId": 96612272122,
+          "node": 22,
+          "conclusion": "success"
+        }
+      ],
+      "artifacts": [
+        {
+          "artifactId": 9427918607,
+          "node": 24,
+          "sha256": "6d18fa57a848822beb98f58a783e0a0f3da729d046e6ffa161cbfe5acfde9305",
+          "expiresAt": "2026-09-19T23:10:06Z"
+        },
+        {
+          "artifactId": 9427918903,
+          "node": 22,
+          "sha256": "4ae9b5b746abfc4c2ccb03d532e50bad8357d87c2f88db53fa07cd85ef25c82c",
+          "expiresAt": "2026-09-19T23:10:07Z"
+        }
+      ]
+    }
+  ],
+  "gatewayPreview": {
+    "deploymentId": "dpl_bwkBAYEz8XjjNLx4xXrdPAvc8bmS",
+    "immutableUrl": "https://clover-context-gateway-preview-bah2p1llj-chris-dortchs-projects.vercel.app",
+    "projectId": "prj_z4Y1ONIsFL2g2CFOcvg1umPo4UUM",
+    "sourceCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "sourceRef": "platform/clover-core-trunk-activation-v0.1-20260820",
+    "sourceType": "cli",
+    "state": "READY",
+    "target": null,
+    "aliases": [],
+    "aliasError": null,
+    "region": "iad1",
+    "gatewayVersion": "0.3.1",
+    "mode": "read-only",
+    "contextMode": "github",
+    "contextSourceCommit": "2309bbc61dc8fcc7f2167c6c47db4a8b11cd8334",
+    "writeToolsEnabled": false,
+    "standingProductionAuthority": false,
+    "mcpToolNames": [
+      "search",
+      "fetch",
+      "prepare_clover_command",
+      "render_clover_command_center"
+    ],
+    "allMcpToolsReadOnly": true,
+    "allMcpToolsNonDestructive": true,
+    "allMcpToolsClosedWorld": true,
+    "allMcpToolsIdempotent": true,
+    "supersededPreflightDeployment": {
+      "deploymentId": "dpl_59fFnw7X5zu1AbKUgZLdnPgQLrS4",
+      "sourceCommit": "9006dcb78ee9412b57321cbd0fbdfa617d7bf96c",
+      "evidenceStatus": "historical-superseded",
+      "reason": "Live readback exposed the free-form What matters today routing defect fixed by the final commit."
+    }
+  },
+  "ownerQuestionReadback": {
+    "request": "What matters today? Show current versus candidate truth, the three highest priorities, one recommended next action, and the exact Action ID. Do not execute anything.",
+    "packetSchemaVersion": "1.2",
+    "intentId": "portfolio_operating_loop",
+    "intentMode": "brief",
+    "requiresProject": false,
+    "resolutionState": "resolved",
+    "project": null,
+    "ownerActionCardCount": 0,
+    "todayAvailable": true,
+    "actionId": "CLOVER-2026-08-20-002",
+    "containsProjectBuildRuntimeSourcePlan": false
+  },
+  "browserReadback": {
+    "url": "https://clover-context-gateway-preview-bah2p1llj-chris-dortchs-projects.vercel.app/command-center",
+    "desktop": {
+      "requestedViewport": "1440x900",
+      "observedViewport": "1425x900",
+      "title": "Clover Command Center — Today",
+      "heading": "Clover Today",
+      "fiveOperatingQuestionsVisible": true,
+      "horizontalOverflowPixels": 0,
+      "consoleErrorsOrWarnings": 0,
+      "anonymousOwnerContextHidden": true,
+      "anonymousFortyOrSixtyFourHexIdentityPresent": false,
+      "anonymousRegistryOrActionPayloadPresent": false
+    },
+    "mobile": {
+      "requestedViewport": "390x844",
+      "observedViewport": "375x844",
+      "title": "Clover Command Center — Today",
+      "heading": "Clover Today",
+      "fiveOperatingQuestionsVisible": true,
+      "horizontalOverflowPixels": 0,
+      "consoleErrorsOrWarnings": 0,
+      "anonymousOwnerContextHidden": true,
+      "anonymousFortyOrSixtyFourHexIdentityPresent": false,
+      "anonymousRegistryOrActionPayloadPresent": false
+    },
+    "currentHeadBrowserVisualReadback": "passed",
+    "fullPageMobileScreenshotNote": "The browser tool's full-page capture rendered blank; the normal mobile viewport capture rendered correctly and was visually inspected. DOM, layout, and console checks were independent of the full-page capture."
+  },
+  "privacy": {
+    "publicSanitizedProjection": true,
+    "containsRawCellData": false,
+    "containsPlaintextSecrets": false,
+    "containsProductionPrivateData": false,
+    "recursiveRuntimePatternScan": "passed",
+    "gatewayTransportBoundary": "The HTTP/API/MCP transport is unauthenticated public infrastructure over committed sanitized records; it is not owner authentication."
+  },
+  "preservation": {
+    "cloverPr15": "unchanged-open-draft-unmerged",
+    "cloverPr16": "unchanged-open-draft-unmerged",
+    "gatewayRollbackDeployment": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4 unchanged READY target-null alias-free",
+    "cloverAppsLive": "7.4.2 unchanged",
+    "cloverAppsSites80": "b7f6bf19d410cfbbc080bdd58f35fd6881535e38 unchanged",
+    "cloverAppsSites81": "029a4a1a18443277bd1e19804d1544ed798e6de8 unchanged and undeployed",
+    "serenityPr22": "0c2cddaf12a683cfa5ecb39aeced01ec13bd0c03 unchanged-open-draft-unmerged",
+    "rollindProductionMain": "6875efcc3801b7cd97de4bd6edcbb4fe4cd85d09 unchanged",
+    "rollindPr3": "8db83f9c526915d2d58385b78da71ff344b18c99 unchanged-open-draft-unmerged",
+    "rollindPr6": "ae2f1b0d2a649e645b1d2445b482f539670c6275 unchanged-open-draft-unmerged"
+  },
+  "rollbackAnchors": [
+    {
+      "subject": "Core trunk activation source",
+      "identity": "364a9a96829f323aa00a679804fdd7ed879043b5"
+    },
+    {
+      "subject": "Gateway candidate preview",
+      "identity": "dpl_6wXMqgh3NETEy35BMpJWFXetESi4"
+    },
+    {
+      "subject": "Action 002",
+      "identity": "no mutation; retain unknown WarRoom source state"
+    }
+  ],
+  "unknowns": [
+    "WarRoom canonical repository, branch, commit, deployment, backup, and rollback identities.",
+    "A truthful first implementation-branch Action Envelope cannot be created until those WarRoom identities are resolved.",
+    "The exact Sites saved-version ID serving the live CloverApps URL is not exposed by the refreshed Sites API; fresh HTML still reports live 7.4.2.",
+    "No exact Serenity production deployment ID was supplied for direct comparison; its base branch and candidate previews were preserved.",
+    "Exact provider-metered usage cost for existing-plan GitHub Actions and Vercel preview execution."
+  ],
+  "cost": {
+    "lane": "existing-plan-candidate-validation",
+    "explicitPurchaseOrMoneyMovementUsd": 0,
+    "providerMeteredUsageCostUsd": null,
+    "providerMeteredUsageCostStatus": "unknown"
+  },
+  "externalEffects": {
+    "branchCreatedAndPushed": true,
+    "draftPullRequestCreated": true,
+    "pullRequestBodyUpdated": true,
+    "targetNullPreviewCreated": true,
+    "productionDeploymentOrPromotion": false,
+    "merge": false,
+    "manualAliasOrDomainChange": false,
+    "persistentEnvironmentOrSecretChange": false,
+    "accessPolicyOrPermissionChange": false,
+    "productionOrPrivateDataAccess": false,
+    "paymentOrCheckoutExercise": false,
+    "externalMessageOrPullRequestComment": false,
+    "purchaseOrMoneyMovement": false
+  },
+  "receiptContainerDigest": {
+    "algorithm": "sha256",
+    "value": null,
+    "status": "computed externally after file write to avoid self-reference"
+  }
+}

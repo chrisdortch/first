@@ -1,0 +1,250 @@
+{
+  "documentType": "clover-capability-authority-registry",
+  "schemaVersion": "0.1",
+  "status": "preview-only-candidate",
+  "asOf": "2026-08-18",
+  "timezone": "America/Chicago",
+  "defaultDeny": true,
+  "standingProductionAuthority": false,
+  "standingPrivateDataAuthority": false,
+  "standingSecretRevealAuthority": false,
+  "publicRepositorySafe": true,
+  "principle": "Knowledge, capability, and authority are separate. Source systems remain sovereign; cross-boundary access is purpose-bound and minimized.",
+  "capabilityStates": [
+    "allow",
+    "conditional",
+    "deny",
+    "unknown"
+  ],
+  "operations": [
+    "observe",
+    "search",
+    "fetch",
+    "synthesize",
+    "propose",
+    "prepare",
+    "execute_preview",
+    "execute_production",
+    "verify",
+    "disclose",
+    "reveal_secret"
+  ],
+  "systems": [
+    {
+      "systemId": "clover-context-gateway",
+      "role": "public read-only context and command preparation",
+      "cell": "public-portfolio",
+      "dataClasses": [
+        "public",
+        "sanitized-receipt"
+      ],
+      "capabilities": {
+        "observe": "allow",
+        "search": "allow",
+        "fetch": "allow",
+        "synthesize": "allow",
+        "propose": "allow",
+        "prepare": "allow",
+        "execute_preview": "deny",
+        "execute_production": "deny",
+        "verify": "conditional",
+        "disclose": "deny",
+        "reveal_secret": "deny"
+      },
+      "conditions": [
+        "Verification requires authoritative readback through a permitted native connector."
+      ],
+      "prohibitions": [
+        "private legal evidence",
+        "financial records",
+        "health information",
+        "guest or staff records",
+        "secret values",
+        "production credentials"
+      ]
+    },
+    {
+      "systemId": "cloverapps-ai",
+      "role": "owner-facing portfolio and control window",
+      "cell": "public-portfolio",
+      "dataClasses": [
+        "public",
+        "sanitized-receipt",
+        "approved-private-projection"
+      ],
+      "capabilities": {
+        "observe": "conditional",
+        "search": "conditional",
+        "fetch": "conditional",
+        "synthesize": "conditional",
+        "propose": "allow",
+        "prepare": "conditional",
+        "execute_preview": "deny",
+        "execute_production": "deny",
+        "verify": "conditional",
+        "disclose": "deny",
+        "reveal_secret": "deny"
+      },
+      "conditions": [
+        "Current live source identity and runtime authority must be read back before capability is treated as available."
+      ],
+      "prohibitions": [
+        "acting as the sole source of truth",
+        "direct plaintext secret storage",
+        "hidden standing authority"
+      ]
+    },
+    {
+      "systemId": "knowledge-hub-window-vault",
+      "role": "knowledge ingest, preservation, retrieval, projection, and secure references",
+      "cell": "knowledge",
+      "dataClasses": [
+        "public",
+        "private",
+        "sensitive",
+        "legal",
+        "credential-reference"
+      ],
+      "capabilities": {
+        "observe": "conditional",
+        "search": "conditional",
+        "fetch": "conditional",
+        "synthesize": "conditional",
+        "propose": "allow",
+        "prepare": "conditional",
+        "execute_preview": "conditional",
+        "execute_production": "deny",
+        "verify": "conditional",
+        "disclose": "deny",
+        "reveal_secret": "deny"
+      },
+      "conditions": [
+        "Each source requires an approved ingest policy.",
+        "Raw data remains in a bounded Cell or immutable archive.",
+        "Only minimized projections cross Cell boundaries.",
+        "Restore and portable export must be tested before reliance."
+      ],
+      "prohibitions": [
+        "unclassified bulk ingestion",
+        "silent source deletion",
+        "plaintext secrets in model context"
+      ]
+    },
+    {
+      "systemId": "warroom",
+      "role": "legal-private evidence, case, deadline, strategy, and drafting Cell",
+      "cell": "legal-private",
+      "dataClasses": [
+        "legal",
+        "strategically-sensitive",
+        "privilege-candidate",
+        "litigation-hold"
+      ],
+      "capabilities": {
+        "observe": "conditional",
+        "search": "conditional",
+        "fetch": "conditional",
+        "synthesize": "conditional",
+        "propose": "conditional",
+        "prepare": "conditional",
+        "execute_preview": "conditional",
+        "execute_production": "deny",
+        "verify": "conditional",
+        "disclose": "deny",
+        "reveal_secret": "deny"
+      },
+      "conditions": [
+        "Owner-authenticated private access.",
+        "Raw evidence stays in WarRoom.",
+        "Core receives only approved status, deadline, issue, and receipt projections."
+      ],
+      "prohibitions": [
+        "public-repository export",
+        "automatic waiver or disclosure",
+        "using AI inference as evidence"
+      ]
+    },
+    {
+      "systemId": "project-runtime-cell",
+      "role": "generic boundary for each independent application runtime",
+      "cell": "per-project",
+      "dataClasses": [
+        "project-public",
+        "project-operational",
+        "customer-or-user-private"
+      ],
+      "capabilities": {
+        "observe": "conditional",
+        "search": "conditional",
+        "fetch": "conditional",
+        "synthesize": "conditional",
+        "propose": "allow",
+        "prepare": "conditional",
+        "execute_preview": "conditional",
+        "execute_production": "deny",
+        "verify": "conditional",
+        "disclose": "deny",
+        "reveal_secret": "deny"
+      },
+      "conditions": [
+        "Exact project identity, production baseline, backup, data boundary, preview target, and rollback anchor are required."
+      ],
+      "prohibitions": [
+        "cross-project database access",
+        "shared raw customer data",
+        "production action from general portfolio approval"
+      ]
+    },
+    {
+      "systemId": "secret-reveal-broker",
+      "role": "owner-authenticated just-in-time secret reveal",
+      "cell": "vault",
+      "dataClasses": [
+        "credential",
+        "secret"
+      ],
+      "capabilities": {
+        "observe": "conditional",
+        "search": "conditional",
+        "fetch": "deny",
+        "synthesize": "deny",
+        "propose": "conditional",
+        "prepare": "conditional",
+        "execute_preview": "deny",
+        "execute_production": "deny",
+        "verify": "conditional",
+        "disclose": "deny",
+        "reveal_secret": "conditional"
+      },
+      "conditions": [
+        "Strong owner reauthentication.",
+        "Exact secret reference and purpose.",
+        "Direct protected UI delivery rather than ordinary model context.",
+        "No plaintext in prompts, analytics, event payloads, logs, or public records.",
+        "Short display and clipboard lifetime."
+      ],
+      "prohibitions": [
+        "bulk reveal",
+        "third-party reveal",
+        "standing model access",
+        "plaintext retention"
+      ]
+    }
+  ],
+  "actionEnvelopeRequiredFor": [
+    "any write outside an isolated disposable fixture",
+    "preview deployment",
+    "production action",
+    "private-data movement",
+    "external message",
+    "purchase or money movement",
+    "domain or DNS change",
+    "permission or credential change",
+    "secret reveal"
+  ],
+  "candidateSource": {
+    "repository": "chrisdortch/first",
+    "baseCommit": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+    "commandId": "clover-575ec419516e5b1e"
+  }
+}

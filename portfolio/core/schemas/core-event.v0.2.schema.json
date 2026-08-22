@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core-event.v0.2.schema.json",
+  "title": "Clover Core Hash-Chained Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "canonicalization", "hashAlgorithm", "ledgerId", "sequence", "eventId", "eventType", "recordedAt", "actor", "subject", "truthStatus", "sensitivity", "sources", "supersedes", "previousEventHash", "payloadHash", "payload", "synthetic", "eventHash"],
+  "properties": {
+    "schemaVersion": { "const": "0.2" },
+    "canonicalization": { "const": "RFC8785-JCS" },
+    "hashAlgorithm": { "const": "sha256" },
+    "ledgerId": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "eventId": { "type": "string", "minLength": 1 },
+    "eventType": { "type": "string", "minLength": 1 },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "actor": { "type": "object", "required": ["actorType", "actorId"], "properties": { "actorType": { "type": "string" }, "actorId": { "type": "string" } } },
+    "subject": { "type": "object", "required": ["subjectType", "subjectId"], "properties": { "subjectType": { "type": "string" }, "subjectId": { "type": "string" } } },
+    "truthStatus": { "type": "string", "minLength": 1 },
+    "sensitivity": { "type": "string", "minLength": 1 },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sourceId", "contentHash"],
+        "properties": {
+          "sourceId": { "type": "string", "minLength": 1 },
+          "contentHash": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "supersedes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["eventId", "eventHash"],
+        "properties": {
+          "eventId": { "type": "string", "minLength": 1 },
+          "eventHash": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "previousEventHash": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+    "payloadHash": { "$ref": "#/$defs/sha256" },
+    "payload": { "type": "object" },
+    "synthetic": { "type": "boolean" },
+    "eventHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

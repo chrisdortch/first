@@ -1,0 +1,118 @@
+{
+  "documentType": "clover-handoff-branch-capsule",
+  "schemaVersion": "0.1.0",
+  "capsuleId": "cell-capsule:propertycare-booking-central:20260820",
+  "recordedAt": "2026-08-20T21:19:42.000Z",
+  "project": {
+    "projectId": "propertycare-booking-central",
+    "title": "PropertyCare X / Booking Central / Stay Hub",
+    "kind": "application",
+    "portfolioArea": "resort-operations",
+    "purpose": "Support reliable reservation ingest and daily property operations behind a private project boundary."
+  },
+  "privacy": {
+    "sensitivity": "private-sensitive",
+    "containsRawCellData": false,
+    "containsSecretValues": false,
+    "containsPersonalData": false,
+    "publicCapsuleSafe": true,
+    "boundarySummary": "No reservation, guest, contact, payment, message, staff, or property-operation records are present; only minimized portfolio metadata is public."
+  },
+  "identities": {
+    "live": {
+      "status": "unknown",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": null,
+      "deploymentId": null,
+      "url": null,
+      "observedAt": null,
+      "sourceRef": "portfolio/registry/projects.json#propertycare-booking-central",
+      "confidence": "unknown"
+    },
+    "current": {
+      "status": "unknown",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": null,
+      "deploymentId": null,
+      "url": null,
+      "observedAt": null,
+      "sourceRef": "portfolio/registry/projects.json#propertycare-booking-central",
+      "confidence": "unknown"
+    },
+    "candidate": {
+      "status": "unknown",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": null,
+      "deploymentId": null,
+      "url": null,
+      "observedAt": null,
+      "sourceRef": "portfolio/registry/projects.json#propertycare-booking-central",
+      "confidence": "unknown"
+    }
+  },
+  "links": {
+    "repository": null,
+    "publicUrl": null,
+    "sources": [
+      { "kind": "registry", "ref": "portfolio/registry/projects.json#propertycare-booking-central", "status": "verified" }
+    ]
+  },
+  "verification": {
+    "asOf": "2026-08-20T21:19:42.000Z",
+    "freshness": "stale",
+    "checkedSources": ["core-registry"],
+    "unavailableSources": ["canonical-repository-identity", "canonical-deployment-identity", "private-data-boundary"]
+  },
+  "health": {
+    "state": "blocked",
+    "blockers": [
+      "Canonical source, deployment, storage, backup, and rollback identities are not verified.",
+      "A private data boundary and safe synthetic rehearsal must exist before reservation records are touched."
+    ],
+    "unknowns": [
+      "Whether PropertyCare X, Booking Central, and Stay Hub are one runtime or multiple projects.",
+      "Whether any current production source or accepted receipt exists."
+    ]
+  },
+  "relationships": {
+    "dependencies": [
+      { "projectId": "clover-core", "relationship": "Uses bounded authority and receipt contracts without exporting operational records to Core.", "status": "proposed" },
+      { "projectId": "knowledge-hub-window-vault", "relationship": "May retain private source and backup pointers outside public Core.", "status": "proposed" }
+    ],
+    "dependents": [
+      { "projectId": "operations-hub", "relationship": "May consume minimized operational status after the canonical source boundary is verified.", "status": "proposed" }
+    ]
+  },
+  "latestAcceptedReceipt": {
+    "status": "unknown",
+    "receiptId": null,
+    "receiptHash": null,
+    "sourceRef": null
+  },
+  "activeOwnerDecision": {
+    "status": "none-known",
+    "decisionId": null,
+    "summary": "No authority to read production reservation data or change a live runtime is recorded in this capsule.",
+    "sourceRef": null
+  },
+  "recommendedNextAction": {
+    "actionId": "next:propertycare-identity-and-boundary-readback",
+    "summary": "Resolve the canonical project identity and prepare a synthetic-only data-boundary and rollback proposal before implementing reservation ingest.",
+    "state": "owner-gated",
+    "requiredApproval": "exact-owner-approval",
+    "sourceBasis": "The registry defines the value milestone but leaves repository, runtime, and data identities unknown."
+  },
+  "rollbackAnchors": [
+    { "anchorType": "no-mutation", "identity": "No PropertyCare or reservation state changed before exact identity and rollback readback", "status": "verified", "sourceRef": "CLOVER_HANDOFF_LEDGER.md" }
+  ],
+  "capsuleHash": "075adc8b9dae41671f6aa0c12f2003aa509fcae9c5d319d5bf5281a8b50b01fc"
+}

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/core/handoff/0.1.0/independent-review-decision.schema.json",
+  "title": "Clover Handoff Independent Review Decision 0.1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType",
+    "schemaVersion",
+    "decisionId",
+    "reviewedAt",
+    "reviewer",
+    "receiptId",
+    "receiptHash",
+    "envelopeId",
+    "envelopeHash",
+    "decision",
+    "findings",
+    "authority",
+    "decisionHash"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-handoff-independent-review-decision" },
+    "schemaVersion": { "const": "0.1.0" },
+    "decisionId": { "$ref": "#/$defs/identifier" },
+    "reviewedAt": { "$ref": "#/$defs/timestamp" },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewerId", "independenceDeclared", "executionLaneDifferent"],
+      "properties": {
+        "reviewerId": { "$ref": "#/$defs/identifier" },
+        "independenceDeclared": { "const": true },
+        "executionLaneDifferent": { "const": true }
+      }
+    },
+    "receiptId": { "$ref": "#/$defs/identifier" },
+    "receiptHash": { "$ref": "#/$defs/sha256" },
+    "envelopeId": { "$ref": "#/$defs/identifier" },
+    "envelopeHash": { "$ref": "#/$defs/sha256" },
+    "decision": { "enum": ["approve", "amend", "hold"] },
+    "findings": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["findingId", "severity", "status", "summary"],
+        "properties": {
+          "findingId": { "$ref": "#/$defs/identifier" },
+          "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
+          "status": { "enum": ["observed", "resolved", "accepted", "unknown"] },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decisionIsMergeApproval",
+        "decisionIsProductionDeploymentApproval",
+        "decisionIsProductionDataApproval",
+        "decisionIsStandingAuthority"
+      ],
+      "properties": {
+        "decisionIsMergeApproval": { "const": false },
+        "decisionIsProductionDeploymentApproval": { "const": false },
+        "decisionIsProductionDataApproval": { "const": false },
+        "decisionIsStandingAuthority": { "const": false }
+      }
+    },
+    "decisionHash": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z0-9][a-z0-9._:-]*$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$"
+    },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

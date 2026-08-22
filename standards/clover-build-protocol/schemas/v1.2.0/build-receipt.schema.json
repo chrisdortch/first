@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/clover-build-receipt-1.2.0.json",
+  "title": "Clover Build Receipt 1.2.0 candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "protocolVersion", "generatedAt", "protocol", "project", "source", "enrollment", "status", "authority", "checks", "observations", "artifacts"],
+  "properties": {
+    "schemaVersion": { "const": "1.2" },
+    "protocolVersion": { "const": "1.2.0" },
+    "generatedAt": { "type": "string" },
+    "protocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commit", "workflow"],
+      "properties": {
+        "repository": { "const": "chrisdortch/first" },
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "workflow": { "const": ".github/workflows/clover-preview-v1.2.yml" }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "title"],
+      "properties": {
+        "id": { "type": "string" },
+        "repository": { "type": "string" },
+        "title": { "type": "string" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "tree", "baselineCommit", "baselineTree", "productionCommitAtEnrollment"],
+      "properties": {
+        "commit": { "type": ["string", "null"] },
+        "tree": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "baselineCommit": { "type": ["string", "null"] },
+        "baselineTree": { "type": ["string", "null"] },
+        "productionCommitAtEnrollment": { "type": ["string", "null"] }
+      }
+    },
+    "enrollment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "policySha256"],
+      "properties": {
+        "path": { "type": ["string", "null"] },
+        "sha256": { "type": ["string", "null"] },
+        "policySha256": { "type": ["string", "null"] }
+      }
+    },
+    "status": { "enum": ["passed", "failed", "incomplete"] },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseState", "productionEligible"],
+      "properties": {
+        "releaseState": { "const": "not-authorized" },
+        "productionEligible": { "const": false }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["passed", "failed", "skipped", "unavailable"] },
+          "detail": {}
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["processExecutions", "trackedTreeMutation", "policyMutation", "sourceCommitMutation", "protocolCheckoutMutation", "externalProviderSideEffects"],
+      "properties": {
+        "processExecutions": { "type": "array" },
+        "trackedTreeMutation": { "$ref": "#/$defs/observation" },
+        "policyMutation": { "$ref": "#/$defs/observation" },
+        "sourceCommitMutation": { "$ref": "#/$defs/observation" },
+        "protocolCheckoutMutation": { "$ref": "#/$defs/observation" },
+        "externalProviderSideEffects": { "$ref": "#/$defs/observation" }
+      }
+    },
+    "browser": { "type": ["object", "null"] },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["state", "basis"],
+      "properties": {
+        "state": { "enum": ["observed", "not-observed", "unknown"] },
+        "basis": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "expectedSha256", "matched", "bindingSource"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }] },
+        "bytes": { "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "expectedSha256": { "anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{64}$" }, { "type": "null" }] },
+        "matched": { "type": "boolean" },
+        "bindingSource": { "enum": ["step-output", "sealed-browser-receipt"] },
+        "error": { "type": "string", "minLength": 1 }
+      }
+    },
+    "passedArtifact": {
+      "type": "object",
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "expectedSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "matched": { "const": true },
+        "error": false
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+      "then": {
+        "properties": {
+          "protocol": { "type": "object", "properties": { "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" } } },
+          "source": {
+            "type": "object",
+            "properties": {
+              "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "baselineCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "baselineTree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+              "productionCommitAtEnrollment": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+            }
+          },
+          "enrollment": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "policySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          },
+          "checks": {
+            "type": "array",
+            "minItems": 37,
+            "maxItems": 37,
+            "prefixItems": [
+              { "type": "object", "properties": { "id": { "const": "enrollment-schema" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "policy-schema" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "enrolled-boundary" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "install" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "verify" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "browser" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "final-state" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-identity" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-tooling" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-schemas" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-boundary" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-pre-state" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-install" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-protocol-after-install" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-tooling-after-install" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-verify" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-protocol-after-verify" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-tooling-after-verify" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-browsers" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-browser" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-protocol-after-browser" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-tooling-after-browser" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-final-state" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "runner-receipt-control" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:enrollment-schema.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:policy-schema.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:boundary.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:pre-state.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:commands/install.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:commands/install.log" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:commands/verify.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:commands/verify.log" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:browser/browser-receipt.json" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:browser/preview-server.log" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:browser/contact-sheet.html" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:browser/contact-sheet.png" }, "status": { "const": "passed" } } },
+              { "type": "object", "properties": { "id": { "const": "artifact-integrity:final-state.json" }, "status": { "const": "passed" } } }
+            ],
+            "items": false
+          },
+          "observations": {
+            "type": "object",
+            "properties": {
+              "processExecutions": { "type": "array", "minItems": 3 },
+              "trackedTreeMutation": { "type": "object", "properties": { "state": { "const": "not-observed" } } },
+              "policyMutation": { "type": "object", "properties": { "state": { "const": "not-observed" } } },
+              "sourceCommitMutation": { "type": "object", "properties": { "state": { "const": "not-observed" } } },
+              "protocolCheckoutMutation": { "type": "object", "properties": { "state": { "const": "not-observed" } } }
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "minItems": 14,
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/passedArtifact" },
+            "allOf": [
+              { "contains": { "type": "object", "properties": { "path": { "const": "enrollment-schema.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "policy-schema.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "boundary.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "pre-state.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "commands/install.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "commands/install.log" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "commands/verify.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "commands/verify.log" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "browser/browser-receipt.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "browser/preview-server.log" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "browser/contact-sheet.html" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "browser/contact-sheet.png" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "const": "final-state.json" }, "bindingSource": { "const": "step-output" } }, "required": ["path", "bindingSource"] }, "minContains": 1, "maxContains": 1 },
+              { "contains": { "type": "object", "properties": { "path": { "type": "string", "pattern": "^browser/screenshots/[^/]+\\.png$" }, "bindingSource": { "const": "sealed-browser-receipt" } }, "required": ["path", "bindingSource"] }, "minContains": 1 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "documentType": "clover-handoff-branch-capsule",
+  "schemaVersion": "0.1.0",
+  "capsuleId": "cell-capsule:clover-core:20260820",
+  "recordedAt": "2026-08-20T21:19:42.000Z",
+  "project": {
+    "projectId": "clover-core",
+    "title": "Clover Core",
+    "kind": "platform",
+    "portfolioArea": "clover-control-plane",
+    "purpose": "Provide the governed public kernel for authority, context, receipts, portfolio relationships, and owner-controlled execution handoffs."
+  },
+  "privacy": {
+    "sensitivity": "public",
+    "containsRawCellData": false,
+    "containsSecretValues": false,
+    "containsPersonalData": false,
+    "publicCapsuleSafe": true,
+    "boundarySummary": "Contains only public governance metadata and exact public source identities; Cell payloads and private operational records remain outside Core."
+  },
+  "identities": {
+    "live": {
+      "status": "not-applicable",
+      "repository": null,
+      "branch": null,
+      "commit": null,
+      "tree": null,
+      "version": null,
+      "deploymentId": null,
+      "url": null,
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "portfolio/core/README.md",
+      "confidence": "high"
+    },
+    "current": {
+      "status": "verified",
+      "repository": "chrisdortch/first",
+      "branch": "main",
+      "commit": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24",
+      "tree": "7a47dbb42e7b4b033269cb1f9a5005ab6dfd04b9",
+      "version": "main-current",
+      "deploymentId": null,
+      "url": "https://github.com/chrisdortch/first",
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "github:chrisdortch/first#main",
+      "confidence": "high"
+    },
+    "candidate": {
+      "status": "verified",
+      "repository": "chrisdortch/first",
+      "branch": "platform/clover-core-trust-slice-v0.2-20260818",
+      "commit": "364a9a96829f323aa00a679804fdd7ed879043b5",
+      "tree": "7c65e5d49021e9255e0fa34bb27dce05b78c8123",
+      "version": "core-lifecycle-0.2-candidate",
+      "deploymentId": null,
+      "url": "https://github.com/chrisdortch/first/pull/16",
+      "observedAt": "2026-08-20T21:19:42.000Z",
+      "sourceRef": "github:chrisdortch/first#pull/16",
+      "confidence": "high"
+    }
+  },
+  "links": {
+    "repository": "chrisdortch/first",
+    "publicUrl": null,
+    "sources": [
+      { "kind": "repository", "ref": "https://github.com/chrisdortch/first", "status": "verified" },
+      { "kind": "pull-request", "ref": "https://github.com/chrisdortch/first/pull/15", "status": "verified" },
+      { "kind": "pull-request", "ref": "https://github.com/chrisdortch/first/pull/16", "status": "verified" },
+      { "kind": "registry", "ref": "portfolio/registry/projects.json#clover-core", "status": "verified" }
+    ]
+  },
+  "verification": {
+    "asOf": "2026-08-20T21:19:42.000Z",
+    "freshness": "current",
+    "checkedSources": ["github", "local-canonical-checkout"],
+    "unavailableSources": []
+  },
+  "health": {
+    "state": "verified-candidate",
+    "blockers": [
+      "Pull requests 15 and 16 remain draft and unmerged.",
+      "Constitution and Core lifecycle 0.2 remains an unratified candidate."
+    ],
+    "unknowns": ["No merge or production approval is inferred from candidate verification."]
+  },
+  "relationships": {
+    "dependencies": [
+      { "projectId": "knowledge-hub-window-vault", "relationship": "References minimized source and evidence pointers without ingesting raw Cell data.", "status": "reported" }
+    ],
+    "dependents": [
+      { "projectId": "cloverapps-ai", "relationship": "Supplies governed status, authority, and receipt records to the owner window.", "status": "reported" },
+      { "projectId": "clover-warroom", "relationship": "Supplies governance and handoff contracts while private case material remains in its Cell.", "status": "proposed" }
+    ]
+  },
+  "latestAcceptedReceipt": {
+    "status": "none-known",
+    "receiptId": null,
+    "receiptHash": null,
+    "sourceRef": null
+  },
+  "activeOwnerDecision": {
+    "status": "active",
+    "decisionId": "decision:core-pr15-pr16-preserve",
+    "summary": "Keep pull requests 15 and 16 open, draft, unmerged, and unchanged during additive candidate work.",
+    "sourceRef": "current-owner-authorization"
+  },
+  "recommendedNextAction": {
+    "actionId": "next:independent-review-additive-core-candidate",
+    "summary": "Complete deterministic validation and independent review of the additive candidate before any separate merge decision.",
+    "state": "owner-gated",
+    "requiredApproval": "exact-owner-approval",
+    "sourceBasis": "Exact PR 15 and PR 16 readback plus the current bounded candidate gate."
+  },
+  "rollbackAnchors": [
+    { "anchorType": "git-commit", "identity": "be62b3d8dfb07eecb52628f1b629fd308eb3cb24", "status": "verified", "sourceRef": "github:chrisdortch/first#main" },
+    { "anchorType": "git-commit", "identity": "364a9a96829f323aa00a679804fdd7ed879043b5", "status": "verified", "sourceRef": "github:chrisdortch/first#pull/16" }
+  ],
+  "capsuleHash": "9284103f45dde81732d04eaee79f04625a38ca78272218d3f0610eeffffb45d5"
+}

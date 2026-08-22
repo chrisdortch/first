@@ -1,0 +1,21 @@
+# Package-manager output
+**/node_modules/
+
+# Local runtime configuration; keep documented examples
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+**/.dev.vars
+!**/.dev.vars.example
+
+# Local deployment and build output
+**/.vercel/
+**/dist/
+**/coverage/
+**/.clover-evidence/
+**/.clover-data-evidence/
+
+# Local logs and operating-system metadata
+*.log
+.DS_Store
