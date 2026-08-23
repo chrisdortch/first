@@ -255,9 +255,32 @@ jobs:
 
       - name: Validate source structure, document parsing, and action pins
         shell: bash
+        env:
+          CLOVER_EVENT_NAME: ${{ github.event_name }}
+          CLOVER_EVENT_BEFORE_SHA: ${{ github.event.before || '' }}
         run: |
           set -euo pipefail
           git diff --check
+          case "$CLOVER_EVENT_NAME" in
+            pull_request)
+              CLOVER_DIFF_BASE="$(node -p "require(process.env.RUNNER_TEMP + '/clover-pr-integration-context.json').baseSha")"
+              ;;
+            push)
+              CLOVER_DIFF_BASE="$CLOVER_EVENT_BEFORE_SHA"
+              [[ "$CLOVER_DIFF_BASE" =~ ^[0-9a-f]{40}$ ]]
+              test "$CLOVER_DIFF_BASE" != "0000000000000000000000000000000000000000"
+              ;;
+            workflow_dispatch)
+              read -r CLOVER_DIFF_BASE _ <<< "$(git show -s --format='%P' "$CLOVER_VALIDATION_SHA")"
+              ;;
+            *)
+              false
+              ;;
+          esac
+          export CLOVER_DIFF_BASE
+          [[ "$CLOVER_DIFF_BASE" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${CLOVER_DIFF_BASE}^{commit}"
+          git diff --check "$CLOVER_DIFF_BASE" "$CLOVER_VALIDATION_SHA"
           git fsck --full --strict
           ruby -e 'require "yaml"; ARGV.each { |path| raise "empty YAML: #{path}" unless Psych.parse_file(path) }' $(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
           node <<'NODE' > "$RUNNER_TEMP/clover-source-integrity.json"
@@ -276,9 +299,12 @@ jobs:
           }
           const workflowFiles = tracked.filter((path) => /^\.github\/workflows\/.*\.ya?ml$/.test(path));
           const uses = [];
+          const extractActionUses = (text) => [...text.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*$/gm)].map((match) => match[1]);
+          const adversarialUses = extractActionUses('steps:\n  - uses: example/unpinned-action@v1\n  - name: pinned\n    uses: example/pinned-action@0123456789abcdef0123456789abcdef01234567\n');
+          if (adversarialUses.length !== 2 || adversarialUses[0] !== 'example/unpinned-action@v1') throw new Error('action-use parser does not cover sequence-form steps');
           for (const path of workflowFiles) {
             const text = fs.readFileSync(path, 'utf8');
-            for (const match of text.matchAll(/^\s*uses:\s*([^\s#]+)\s*$/gm)) uses.push({ path, value: match[1] });
+            for (const value of extractActionUses(text)) uses.push({ path, value });
           }
           const unpinned = uses.filter(({ value }) => !value.startsWith('./') && !/@[0-9a-f]{40}$/.test(value));
           if (unpinned.length) throw new Error(`unpinned workflow actions: ${JSON.stringify(unpinned)}`);
@@ -315,6 +341,8 @@ jobs:
             status: 'passed',
             head,
             tree,
+            diffBase: process.env.CLOVER_DIFF_BASE,
+            committedRangeDiffCheck: 'passed',
             jsonFiles: jsonFiles.length,
             jsonlFiles: jsonlFiles.length,
             jsonlRecords,
@@ -497,6 +525,10 @@ jobs:
           CLOVER_NODE_VERSION: ${{ matrix.node-version }}
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
+          git diff --check
+          git fsck --full --strict
+          test -z "$(git status --porcelain --untracked-files=all)"
           node <<'NODE' > "$RUNNER_TEMP/clover-required-main-gate-command-inventory.json"
           const commands = [
             'actions/checkout exact event head; persist-credentials=false; fetch-depth=0',
@@ -593,19 +625,66 @@ jobs:
               path: source.workflowPath,
               sha256: source.workflowSha256
             },
+            integrationContextSha256: sha256(`${process.env.RUNNER_TEMP}/clover-pr-integration-context.json`),
+            gatewayLockfileSha256: sha256('apps/clover-context-gateway/package-lock.json'),
             commandInventorySha256: sha256(`${process.env.RUNNER_TEMP}/clover-required-main-gate-command-inventory.json`)
           };
           process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
           NODE
 
-      - name: Verify final source cleanliness
+      - name: Finalize deterministic evidence manifest
+        if: always()
         shell: bash
+        env:
+          CLOVER_JOB_STATUS: ${{ job.status }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
-          git diff --check
-          git fsck --full --strict
-          test -z "$(git status --porcelain --untracked-files=all)"
+          node <<'NODE' > "$RUNNER_TEMP/clover-required-main-gate-evidence-manifest.json"
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const entries = [
+            ['workflow', '.github/workflows/clover-required-main-gate.yml'],
+            ['gateway-lockfile', 'apps/clover-context-gateway/package-lock.json'],
+            ['integration-context', `${process.env.RUNNER_TEMP}/clover-pr-integration-context.json`],
+            ['source-integrity', `${process.env.RUNNER_TEMP}/clover-source-integrity.json`],
+            ['privacy', `${process.env.RUNNER_TEMP}/clover-privacy-result.json`],
+            ['authority', `${process.env.RUNNER_TEMP}/clover-authority-boundary.json`],
+            ['master-plan', `${process.env.RUNNER_TEMP}/clover-master-plan-validation.json`],
+            ['registry-v2', `${process.env.RUNNER_TEMP}/clover-registry-v2-validation.json`],
+            ['build-current', `${process.env.RUNNER_TEMP}/clover-build-current-validation.json`],
+            ['build-candidate', `${process.env.RUNNER_TEMP}/clover-build-candidate-validation.json`],
+            ['data-current', `${process.env.RUNNER_TEMP}/clover-data-current-validation.json`],
+            ['data-candidate', `${process.env.RUNNER_TEMP}/clover-data-candidate-validation.json`],
+            ['core', `${process.env.RUNNER_TEMP}/clover-core-verification.json`],
+            ['activation', `${process.env.RUNNER_TEMP}/clover-core-activation-validation.json`],
+            ['publication', `${process.env.RUNNER_TEMP}/clover-publication-finalization-validation.json`],
+            ['gateway-health', `${process.env.RUNNER_TEMP}/clover-required-main-gate-health.json`],
+            ['tool-surface', `${process.env.RUNNER_TEMP}/clover-required-main-gate-tool-surface.json`],
+            ['command-inventory', `${process.env.RUNNER_TEMP}/clover-required-main-gate-command-inventory.json`],
+            ['validation-summary', `${process.env.RUNNER_TEMP}/clover-required-main-gate-summary.json`]
+          ];
+          const files = entries.map(([name, path]) => {
+            const evidencePath = path.startsWith(process.env.RUNNER_TEMP) ? path.slice(process.env.RUNNER_TEMP.length + 1) : path;
+            if (!fs.existsSync(path)) return { name, path: evidencePath, present: false, bytes: null, sha256: null };
+            const bytes = fs.readFileSync(path);
+            return {
+              name,
+              path: evidencePath,
+              present: true,
+              bytes: bytes.length,
+              sha256: crypto.createHash('sha256').update(bytes).digest('hex')
+            };
+          });
+          const missing = files.filter((file) => !file.present).map((file) => file.name);
+          if (process.env.CLOVER_JOB_STATUS === 'success' && missing.length) throw new Error(`successful job is missing evidence: ${missing.join(', ')}`);
+          process.stdout.write(`${JSON.stringify({
+            schemaVersion: 'clover-required-main-gate-evidence-manifest-v1',
+            jobStatusBeforeManifest: process.env.CLOVER_JOB_STATUS,
+            complete: missing.length === 0,
+            missing,
+            files
+          }, null, 2)}\n`);
+          NODE
 
       - name: Upload deterministic required-gate evidence
         if: always()
@@ -632,6 +711,7 @@ jobs:
             ${{ runner.temp }}/clover-required-main-gate-tool-surface.json
             ${{ runner.temp }}/clover-required-main-gate-command-inventory.json
             ${{ runner.temp }}/clover-required-main-gate-summary.json
+            ${{ runner.temp }}/clover-required-main-gate-evidence-manifest.json
           if-no-files-found: error
           retention-days: 30
           compression-level: 6
