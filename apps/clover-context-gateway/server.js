@@ -22,6 +22,7 @@ const maxBodyBytes = Number(process.env.MAX_BODY_BYTES || 65536);
 const widgetHtml = readFileSync(path.join(appDir, "public", "command-center.html"), "utf8");
 const WIDGET_URI = "ui://clover/command-center.html";
 const MCP_PATH = "/mcp";
+const OWNER_MCP_PATH = "/owner-mcp";
 const VERSION = "0.3.1";
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
@@ -81,6 +82,10 @@ const SERVER_INSTRUCTIONS = [
   "Use deterministic checks before model visual/browser review and return exact receipts and status evidence.",
 ].join(" ");
 
+const OWNER_SERVER_INSTRUCTIONS = "For every natural-language Clover owner request, call clover_owner_request before composing a substantive portfolio or project answer. Pass the owner's request exactly as written, then treat the returned packet as controlling for routing, source refresh, authority, stop conditions, and Action-card behavior. Memory and external sources may supplement labeled presentation or refresh facts only after the packet; they may not rewrite the request or override packet intent, mode, project focus, or authority.";
+
+const OWNER_TOOL_DESCRIPTION = "Use this as the first substantive Clover action whenever the user selects the Clover owner app, says \"Use Clover Core\", asks what matters, requests perspective, asks why a priority is blocked, asks for one next decision, asks what changed, asks for safe parts, diagnoses a project, or requests project work. Pass the owner's request exactly as written. Do not prepend the app name, add inferred goals, introduce a project, summarize, expand, or rewrite the request. This tool returns the controlling read-only Clover Command Packet, source plan, authority boundary, and owner widget. Do not compose a portfolio or project answer before this tool returns.";
+
 const readOnlyAnnotations = {
   readOnlyHint: true,
   destructiveHint: false,
@@ -100,6 +105,31 @@ function resultWithStructured(payload) {
     content: [{ type: "text", text: JSON.stringify(payload) }],
     structuredContent: payload,
   };
+}
+
+function registerCommandCenterResource(server) {
+  registerAppResource(
+    server,
+    "clover-command-center",
+    WIDGET_URI,
+    {},
+    async () => ({
+      contents: [
+        {
+          uri: WIDGET_URI,
+          mimeType: RESOURCE_MIME_TYPE,
+          text: widgetHtml,
+          _meta: {
+            ui: {
+              prefersBorder: false,
+              csp: { connectDomains: [], resourceDomains: [] },
+            },
+            "openai/widgetDescription": "Clover command center for speaking or typing one instruction and binding it to current canonical project context, freshness requirements, cost lanes, and owner-only safety gates.",
+          },
+        },
+      ],
+    })
+  );
 }
 
 function firstPresent(record, keys) {
@@ -754,34 +784,77 @@ export function composeTodaySibling(snapshot = {}) {
   };
 }
 
+async function prepareCloverRequest(request) {
+  const snapshot = await contextStore.snapshot();
+  const today = composeTodaySibling(snapshot);
+  const packet = prepareCommand({
+    request,
+    projects: snapshot.projects,
+    status: snapshot.status,
+    pointer: snapshot.pointer,
+    source: snapshot.source,
+  });
+  return {
+    snapshot,
+    packet,
+    today,
+    followUpPrompt: commandPrompt(packet),
+  };
+}
+
+function ownerRequestResult(request, callerClaimedOrigin, prepared) {
+  const consequentialAuthorityGranted = Object.entries(prepared.packet.authority || {})
+    .some(([key, value]) => key !== "previewOnlyByDefault" && value === true);
+  if (consequentialAuthorityGranted) {
+    throw new Error("Clover owner requests fail closed when consequential authority is present.");
+  }
+  const requestBytes = Buffer.from(request, "utf8");
+  const payload = {
+    packet: prepared.packet,
+    today: prepared.today,
+    followUpPrompt: prepared.followUpPrompt,
+    requestIntegrity: {
+      receivedRequest: request,
+      utf8Bytes: requestBytes.byteLength,
+      sha256: createHash("sha256").update(requestBytes).digest("hex"),
+      normalization: "none-except-json-transport",
+      callerClaimedOrigin: callerClaimedOrigin || "chat-host-or-widget-direct",
+    },
+    sourceHeader: {
+      gatewayVersion: VERSION,
+      repository: prepared.packet.canonicalContext.sourceRepository,
+      contextRef: prepared.packet.canonicalContext.sourceRef,
+      contextCommit: prepared.packet.canonicalContext.sourceCommit,
+      packetSchemaVersion: prepared.packet.schemaVersion,
+      intent: prepared.packet.intent.id,
+      mode: prepared.packet.intent.mode || "",
+      focusedProjectId: prepared.packet.project?.projectId || null,
+      requiresProject: prepared.packet.intent.requiresProject,
+      state: prepared.packet.state,
+      consequentialAuthorityGranted: false,
+    },
+    answerContract: {
+      packetControlsRouting: true,
+      memoryMayOverridePacket: false,
+      externalSourcesMayOverrideIntent: false,
+      currentFactsRequireDeclaredRefresh: true,
+      noSubstantiveAnswerBeforePacket: true,
+    },
+  };
+  return {
+    content: [{ type: "text", text: prepared.followUpPrompt }],
+    structuredContent: payload,
+    _meta: { ui: { resourceUri: WIDGET_URI } },
+  };
+}
+
 function createCloverServer(baseUrl) {
   const server = new McpServer(
     { name: "clover-context-gateway", version: VERSION },
     { instructions: SERVER_INSTRUCTIONS }
   );
 
-  registerAppResource(
-    server,
-    "clover-command-center",
-    WIDGET_URI,
-    {},
-    async () => ({
-      contents: [
-        {
-          uri: WIDGET_URI,
-          mimeType: RESOURCE_MIME_TYPE,
-          text: widgetHtml,
-          _meta: {
-            ui: {
-              prefersBorder: false,
-              csp: { connectDomains: [], resourceDomains: [] },
-            },
-            "openai/widgetDescription": "Clover command center for speaking or typing one instruction and binding it to current canonical project context, freshness requirements, cost lanes, and owner-only safety gates.",
-          },
-        },
-      ],
-    })
-  );
+  registerCommandCenterResource(server);
 
   server.registerTool(
     "search",
@@ -818,21 +891,13 @@ function createCloverServer(baseUrl) {
       annotations: readOnlyAnnotations,
     },
     async ({ request }) => {
-      const snapshot = await contextStore.snapshot();
-      const today = composeTodaySibling(snapshot);
-      const packet = prepareCommand({
-        request,
-        projects: snapshot.projects,
-        status: snapshot.status,
-        pointer: snapshot.pointer,
-        source: snapshot.source,
-      });
+      const { packet, today, followUpPrompt } = await prepareCloverRequest(request);
       return {
-        content: [{ type: "text", text: commandPrompt(packet) }],
+        content: [{ type: "text", text: followUpPrompt }],
         structuredContent: {
           packet,
           today,
-          followUpPrompt: commandPrompt(packet),
+          followUpPrompt,
         },
       };
     }
@@ -849,11 +914,10 @@ function createCloverServer(baseUrl) {
       _meta: { ui: { resourceUri: WIDGET_URI } },
     },
     async ({ request = "" }) => {
-      const snapshot = await contextStore.snapshot();
-      const today = composeTodaySibling(snapshot);
-      const packet = request
-        ? prepareCommand({ request, projects: snapshot.projects, status: snapshot.status, pointer: snapshot.pointer, source: snapshot.source })
-        : null;
+      const prepared = request ? await prepareCloverRequest(request) : null;
+      const snapshot = prepared?.snapshot || await contextStore.snapshot();
+      const today = prepared?.today || composeTodaySibling(snapshot);
+      const packet = prepared?.packet || null;
       return {
         content: [{ type: "text", text: "Opened the read-only Clover command center." }],
         structuredContent: {
@@ -869,11 +933,42 @@ function createCloverServer(baseUrl) {
           })),
           today,
           packet,
-          followUpPrompt: packet ? commandPrompt(packet) : "",
+          followUpPrompt: prepared?.followUpPrompt || "",
         },
         _meta: { ui: { resourceUri: WIDGET_URI } },
       };
     }
+  );
+
+  return server;
+}
+
+function createOwnerCloverServer() {
+  const server = new McpServer(
+    { name: "clover-owner-gateway", version: VERSION },
+    { instructions: OWNER_SERVER_INSTRUCTIONS }
+  );
+
+  registerCommandCenterResource(server);
+
+  registerAppTool(
+    server,
+    "clover_owner_request",
+    {
+      title: "Ground this owner request in Clover Core",
+      description: OWNER_TOOL_DESCRIPTION,
+      inputSchema: z.object({
+        request: z.string().min(1).max(12000),
+        callerClaimedOrigin: z.enum(["widget-direct"]).optional(),
+      }).strict(),
+      annotations: readOnlyAnnotations,
+      _meta: { ui: { resourceUri: WIDGET_URI } },
+    },
+    async ({ request, callerClaimedOrigin }) => ownerRequestResult(
+      request,
+      callerClaimedOrigin,
+      await prepareCloverRequest(request)
+    )
   );
 
   return server;
@@ -977,26 +1072,18 @@ export async function handler(req, res) {
     if (req.method === "POST" && url.pathname === "/api/prepare-command") {
       try {
         const body = await readJsonBody(req);
-        const snapshot = await contextStore.snapshot();
-        const today = composeTodaySibling(snapshot);
-        const packet = prepareCommand({
-          request: body.request,
-          projects: snapshot.projects,
-          status: snapshot.status,
-          pointer: snapshot.pointer,
-          source: snapshot.source,
-        });
+        const { packet, today, followUpPrompt } = await prepareCloverRequest(body.request);
         return json(res, 200, {
           packet,
           today,
-          followUpPrompt: commandPrompt(packet),
+          followUpPrompt,
         });
       } catch (error) {
         return json(res, 400, { error: error instanceof Error ? error.message : String(error) });
       }
     }
 
-    if (url.pathname === MCP_PATH && ["GET", "DELETE"].includes(req.method || "")) {
+    if ([MCP_PATH, OWNER_MCP_PATH].includes(url.pathname) && ["GET", "DELETE"].includes(req.method || "")) {
       return json(
         res,
         405,
@@ -1012,10 +1099,12 @@ export async function handler(req, res) {
       );
     }
 
-    if (url.pathname === MCP_PATH && req.method === "POST") {
+    if ([MCP_PATH, OWNER_MCP_PATH].includes(url.pathname) && req.method === "POST") {
       res.setHeader("access-control-allow-origin", allowedOrigin);
       res.setHeader("access-control-expose-headers", "Mcp-Session-Id");
-      const server = createCloverServer(baseUrl);
+      const server = url.pathname === OWNER_MCP_PATH
+        ? createOwnerCloverServer()
+        : createCloverServer(baseUrl);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       res.on("close", () => {
         transport.close();
