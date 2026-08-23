@@ -438,44 +438,334 @@ jobs:
         run: |
           set -euo pipefail
           node <<'NODE' > "$RUNNER_TEMP/clover-privacy-result.json"
-          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const crypto = require('node:crypto');
           const { execFileSync } = require('node:child_process');
-          const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
-          const publicFiles = tracked.filter((path) => {
-            if (!/\.(?:json|jsonl|md|html|js|mjs|ya?ml)$/.test(path)) return false;
-            if (/(?:^|\/)(?:test|tests|fixtures)(?:\/|$)/.test(path)) return false;
-            return path.startsWith('apps/clover-context-gateway/public/')
-              || path.startsWith('portfolio/')
-              || path.startsWith('standards/')
-              || !path.includes('/');
-          });
+          const { TextDecoder } = require('node:util');
+
+          const fatalUtf8 = new TextDecoder('utf-8', { fatal: true });
+          const regularModes = new Set(['100644', '100755']);
+          const excludedSegments = new Set(['test', 'tests', 'fixture', 'fixtures']);
+          const pathListEncoding = 'bytewise-sorted UTF-8 paths, each terminated by one NUL byte';
           const patterns = [
-            ['private-key', /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/],
-            ['github-token', /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/],
-            ['openai-token', /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/],
-            ['aws-access-key', /\bAKIA[0-9A-Z]{16}\b/],
-            ['bearer-token', /\bBearer\s+[A-Za-z0-9._~+\/-]{20,}={0,2}\b/i],
-            ['local-user-path', /(?:\/Users\/[^/\s"']+|\/home\/[^/\s"']+|[A-Za-z]:\\Users\\[^\\\s"']+)/],
-            ['email-address', /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i]
+            ['private-key', /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/g],
+            ['github-token', /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/g],
+            ['openai-token', /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/g],
+            ['aws-access-key', /\bAKIA[0-9A-Z]{16}\b/g],
+            ['bearer-token', /\bBearer\s+[A-Za-z0-9._~+\/-]{20,}={0,2}\b/gi],
+            ['local-user-path', /(?:\/Users\/[^/\s"']+|\/home\/[^/\s"']+|[A-Za-z]:\\Users\\[^\\\s"']+)/g],
+            ['email-address', /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi]
           ];
-          const findings = [];
-          let scannedBytes = 0;
-          for (const path of publicFiles) {
-            const text = fs.readFileSync(path, 'utf8');
-            scannedBytes += Buffer.byteLength(text);
-            for (const [kind, pattern] of patterns) {
-              if (pattern.test(text)) findings.push({ path, kind });
-            }
+
+          function comparePaths(left, right) {
+            return Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
           }
-          if (findings.length) throw new Error(`sensitive public content: ${JSON.stringify(findings)}`);
-          process.stdout.write(`${JSON.stringify({
-            status: 'passed',
-            scope: 'tracked governed and public non-test text',
-            scannedFiles: publicFiles.length,
-            scannedBytes,
-            findingCount: 0,
-            privateDataAccessed: false
-          }, null, 2)}\n`);
+
+          function sortedEntries(entries) {
+            return [...entries].sort((left, right) => comparePaths(left.path, right.path));
+          }
+
+          function pathListSha256(paths) {
+            const hash = crypto.createHash('sha256');
+            for (const path of [...paths].sort(comparePaths)) {
+              hash.update(Buffer.from(path, 'utf8'));
+              hash.update(Buffer.from([0]));
+            }
+            return hash.digest('hex');
+          }
+
+          function parseTrackedEntries() {
+            const raw = execFileSync('git', ['ls-files', '--stage', '-z'], { maxBuffer: 64 * 1024 * 1024 });
+            const entries = [];
+            const seenPaths = new Set();
+            let start = 0;
+            while (start < raw.length) {
+              const end = raw.indexOf(0, start);
+              if (end === -1) throw new Error('git index inventory is not NUL terminated');
+              const record = raw.subarray(start, end);
+              start = end + 1;
+              if (record.length === 0) continue;
+              const tab = record.indexOf(9);
+              if (tab === -1) throw new Error('git index inventory record has no path separator');
+              const metadata = record.subarray(0, tab).toString('ascii').split(' ');
+              if (metadata.length !== 3) throw new Error('git index inventory metadata is malformed');
+              const [mode, oid, stage] = metadata;
+              if (!/^\d{6}$/.test(mode)) throw new Error(`invalid Git mode: ${mode}`);
+              if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid)) throw new Error(`invalid Git object ID: ${oid}`);
+              if (stage !== '0') throw new Error(`unmerged Git index entry at stage ${stage}`);
+              let path;
+              try {
+                path = fatalUtf8.decode(record.subarray(tab + 1));
+              } catch {
+                throw new Error('tracked path is not valid UTF-8');
+              }
+              if (!path || seenPaths.has(path)) throw new Error(`invalid or duplicate tracked path: ${path}`);
+              seenPaths.add(path);
+              entries.push({ path, mode, oid, stage: 0 });
+            }
+            return sortedEntries(entries);
+          }
+
+          function hasExcludedSegment(path) {
+            return path.split('/').some((segment) => excludedSegments.has(segment));
+          }
+
+          function isSafeGitHubSshTransport(text, match, index) {
+            const identity = ['git', 'github.com'].join('@');
+            if (match !== identity) return false;
+            const before = index === 0 ? '' : text[index - 1];
+            if (before && !/[\s"'`(=\[{]/.test(before)) return false;
+            const remainder = text.slice(index + match.length);
+            const literalRemote = /^:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git(?=$|[\s"'`),;\]}])/;
+            const repositoryVariableRemote = /^:\$\{CLOVER_REPOSITORY\}\.git(?=$|[\s"'`),;\]}])/;
+            return literalRemote.test(remainder) || repositoryVariableRemote.test(remainder);
+          }
+
+          function positionFor(text, index) {
+            const prefix = text.slice(0, index);
+            const lines = prefix.split('\n');
+            return { line: lines.length, column: lines[lines.length - 1].length + 1 };
+          }
+
+          function scanText(path, text) {
+            const findings = [];
+            for (const [kind, pattern] of patterns) {
+              pattern.lastIndex = 0;
+              for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+                if (kind === 'email-address' && isSafeGitHubSshTransport(text, match[0], match.index)) continue;
+                findings.push({ path, kind, ...positionFor(text, match.index) });
+                if (match[0].length === 0) pattern.lastIndex += 1;
+              }
+            }
+            return findings;
+          }
+
+          function evaluateInventory(inputEntries, readBytes) {
+            const entries = sortedEntries(inputEntries);
+            const trackedEntries = entries.map(({ path, mode, oid, stage }) => ({ path, mode, oid, stage }));
+            const excludedNonRegularEntries = [];
+            const excludedTestFixtureEntries = [];
+            const excludedBinaryOrNonUtf8Entries = [];
+            const eligibleEntries = [];
+            const scannedEntries = [];
+            const findings = [];
+            let regularTrackedFiles = 0;
+            let scannedBytes = 0;
+
+            for (const entry of entries) {
+              if (!regularModes.has(entry.mode)) {
+                excludedNonRegularEntries.push({ path: entry.path, mode: entry.mode, oid: entry.oid });
+                continue;
+              }
+              regularTrackedFiles += 1;
+              if (hasExcludedSegment(entry.path)) {
+                excludedTestFixtureEntries.push({ path: entry.path, mode: entry.mode, oid: entry.oid });
+                continue;
+              }
+              const bytes = readBytes(entry);
+              if (!Buffer.isBuffer(bytes)) throw new Error(`tracked byte reader returned a non-Buffer for ${entry.path}`);
+              if (bytes.includes(0)) {
+                excludedBinaryOrNonUtf8Entries.push({ path: entry.path, mode: entry.mode, oid: entry.oid, bytes: bytes.length, reason: 'nul-byte' });
+                continue;
+              }
+              let text;
+              try {
+                text = fatalUtf8.decode(bytes);
+              } catch {
+                excludedBinaryOrNonUtf8Entries.push({ path: entry.path, mode: entry.mode, oid: entry.oid, bytes: bytes.length, reason: 'invalid-utf8' });
+                continue;
+              }
+              const record = { path: entry.path, mode: entry.mode, oid: entry.oid, bytes: bytes.length };
+              eligibleEntries.push(record);
+              findings.push(...scanText(entry.path, text));
+              scannedEntries.push(record);
+              scannedBytes += bytes.length;
+            }
+
+            const eligiblePaths = eligibleEntries.map(({ path }) => path);
+            const scannedPaths = scannedEntries.map(({ path }) => path);
+            const scannedSet = new Set(scannedPaths);
+            const uncoveredEligiblePaths = eligiblePaths.filter((path) => !scannedSet.has(path));
+            const eligiblePathListSha256 = pathListSha256(eligiblePaths);
+            const scannedPathListSha256 = pathListSha256(scannedPaths);
+            const pathListsEqual = eligiblePaths.length === scannedPaths.length
+              && eligiblePathListSha256 === scannedPathListSha256
+              && uncoveredEligiblePaths.length === 0;
+            findings.sort((left, right) => comparePaths(left.path, right.path)
+              || left.line - right.line
+              || left.column - right.column
+              || comparePaths(left.kind, right.kind));
+
+            return {
+              schemaVersion: 1,
+              status: pathListsEqual && findings.length === 0 ? 'passed' : 'failed',
+              scope: 'every tracked ordinary regular non-test valid-UTF-8 Git blob',
+              sourceAuthority: 'git index mode and object inventory',
+              pathListEncoding,
+              totalTrackedEntries: trackedEntries.length,
+              regularTrackedFiles,
+              excludedNonRegularFiles: excludedNonRegularEntries.length,
+              excludedTestFixtureFiles: excludedTestFixtureEntries.length,
+              excludedBinaryOrNonUtf8Files: excludedBinaryOrNonUtf8Entries.length,
+              eligibleTextFiles: eligibleEntries.length,
+              scannedFiles: scannedEntries.length,
+              scannedBytes,
+              findingCount: findings.length,
+              uncoveredEligiblePaths,
+              eligiblePathListSha256,
+              scannedPathListSha256,
+              pathListsEqual,
+              privateDataAccessed: false,
+              trackedEntries,
+              excludedNonRegularEntries,
+              excludedTestFixtureEntries,
+              excludedBinaryOrNonUtf8Entries,
+              eligibleEntries,
+              scannedEntries,
+              findings
+            };
+          }
+
+          function enforceCoverage(result, { allowFindings = false } = {}) {
+            if (result.eligibleTextFiles !== result.scannedFiles) throw new Error('eligible and scanned file counts differ');
+            if (!result.pathListsEqual) throw new Error('eligible and scanned path inventories differ');
+            if (result.uncoveredEligiblePaths.length !== 0) throw new Error('eligible tracked paths were not scanned');
+            if (!allowFindings && result.findingCount !== 0) throw new Error(`sensitive tracked content: ${JSON.stringify(result.findings)}`);
+          }
+
+          function verifyMandatoryCoverage(result, requestedPaths) {
+            const trackedSet = new Set(result.trackedEntries.map(({ path }) => path));
+            const eligibleSet = new Set(result.eligibleEntries.map(({ path }) => path));
+            const scannedSet = new Set(result.scannedEntries.map(({ path }) => path));
+            const requested = [...requestedPaths].sort(comparePaths);
+            const present = requested.filter((path) => trackedSet.has(path));
+            const absent = requested.filter((path) => !trackedSet.has(path));
+            const presentButIneligible = present.filter((path) => !eligibleSet.has(path));
+            const presentButUnscanned = present.filter((path) => !scannedSet.has(path));
+            if (presentButIneligible.length || presentButUnscanned.length) {
+              throw new Error(`mandatory present privacy paths are not covered: ${JSON.stringify({ presentButIneligible, presentButUnscanned })}`);
+            }
+            return {
+              requestedPaths: requested,
+              presentPaths: present,
+              absentPaths: absent,
+              requestedCount: requested.length,
+              presentCount: present.length,
+              absentCount: absent.length,
+              presentPathsEligibleAndScanned: true
+            };
+          }
+
+          function syntheticEntry(path, bytes, mode = '100644', marker = 'a') {
+            return { path, mode, oid: marker.repeat(40), stage: 0, bytes: Buffer.from(bytes) };
+          }
+
+          function runAdversarialCoverage() {
+            const githubToken = ['gh', 'p_', 'A'.repeat(24)].join('');
+            const openAiToken = ['sk-', 'proj-', 'B'.repeat(24)].join('');
+            const bearerToken = ['Be', 'arer ', 'C'.repeat(24)].join('');
+            const privateKeyHeader = ['-----BEGIN ', 'PRIVATE KEY', '-----'].join('');
+            const localUserPath = ['/Us', 'ers/', 'synthetic-owner', '/private.txt'].join('');
+            const ordinaryEmail = ['owner', 'example.com'].join('@');
+            const githubEmail = ['someone', 'github.com'].join('@');
+            const githubSshIdentity = ['git', 'github.com'].join('@');
+            const fixtures = [
+              syntheticEntry('.github/workflows/synthetic.yml', githubToken),
+              syntheticEntry('apps/clover-context-gateway/server.js', openAiToken),
+              syntheticEntry('apps/clover-context-gateway/lib/synthetic.js', bearerToken),
+              syntheticEntry('apps/clover-context-gateway/package.json', privateKeyHeader),
+              syntheticEntry('scripts/synthetic.sh', localUserPath, '100755'),
+              syntheticEntry('.env.example', ordinaryEmail),
+              syntheticEntry('transport/safe-ssh.txt', `${githubSshIdentity}:owner/repository.git`),
+              syntheticEntry('transport/safe-variable-ssh.txt', `${githubSshIdentity}:\${CLOVER_REPOSITORY}.git`),
+              syntheticEntry('transport/github-email.txt', githubEmail),
+              syntheticEntry('transport/bare-ssh.txt', githubSshIdentity),
+              syntheticEntry('transport/suffix-ssh.txt', `${githubSshIdentity}:owner/repository.git.evil`),
+              syntheticEntry('test/excluded.js', githubToken),
+              syntheticEntry('tests/excluded.js', githubToken),
+              syntheticEntry('fixture/excluded.js', githubToken),
+              syntheticEntry('fixtures/excluded.js', githubToken),
+              syntheticEntry('contest/eligible.txt', 'safe'),
+              syntheticEntry('tester/eligible.txt', 'safe'),
+              syntheticEntry('fixture-data/eligible.txt', 'safe'),
+              syntheticEntry('empty/eligible.txt', Buffer.alloc(0)),
+              syntheticEntry('binary/nul.bin', Buffer.from([0, 65])),
+              syntheticEntry('binary/invalid-utf8.bin', Buffer.from([0xc3, 0x28])),
+              syntheticEntry('links/not-regular', 'not dereferenced', '120000'),
+              syntheticEntry('submodule/not-regular', 'not dereferenced', '160000')
+            ];
+            const readBytes = (entry) => entry.bytes;
+            const first = evaluateInventory(fixtures, readBytes);
+            const reversed = evaluateInventory([...fixtures].reverse(), readBytes);
+            const repeated = evaluateInventory(fixtures, readBytes);
+            assert.deepEqual(first, reversed, 'path ordering changed the coverage result');
+            assert.equal(JSON.stringify(first), JSON.stringify(repeated), 'repeated coverage execution was not byte-identical');
+            enforceCoverage(first, { allowFindings: true });
+
+            const expectedFindings = new Map([
+              ['.github/workflows/synthetic.yml', 'github-token'],
+              ['apps/clover-context-gateway/server.js', 'openai-token'],
+              ['apps/clover-context-gateway/lib/synthetic.js', 'bearer-token'],
+              ['apps/clover-context-gateway/package.json', 'private-key'],
+              ['scripts/synthetic.sh', 'local-user-path'],
+              ['.env.example', 'email-address'],
+              ['transport/github-email.txt', 'email-address'],
+              ['transport/bare-ssh.txt', 'email-address'],
+              ['transport/suffix-ssh.txt', 'email-address']
+            ]);
+            for (const [path, kind] of expectedFindings) {
+              assert(first.findings.some((finding) => finding.path === path && finding.kind === kind), `missing adversarial ${kind} finding for ${path}`);
+            }
+            assert(!first.findings.some(({ path }) => path.startsWith('transport/safe-')), 'safe GitHub SSH transport was not narrowly exempted');
+            assert.equal(first.excludedTestFixtureFiles, 4, 'exact test/fixture segment exclusions changed');
+            for (const path of ['contest/eligible.txt', 'tester/eligible.txt', 'fixture-data/eligible.txt', 'empty/eligible.txt', 'scripts/synthetic.sh']) {
+              assert(first.eligibleEntries.some((entry) => entry.path === path), `expected eligible adversarial path missing: ${path}`);
+            }
+            assert(first.excludedBinaryOrNonUtf8Entries.some(({ path, reason }) => path === 'binary/nul.bin' && reason === 'nul-byte'));
+            assert(first.excludedBinaryOrNonUtf8Entries.some(({ path, reason }) => path === 'binary/invalid-utf8.bin' && reason === 'invalid-utf8'));
+            assert(first.excludedNonRegularEntries.some(({ path, mode }) => path === 'links/not-regular' && mode === '120000'));
+            assert(first.excludedNonRegularEntries.some(({ path, mode }) => path === 'submodule/not-regular' && mode === '160000'));
+            assert.throws(() => enforceCoverage(first), /sensitive tracked content/, 'regular non-test finding did not fail closed');
+            const conditionalMandatory = verifyMandatoryCoverage(first, ['absent/mandatory.txt', 'apps/clover-context-gateway/server.js']);
+            assert.deepEqual(conditionalMandatory.presentPaths, ['apps/clover-context-gateway/server.js']);
+            assert.deepEqual(conditionalMandatory.absentPaths, ['absent/mandatory.txt']);
+            return {
+              status: 'passed',
+              matrixCases: fixtures.length,
+              requiredSensitiveKindsDetected: 6,
+              safeGitHubSshTransportAccepted: true,
+              ordinaryGitHubEmailRejected: true,
+              exactTestFixtureSegmentsExcluded: 4,
+              nearMatchSegmentsEligible: true,
+              nulAndInvalidUtf8ClassifiedSeparately: true,
+              emptyTextEligibleAndScanned: true,
+              regularExecutableEligibleAndScanned: true,
+              nonRegularModesExcludedWithoutDereference: true,
+              regularNonTestFindingFailsClosed: true,
+              absentMandatoryPathHandledConditionally: true,
+              pathOrderIndependent: true,
+              repeatedExecutionByteIdentical: true
+            };
+          }
+
+          const mandatoryCoveragePaths = [
+            '.github/workflows/clover-required-main-gate.yml',
+            'apps/clover-context-gateway/server.js',
+            'apps/clover-context-gateway/lib/command-router.js',
+            'apps/clover-context-gateway/lib/context-store.js',
+            'apps/clover-context-gateway/scripts/mcp-smoke.mjs',
+            'apps/clover-context-gateway/package.json',
+            'apps/clover-context-gateway/package-lock.json',
+            'apps/clover-context-gateway/public/command-center.html',
+            'portfolio/core/CAPABILITY_AUTHORITY_REGISTRY.json',
+            'CLOVER_CONTEXT_GATEWAY_POINTER.json'
+          ];
+          const trackedEntries = parseTrackedEntries();
+          const result = evaluateInventory(trackedEntries, ({ oid }) => execFileSync('git', ['cat-file', 'blob', oid], { maxBuffer: 64 * 1024 * 1024 }));
+          result.mandatoryCoverage = verifyMandatoryCoverage(result, mandatoryCoveragePaths);
+          result.adversarialCoverage = runAdversarialCoverage();
+          enforceCoverage(result);
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
           NODE
           node <<'NODE' > "$RUNNER_TEMP/clover-authority-boundary.json"
           const fs = require('node:fs');
