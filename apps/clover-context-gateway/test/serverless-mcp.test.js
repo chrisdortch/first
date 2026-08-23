@@ -743,3 +743,223 @@ test("POST /api/prepare-command routes the exact Day-1 matrix beside, never insi
     }
   });
 });
+
+const technicalToolNames = ["fetch", "prepare_clover_command", "render_clover_command_center", "search"];
+const ownerToolDescription = "Use this as the first substantive Clover action whenever the user selects the Clover owner app, says \"Use Clover Core\", asks what matters, requests perspective, asks why a priority is blocked, asks for one next decision, asks what changed, asks for safe parts, diagnoses a project, or requests project work. Pass the owner's request exactly as written. Do not prepend the app name, add inferred goals, introduce a project, summarize, expand, or rewrite the request. This tool returns the controlling read-only Clover Command Packet, source plan, authority boundary, and owner widget. Do not compose a portfolio or project answer before this tool returns.";
+const expectedReadOnlyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  openWorldHint: false,
+  idempotentHint: true,
+};
+
+async function withMcpClient(endpoint, name, run) {
+  const client = new Client({ name, version: "0.1.0" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(endpoint)));
+    await run(client);
+  } finally {
+    await client.close();
+  }
+}
+
+function deterministicPacket(packet) {
+  const value = structuredClone(packet);
+  delete value.createdAt;
+  return value;
+}
+
+function routeProjection(result) {
+  const packet = result.packet;
+  return {
+    packet: deterministicPacket(packet),
+    intent: packet.intent.id,
+    mode: packet.intent.mode || "",
+    projectId: packet.project?.projectId || null,
+    requiresProject: packet.intent.requiresProject,
+    resolution: packet.resolution,
+    sourceIds: packet.freshness.sourcePlan.map(({ sourceId }) => sourceId),
+    authority: packet.authority,
+    state: packet.state,
+    today: {
+      id: result.today.id,
+      available: result.today.available,
+      relativePath: result.today.metadata?.relativePath || null,
+      commit: result.today.metadata?.commit || null,
+      contract: result.today.metadata?.contract || null,
+    },
+  };
+}
+
+test("technical and owner MCP endpoints expose disjoint exact tool surfaces", async () => {
+  await withGateway(async (baseUrl) => {
+    await withMcpClient(`${baseUrl}/mcp`, "technical-surface-test", async (client) => {
+      const listed = await client.listTools();
+      assert.deepEqual(listed.tools.map(({ name }) => name).sort(), technicalToolNames);
+      assert.equal(listed.tools.some(({ name }) => name === "clover_owner_request"), false);
+      for (const tool of listed.tools) assert.deepEqual(tool.annotations, expectedReadOnlyAnnotations, tool.name);
+
+      const legacy = await client.callTool({
+        name: "prepare_clover_command",
+        arguments: { request: "What matters today?" },
+      });
+      assert.equal(legacy.isError, undefined);
+      assert.deepEqual(Object.keys(legacy.structuredContent).sort(), ["followUpPrompt", "packet", "today"]);
+    });
+
+    await withMcpClient(`${baseUrl}/owner-mcp`, "owner-surface-test", async (client) => {
+      const listed = await client.listTools();
+      assert.equal(listed.tools.length, 1);
+      const [tool] = listed.tools;
+      assert.equal(tool.name, "clover_owner_request");
+      assert.equal(tool.title, "Ground this owner request in Clover Core");
+      assert.equal(tool.description, ownerToolDescription);
+      assert.deepEqual(tool.annotations, expectedReadOnlyAnnotations);
+      assert.equal(tool._meta?.ui?.resourceUri, "ui://clover/command-center.html");
+      assert.deepEqual(tool.inputSchema.required, ["request"]);
+      assert.equal(tool.inputSchema.properties.request.type, "string");
+      assert.equal(tool.inputSchema.properties.request.minLength, 1);
+      assert.equal(tool.inputSchema.properties.request.maxLength, 12000);
+      assert.deepEqual(tool.inputSchema.properties.callerClaimedOrigin.enum, ["widget-direct"]);
+      assert.equal(listed.tools.some(({ name }) => technicalToolNames.includes(name)), false);
+
+      const rejected = await client.callTool({ name: "fetch", arguments: { id: "clover://projects" } });
+      assert.equal(rejected.isError, true);
+    });
+  });
+});
+
+test("owner MCP preserves exact request bytes and fails closed on invalid input", async () => {
+  await withGateway(async (baseUrl) => {
+    await withMcpClient(`${baseUrl}/owner-mcp`, "owner-integrity-test", async (client) => {
+      const request = "  Use Clover Core.\r\n\nCafé e\u0301 ☘️  ";
+      const expectedBytes = Buffer.from(request, "utf8");
+      const expectedHash = createHash("sha256").update(expectedBytes).digest("hex");
+      const first = await client.callTool({ name: "clover_owner_request", arguments: { request } });
+      const second = await client.callTool({ name: "clover_owner_request", arguments: { request } });
+
+      for (const response of [first, second]) {
+        assert.equal(response.isError, undefined);
+        const body = response.structuredContent;
+        assert.deepEqual(body.requestIntegrity, {
+          receivedRequest: request,
+          utf8Bytes: expectedBytes.byteLength,
+          sha256: expectedHash,
+          normalization: "none-except-json-transport",
+          callerClaimedOrigin: "chat-host-or-widget-direct",
+        });
+        assert.equal(body.requestIntegrity.receivedRequest.startsWith("Clover Core Owner Canary"), false);
+        assert.equal(body.packet.originalRequest, request.trim());
+        assert.equal(body.sourceHeader.gatewayVersion, "0.3.1");
+        assert.equal(body.sourceHeader.repository, "chrisdortch/first");
+        assert.equal(body.sourceHeader.packetSchemaVersion, "1.2");
+        assert.equal(body.sourceHeader.intent, body.packet.intent.id);
+        assert.equal(body.sourceHeader.mode, body.packet.intent.mode || "");
+        assert.equal(body.sourceHeader.focusedProjectId, body.packet.project?.projectId || null);
+        assert.equal(body.sourceHeader.requiresProject, body.packet.intent.requiresProject);
+        assert.equal(body.sourceHeader.state, body.packet.state);
+        assert.equal(body.sourceHeader.consequentialAuthorityGranted, false);
+        assert.deepEqual(body.answerContract, {
+          packetControlsRouting: true,
+          memoryMayOverridePacket: false,
+          externalSourcesMayOverrideIntent: false,
+          currentFactsRequireDeclaredRefresh: true,
+          noSubstantiveAnswerBeforePacket: true,
+        });
+        assert.equal(body.packet.authority.previewOnlyByDefault, true);
+        for (const [key, value] of Object.entries(body.packet.authority)) {
+          if (key !== "previewOnlyByDefault") assert.equal(value, false, key);
+        }
+        const serialized = JSON.stringify(body);
+        assert.doesNotMatch(serialized, /\/Users\/|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\bBearer\s+[A-Za-z0-9._~+/-]{8,}|\bgh[pousr]_[A-Za-z0-9]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}/i);
+      }
+
+      assert.deepEqual(first.structuredContent.requestIntegrity, second.structuredContent.requestIntegrity);
+      assert.deepEqual(routeProjection(first.structuredContent), routeProjection(second.structuredContent));
+
+      const widget = await client.callTool({
+        name: "clover_owner_request",
+        arguments: { request, callerClaimedOrigin: "widget-direct" },
+      });
+      assert.equal(widget.structuredContent.requestIntegrity.callerClaimedOrigin, "widget-direct");
+      assert.equal(widget.structuredContent.requestIntegrity.receivedRequest, request);
+
+      for (const argumentsValue of [
+        { request: "" },
+        { request: "x".repeat(12001) },
+        { request: "What matters today?", callerClaimedOrigin: "host-rewritten" },
+        { request: "What matters today?", extra: "must-not-be-stripped" },
+      ]) {
+        const rejected = await client.callTool({ name: "clover_owner_request", arguments: argumentsValue });
+        assert.equal(rejected.isError, true);
+      }
+    });
+  });
+});
+
+test("owner MCP delegates all ten owner phrases to the unchanged deterministic router", async () => {
+  const cases = [
+    ["What matters today?", "portfolio_operating_loop", "brief", null, false],
+    ["I need some perspective.", "portfolio_operating_loop", "brief", null, false],
+    ["Why is Lakeside Essentials blocked?", "portfolio_operating_loop", "explain_priority", "lakeside-essentials", false],
+    ["What is the single best next thing for me to do?", "portfolio_operating_loop", "recommend_next", null, false],
+    ["What changed since the last accepted receipt?", "portfolio_operating_loop", "report_activity", null, false],
+    ["I feel overloaded. Reduce this to one decision without losing anything.", "portfolio_operating_loop", "recommend_next", null, false],
+    ["Do only the safe parts of today's top priority.", "portfolio_operating_loop", "execute_safe_parts", null, false],
+    ["Why is RollinD's build failing?", "diagnose_project", "", "rollindd", true],
+    ["Improve the project.", "evolve_project", "", null, true],
+    ["Help me understand where we actually are.", "portfolio_operating_loop", "brief", null, false],
+  ];
+
+  await withGateway(async (baseUrl) => {
+    await withMcpClient(`${baseUrl}/mcp`, "technical-parity-test", async (technicalClient) => {
+      await withMcpClient(`${baseUrl}/owner-mcp`, "owner-parity-test", async (ownerClient) => {
+        for (const [request, intent, mode, projectId, requiresProject] of cases) {
+          const technical = await technicalClient.callTool({ name: "prepare_clover_command", arguments: { request } });
+          const owner = await ownerClient.callTool({ name: "clover_owner_request", arguments: { request } });
+          assert.equal(technical.isError, undefined, request);
+          assert.equal(owner.isError, undefined, request);
+          assert.deepEqual(routeProjection(owner.structuredContent), routeProjection(technical.structuredContent), request);
+          assert.equal(owner.structuredContent.sourceHeader.intent, intent, request);
+          assert.equal(owner.structuredContent.sourceHeader.mode, mode, request);
+          assert.equal(owner.structuredContent.sourceHeader.focusedProjectId, projectId, request);
+          assert.equal(owner.structuredContent.sourceHeader.requiresProject, requiresProject, request);
+          assert.equal(owner.structuredContent.sourceHeader.consequentialAuthorityGranted, false, request);
+          assert.equal(owner.structuredContent.requestIntegrity.receivedRequest, request, request);
+        }
+      });
+    });
+  });
+});
+
+for (const method of ["GET", "DELETE"]) {
+  test(`${method} /owner-mcp returns an immediate serverless-safe 405`, async () => {
+    await withGateway(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/owner-mcp`, { method, headers: { accept: "text/event-stream" } });
+      assert.equal(response.status, 405);
+      assert.equal(response.headers.get("allow"), "POST, OPTIONS");
+      const body = await response.json();
+      assert.equal(body.jsonrpc, "2.0");
+      assert.equal(body.id, null);
+    });
+  });
+}
+
+test("command center preserves the technical bridge and adds a fail-closed exact owner bridge", async () => {
+  await withGateway(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/command-center`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /const submittedRequest = requestEl\.value;/);
+    assert.match(html, /const request = ownerToolAvailable \? submittedRequest : submittedRequest\.trim\(\);/);
+    assert.match(html, /callTool\('clover_owner_request',[\s\S]*callerClaimedOrigin: 'widget-direct'/);
+    assert.match(html, /await verifyOwnerResponse\(request, data, 'widget-direct'\);[\s\S]*Direct widget route — exact submitted text echoed by Clover/);
+    assert.match(html, /callTool\('prepare_clover_command', \{ request \}\)/);
+    assert.match(html, /Owner request-integrity verification failed closed/);
+    assert.match(html, /clearOwnerPreparedResult\('Binding the exact request/);
+    assert.match(html, /clearOwnerPreparedResult\(`Could not prepare command:/);
+    assert.match(html, /await verifyOwnerResponse\(initialRequest, initial, 'chat-host-or-widget-direct'\);[\s\S]*render\(initial/);
+    assert.match(html, /currentPrompt = '';[\s\S]*copyButton\.disabled = true;[\s\S]*sendButton\.disabled = true;/);
+    assert.doesNotMatch(html, /catch[\s\S]{0,300}callTool\('prepare_clover_command'/);
+  });
+});

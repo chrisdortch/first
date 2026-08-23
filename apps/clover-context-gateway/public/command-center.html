@@ -417,6 +417,7 @@
   let currentPrompt = '';
   let recognition;
   let listening = false;
+  let ownerToolAvailable = false;
 
   function hostOutput() {
     return window.openai?.toolOutput || null;
@@ -471,6 +472,62 @@
       if (summary !== value) return safeSummary(summary, fallback);
     }
     return fallback;
+  }
+
+  async function sha256Utf8(value) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+
+  function clearOwnerPreparedResult(message) {
+    currentPrompt = '';
+    promptEl.textContent = '';
+    packetEl.textContent = '';
+    cardsEl.replaceChildren();
+    resultEl.classList.remove('visible');
+    copyButton.disabled = true;
+    sendButton.disabled = true;
+    if (message) transcriptEl.textContent = message;
+  }
+
+  async function verifyOwnerResponse(submittedRequest, data, expectedOrigin) {
+    const integrity = data?.requestIntegrity;
+    if (!integrity) throw new Error('Owner response omitted request-integrity evidence.');
+    const bytes = new TextEncoder().encode(submittedRequest).byteLength;
+    const hash = await sha256Utf8(submittedRequest);
+    if (integrity.receivedRequest !== submittedRequest
+      || integrity.utf8Bytes !== bytes
+      || integrity.sha256 !== hash
+      || integrity.normalization !== 'none-except-json-transport'
+      || integrity.callerClaimedOrigin !== expectedOrigin) {
+      throw new Error('Owner request-integrity verification failed closed.');
+    }
+    const packet = data?.packet;
+    const sourceHeader = data?.sourceHeader;
+    const answerContract = data?.answerContract;
+    const consequentialAuthorityGranted = Object.entries(packet?.authority || {})
+      .some(([key, value]) => key !== 'previewOnlyByDefault' && value === true);
+    if (!packet || !sourceHeader || !answerContract
+      || sourceHeader.gatewayVersion !== '0.3.1'
+      || sourceHeader.repository !== packet.canonicalContext?.sourceRepository
+      || sourceHeader.contextRef !== packet.canonicalContext?.sourceRef
+      || sourceHeader.contextCommit !== packet.canonicalContext?.sourceCommit
+      || sourceHeader.packetSchemaVersion !== packet.schemaVersion
+      || sourceHeader.intent !== packet.intent?.id
+      || sourceHeader.mode !== (packet.intent?.mode || '')
+      || sourceHeader.focusedProjectId !== (packet.project?.projectId || null)
+      || sourceHeader.requiresProject !== packet.intent?.requiresProject
+      || sourceHeader.state !== packet.state
+      || sourceHeader.consequentialAuthorityGranted !== false
+      || consequentialAuthorityGranted
+      || packet.authority?.previewOnlyByDefault !== true
+      || answerContract.packetControlsRouting !== true
+      || answerContract.memoryMayOverridePacket !== false
+      || answerContract.externalSourcesMayOverrideIntent !== false
+      || answerContract.currentFactsRequireDeclaredRefresh !== true
+      || answerContract.noSubstantiveAnswerBeforePacket !== true) {
+      throw new Error('Owner packet, source, or authority contract verification failed closed.');
+    }
   }
 
   function listValue(value) {
@@ -644,7 +701,7 @@
 
     promptEl.textContent = currentPrompt;
     packetEl.textContent = allowOwnerContext
-      ? JSON.stringify(packet, null, 2)
+      ? JSON.stringify(data?.requestIntegrity ? data : packet, null, 2)
       : 'Machine-readable source identities are shown only inside the connected Clover app context.';
     summaryEl.textContent = packet
       ? `${packet.intent?.id || 'bounded request'} · ${packet.project?.title || packet.resolution?.state || 'project resolution required'} · ${packet.cost?.defaultLane || 'cost lane unknown'}`
@@ -652,6 +709,24 @@
 
     cardsEl.replaceChildren();
     if (packet) {
+      if (data?.requestIntegrity && data?.sourceHeader) {
+        addCard(
+          'Request integrity',
+          data.requestIntegrity.receivedRequest,
+          `SHA-256 ${data.requestIntegrity.sha256.slice(0, 12)}… · ${data.requestIntegrity.utf8Bytes} UTF-8 bytes · ${data.requestIntegrity.callerClaimedOrigin}`
+        );
+        addCard(
+          'Clover route',
+          `${data.sourceHeader.intent} / ${data.sourceHeader.mode || 'project operation'}`,
+          `Project ${data.sourceHeader.focusedProjectId || 'none'} · ${data.sourceHeader.contextRef}@${String(data.sourceHeader.contextCommit || 'unknown').slice(0, 12)} · ${data.sourceHeader.state}`
+        );
+        addCard(
+          'Verified authority',
+          data.sourceHeader.consequentialAuthorityGranted ? 'Rejected: authority widened' : 'No consequential authority',
+          'The packet controls routing; memory and external sources may not override it.'
+        );
+        addCard('Stop conditions', `${packet.stopConditions?.length || 0} enforced`, (packet.stopConditions || []).join(' · ') || 'No stop conditions supplied.');
+      }
       const connectors = [...new Set((packet.freshness?.sourcePlan || []).map((item) => item.connector))];
       addCard('Target', packet.project?.title || `Resolution ${packet.resolution?.state || 'required'}`, `Command ${packet.commandId || 'ID unavailable'}.`);
       addCard('Truth coverage', `${packet.freshness?.requiredSources?.length || 0} live-source checks`, connectors.length ? connectors.join(', ') : 'Source plan unavailable.');
@@ -671,28 +746,42 @@
   }
 
   async function prepare() {
-    const request = requestEl.value.trim();
-    if (!request) {
+    const submittedRequest = requestEl.value;
+    if (!submittedRequest.trim()) {
       transcriptEl.textContent = 'Choose a core question or enter an instruction.';
       requestEl.focus();
       return;
     }
+    const request = ownerToolAvailable ? submittedRequest : submittedRequest.trim();
 
     prepareButton.disabled = true;
-    transcriptEl.textContent = 'Binding the request to current Clover context and authority…';
+    if (ownerToolAvailable) clearOwnerPreparedResult('Binding the exact request to current Clover context and authority…');
+    else transcriptEl.textContent = 'Binding the request to current Clover context and authority…';
 
     try {
       let response;
       if (window.openai?.callTool) {
-        response = await window.openai.callTool('prepare_clover_command', { request });
-        render(response?.structuredContent || response, { allowOwnerContext: true });
+        if (ownerToolAvailable) {
+          response = await window.openai.callTool('clover_owner_request', {
+            request,
+            callerClaimedOrigin: 'widget-direct'
+          });
+          const data = response?.structuredContent || response;
+          await verifyOwnerResponse(request, data, 'widget-direct');
+          render(data, { allowOwnerContext: true });
+          transcriptEl.textContent = 'Direct widget route — exact submitted text echoed by Clover';
+        } else {
+          response = await window.openai.callTool('prepare_clover_command', { request });
+          render(response?.structuredContent || response, { allowOwnerContext: true });
+          transcriptEl.textContent = 'Bounded command prepared. No project or production system was changed.';
+        }
       } else {
         transcriptEl.textContent = 'Open this page through the connected Clover app to bind owner-session context. No anonymous candidate context was loaded.';
         return;
       }
-      transcriptEl.textContent = 'Bounded command prepared. No project or production system was changed.';
     } catch (error) {
-      transcriptEl.textContent = `Could not prepare command: ${error?.message || error}`;
+      if (ownerToolAvailable) clearOwnerPreparedResult(`Could not prepare command: ${error?.message || error}`);
+      else transcriptEl.textContent = `Could not prepare command: ${error?.message || error}`;
     } finally {
       prepareButton.disabled = false;
     }
@@ -771,17 +860,33 @@
 
   setupSpeech();
 
-  const initial = hostOutput();
-  if (initial) {
-    if (initial.packet?.originalRequest) requestEl.value = initial.packet.originalRequest;
-    render(initial, { allowOwnerContext: true });
-  } else {
-    missionValueEl.textContent = 'Owner context not loaded';
-    missionDetailEl.textContent = 'Open through the connected Clover app. Anonymous view does not fetch registry, candidate, or source identity data.';
-    priorityValueEl.textContent = 'Owner session required';
-    unknownValueEl.textContent = 'No state inferred';
-    renderOwnerSession(null, false);
+  async function initialize() {
+    const initial = hostOutput();
+    if (initial) {
+      ownerToolAvailable = Boolean(initial.requestIntegrity && initial.answerContract);
+      if (ownerToolAvailable) {
+        const initialRequest = initial.requestIntegrity?.receivedRequest;
+        try {
+          await verifyOwnerResponse(initialRequest, initial, 'chat-host-or-widget-direct');
+          requestEl.value = initialRequest;
+          render(initial, { allowOwnerContext: true });
+        } catch (error) {
+          clearOwnerPreparedResult(`Could not verify owner result: ${error?.message || error}`);
+        }
+      } else {
+        if (initial.packet?.originalRequest) requestEl.value = initial.packet.originalRequest;
+        render(initial, { allowOwnerContext: true });
+      }
+    } else {
+      missionValueEl.textContent = 'Owner context not loaded';
+      missionDetailEl.textContent = 'Open through the connected Clover app. Anonymous view does not fetch registry, candidate, or source identity data.';
+      priorityValueEl.textContent = 'Owner session required';
+      unknownValueEl.textContent = 'No state inferred';
+      renderOwnerSession(null, false);
+    }
   }
+
+  initialize();
 </script>
 </body>
 </html>
