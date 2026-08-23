@@ -1,0 +1,797 @@
+name: Clover Required Main Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Clover required main gate (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
+    env:
+      CLOVER_VALIDATION_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CONTEXT_SOURCE_MODE: local
+      CONTEXT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      PUBLIC_BASE_URL: http://127.0.0.1:8787
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify exact candidate checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CLOVER_VALIDATION_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          git diff --check
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: apps/clover-context-gateway/package-lock.json
+
+      - name: Prove pull-request integration context
+        shell: bash
+        env:
+          CLOVER_EVENT_NAME: ${{ github.event_name }}
+          CLOVER_REPOSITORY: ${{ github.repository }}
+          CLOVER_PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          CLOVER_EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CLOVER_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CLOVER_PR_BASE_REF: ${{ github.event.pull_request.base.ref || '' }}
+          CLOVER_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          CLOVER_EVENT_MERGE_SHA: ${{ github.sha }}
+        run: |
+          # BEGIN CLOVER PR INTEGRATION CONTEXT V1
+          set -Eeuo pipefail
+
+          evidence_path="$RUNNER_TEMP/clover-pr-integration-context.json"
+          export CLOVER_RESULT="failed"
+          export CLOVER_FAILURE_STAGE="initialize"
+          export CLOVER_ACTUAL_HEAD_SHA=""
+          export CLOVER_HEAD_TREE=""
+          export CLOVER_FETCHED_BASE_SHA=""
+          export CLOVER_FETCHED_BASE_SHA_SECOND_READ=""
+          export CLOVER_MERGE_BASE=""
+          export CLOVER_FETCHED_MERGE_SHA=""
+          export CLOVER_FETCHED_MERGE_SHA_SECOND_READ=""
+          export CLOVER_SYNTHETIC_PARENT_1=""
+          export CLOVER_SYNTHETIC_PARENT_2=""
+          export CLOVER_SYNTHETIC_MERGE_TREE=""
+          export CLOVER_BASE_IS_ANCESTOR=""
+          export CLOVER_MERGE_TREE_EQUALS_HEAD_TREE=""
+
+          is_sha() {
+            [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+          }
+
+          write_evidence() {
+            node <<'NODE' > "$evidence_path"
+          const nullable = (name) => {
+            const value = process.env[name];
+            return value === undefined || value === '' ? null : value;
+          };
+          const integerOrNull = (name) => {
+            const value = nullable(name);
+            return value === null ? null : Number.parseInt(value, 10);
+          };
+          const booleanOrNull = (name) => {
+            const value = nullable(name);
+            if (value === null) return null;
+            if (value !== 'true' && value !== 'false') throw new Error(`${name} is not boolean`);
+            return value === 'true';
+          };
+          const result = process.env.CLOVER_RESULT;
+          const evidence = {
+            schemaVersion: 'clover-pr-integration-context-v1',
+            eventName: process.env.CLOVER_EVENT_NAME,
+            repository: process.env.CLOVER_REPOSITORY,
+            pullRequestNumber: integerOrNull('CLOVER_PR_NUMBER'),
+            headRef: nullable('CLOVER_EVENT_HEAD_REF'),
+            headSha: nullable('CLOVER_EXPECTED_HEAD_SHA'),
+            checkedOutHeadSha: nullable('CLOVER_ACTUAL_HEAD_SHA'),
+            headTree: nullable('CLOVER_HEAD_TREE'),
+            baseRef: nullable('CLOVER_PR_BASE_REF'),
+            baseSha: nullable('CLOVER_PR_BASE_SHA'),
+            fetchedBaseSha: nullable('CLOVER_FETCHED_BASE_SHA'),
+            fetchedBaseShaSecondRead: nullable('CLOVER_FETCHED_BASE_SHA_SECOND_READ'),
+            mergeBase: nullable('CLOVER_MERGE_BASE'),
+            eventSyntheticMergeSha: process.env.CLOVER_EVENT_NAME === 'pull_request'
+              ? nullable('CLOVER_EVENT_MERGE_SHA')
+              : null,
+            fetchedSyntheticMergeSha: nullable('CLOVER_FETCHED_MERGE_SHA'),
+            fetchedSyntheticMergeShaSecondRead: nullable('CLOVER_FETCHED_MERGE_SHA_SECOND_READ'),
+            syntheticMergeParent1: nullable('CLOVER_SYNTHETIC_PARENT_1'),
+            syntheticMergeParent2: nullable('CLOVER_SYNTHETIC_PARENT_2'),
+            syntheticMergeTree: nullable('CLOVER_SYNTHETIC_MERGE_TREE'),
+            baseIsAncestorOfHead: booleanOrNull('CLOVER_BASE_IS_ANCESTOR'),
+            syntheticMergeTreeEqualsHeadTree: booleanOrNull('CLOVER_MERGE_TREE_EQUALS_HEAD_TREE'),
+            result,
+            failureStage: result === 'failed' ? nullable('CLOVER_FAILURE_STAGE') : null
+          };
+          process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+          NODE
+          }
+
+          write_summary() {
+            {
+              printf '### Clover PR integration context\n\n'
+              printf -- '- Result: %s\n' "$CLOVER_RESULT"
+              printf -- '- Event: %s\n' "$CLOVER_EVENT_NAME"
+              printf -- '- Head: %s\n' "${CLOVER_ACTUAL_HEAD_SHA:-not-applicable}"
+              printf -- '- Head tree: %s\n' "${CLOVER_HEAD_TREE:-not-applicable}"
+              printf -- '- Base: %s\n' "${CLOVER_FETCHED_BASE_SHA:-not-applicable}"
+              printf -- '- Merge base: %s\n' "${CLOVER_MERGE_BASE:-not-applicable}"
+              printf -- '- Synthetic merge: %s\n' "${CLOVER_FETCHED_MERGE_SHA:-not-applicable}"
+              printf -- '- Synthetic merge tree: %s\n' "${CLOVER_SYNTHETIC_MERGE_TREE:-not-applicable}"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          on_error() {
+            local exit_code=$?
+            trap - ERR
+            CLOVER_RESULT="failed"
+            write_evidence || true
+            write_summary || true
+            exit "$exit_code"
+          }
+          trap on_error ERR
+
+          CLOVER_FAILURE_STAGE="validate-common-event-identity"
+          [[ "$CLOVER_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          is_sha "$CLOVER_EXPECTED_HEAD_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          CLOVER_ACTUAL_HEAD_SHA="$(git rev-parse --verify 'HEAD^{commit}')"
+          is_sha "$CLOVER_ACTUAL_HEAD_SHA"
+          test "$CLOVER_ACTUAL_HEAD_SHA" = "$CLOVER_EXPECTED_HEAD_SHA"
+          CLOVER_HEAD_TREE="$(git rev-parse --verify "${CLOVER_ACTUAL_HEAD_SHA}^{tree}")"
+          is_sha "$CLOVER_HEAD_TREE"
+          remote_url="$(git config --get remote.origin.url)"
+          case "$remote_url" in
+            "https://github.com/${CLOVER_REPOSITORY}"|"https://github.com/${CLOVER_REPOSITORY}.git"|"git@github.com:${CLOVER_REPOSITORY}.git") ;;
+            *) false ;;
+          esac
+
+          case "$CLOVER_EVENT_NAME" in
+            push|workflow_dispatch)
+              CLOVER_RESULT="not-applicable-non-pr-event"
+              CLOVER_FAILURE_STAGE="write-non-pr-evidence"
+              write_evidence
+              write_summary
+              trap - ERR
+              exit 0
+              ;;
+            pull_request) ;;
+            *) false ;;
+          esac
+
+          CLOVER_FAILURE_STAGE="validate-pull-request-event-identity"
+          [[ "$CLOVER_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          test -n "$CLOVER_EVENT_HEAD_REF"
+          test -n "$CLOVER_PR_BASE_REF"
+          git check-ref-format "refs/heads/${CLOVER_EVENT_HEAD_REF}" > /dev/null
+          git check-ref-format "refs/heads/${CLOVER_PR_BASE_REF}" > /dev/null
+          is_sha "$CLOVER_PR_BASE_SHA"
+          is_sha "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_FAILURE_STAGE="fetch-first-pull-request-context"
+          git fetch --no-tags --force origin \
+            "+refs/heads/${CLOVER_PR_BASE_REF}:refs/clover/pr-integration-context/base-first"
+          git fetch --no-tags --force origin \
+            "+refs/pull/${CLOVER_PR_NUMBER}/merge:refs/clover/pr-integration-context/merge-first"
+          CLOVER_FETCHED_BASE_SHA="$(git rev-parse --verify 'refs/clover/pr-integration-context/base-first^{commit}')"
+          CLOVER_FETCHED_MERGE_SHA="$(git rev-parse --verify 'refs/clover/pr-integration-context/merge-first^{commit}')"
+          is_sha "$CLOVER_FETCHED_BASE_SHA"
+          is_sha "$CLOVER_FETCHED_MERGE_SHA"
+          test "$CLOVER_FETCHED_BASE_SHA" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA" = "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_FAILURE_STAGE="validate-linear-integration-context"
+          CLOVER_MERGE_BASE="$(git merge-base "$CLOVER_PR_BASE_SHA" "$CLOVER_ACTUAL_HEAD_SHA")"
+          is_sha "$CLOVER_MERGE_BASE"
+          test "$CLOVER_MERGE_BASE" = "$CLOVER_PR_BASE_SHA"
+          CLOVER_BASE_IS_ANCESTOR="false"
+          git merge-base --is-ancestor "$CLOVER_PR_BASE_SHA" "$CLOVER_ACTUAL_HEAD_SHA"
+          CLOVER_BASE_IS_ANCESTOR="true"
+          read -r -a synthetic_parents <<< "$(git show -s --format='%P' "$CLOVER_FETCHED_MERGE_SHA")"
+          test "${#synthetic_parents[@]}" -eq 2
+          CLOVER_SYNTHETIC_PARENT_1="${synthetic_parents[0]}"
+          CLOVER_SYNTHETIC_PARENT_2="${synthetic_parents[1]}"
+          test "$CLOVER_SYNTHETIC_PARENT_1" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_SYNTHETIC_PARENT_2" = "$CLOVER_ACTUAL_HEAD_SHA"
+          CLOVER_SYNTHETIC_MERGE_TREE="$(git rev-parse --verify "${CLOVER_FETCHED_MERGE_SHA}^{tree}")"
+          is_sha "$CLOVER_SYNTHETIC_MERGE_TREE"
+          CLOVER_MERGE_TREE_EQUALS_HEAD_TREE="false"
+          test "$CLOVER_SYNTHETIC_MERGE_TREE" = "$CLOVER_HEAD_TREE"
+          CLOVER_MERGE_TREE_EQUALS_HEAD_TREE="true"
+
+          CLOVER_FAILURE_STAGE="verify-context-stability"
+          git fetch --no-tags --force origin \
+            "+refs/heads/${CLOVER_PR_BASE_REF}:refs/clover/pr-integration-context/base-second"
+          git fetch --no-tags --force origin \
+            "+refs/pull/${CLOVER_PR_NUMBER}/merge:refs/clover/pr-integration-context/merge-second"
+          CLOVER_FETCHED_BASE_SHA_SECOND_READ="$(git rev-parse --verify 'refs/clover/pr-integration-context/base-second^{commit}')"
+          CLOVER_FETCHED_MERGE_SHA_SECOND_READ="$(git rev-parse --verify 'refs/clover/pr-integration-context/merge-second^{commit}')"
+          is_sha "$CLOVER_FETCHED_BASE_SHA_SECOND_READ"
+          is_sha "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ"
+          test "$CLOVER_FETCHED_BASE_SHA_SECOND_READ" = "$CLOVER_FETCHED_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ" = "$CLOVER_FETCHED_MERGE_SHA"
+          test "$CLOVER_FETCHED_BASE_SHA_SECOND_READ" = "$CLOVER_PR_BASE_SHA"
+          test "$CLOVER_FETCHED_MERGE_SHA_SECOND_READ" = "$CLOVER_EVENT_MERGE_SHA"
+
+          CLOVER_RESULT="passed"
+          CLOVER_FAILURE_STAGE="write-passed-evidence"
+          write_evidence
+          write_summary
+          trap - ERR
+          # END CLOVER PR INTEGRATION CONTEXT V1
+
+      - name: Install pinned validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1
+          npm ci --prefix apps/clover-context-gateway --ignore-scripts --no-audit --no-fund
+
+      - name: Validate source structure, document parsing, and action pins
+        shell: bash
+        env:
+          CLOVER_EVENT_NAME: ${{ github.event_name }}
+          CLOVER_EVENT_BEFORE_SHA: ${{ github.event.before || '' }}
+        run: |
+          set -euo pipefail
+          git diff --check
+          case "$CLOVER_EVENT_NAME" in
+            pull_request)
+              CLOVER_DIFF_BASE="$(node -p "require(process.env.RUNNER_TEMP + '/clover-pr-integration-context.json').baseSha")"
+              ;;
+            push)
+              CLOVER_DIFF_BASE="$CLOVER_EVENT_BEFORE_SHA"
+              [[ "$CLOVER_DIFF_BASE" =~ ^[0-9a-f]{40}$ ]]
+              test "$CLOVER_DIFF_BASE" != "0000000000000000000000000000000000000000"
+              ;;
+            workflow_dispatch)
+              read -r CLOVER_DIFF_BASE _ <<< "$(git show -s --format='%P' "$CLOVER_VALIDATION_SHA")"
+              ;;
+            *)
+              false
+              ;;
+          esac
+          export CLOVER_DIFF_BASE
+          [[ "$CLOVER_DIFF_BASE" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${CLOVER_DIFF_BASE}^{commit}"
+          git diff --check "$CLOVER_DIFF_BASE" "$CLOVER_VALIDATION_SHA"
+          git fsck --full --strict
+          ruby -e 'require "yaml"; ARGV.each { |path| raise "empty YAML: #{path}" unless Psych.parse_file(path) }' $(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          ruby <<'RUBY' > "$RUNNER_TEMP/clover-workflow-policy.json"
+          require "json"
+          require "open3"
+          require "yaml"
+
+          def collect_uses(node, path, action_uses, checkout_steps)
+            case node
+            when Hash
+              if node.key?("uses")
+                value = node.fetch("uses")
+                raise "non-string uses value in #{path}" unless value.is_a?(String)
+                action_uses << { "path" => path, "value" => value }
+                if value.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/i)
+                  with = node["with"]
+                  persisted = with.is_a?(Hash) ? with["persist-credentials"] : nil
+                  checkout_steps << {
+                    "path" => path,
+                    "value" => value,
+                    "persistCredentialsFalse" => persisted == false || persisted == "false"
+                  }
+                end
+              end
+              node.each_value { |value| collect_uses(value, path, action_uses, checkout_steps) }
+            when Array
+              node.each { |value| collect_uses(value, path, action_uses, checkout_steps) }
+            end
+          end
+
+          checkout_sha = "0123456789abcdef0123456789abcdef01234567"
+          fixture = YAML.safe_load(<<~YAML, aliases: false)
+            jobs:
+              audit:
+                steps:
+                  - uses : attacker/block@v1
+                  - "uses": attacker/quoted@v2 # valid YAML inline comment
+                  - { uses: attacker/flow@v3 }
+                  - uses: >-
+                      attacker/folded@v4
+                  - name: unsafe checkout
+                    uses: Actions/Checkout@#{checkout_sha}
+                    env: { NOTE: "persist-credentials: false" }
+                    # persist-credentials: false
+                  - name: safe terminal checkout
+                    uses : actions/checkout@#{checkout_sha} # valid YAML inline comment
+                    with: { persist-credentials: false }
+                  - run: echo next-step
+          YAML
+          fixture_uses = []
+          fixture_checkouts = []
+          collect_uses(fixture, "adversarial-fixture", fixture_uses, fixture_checkouts)
+          expected_fixture_uses = [
+            "attacker/block@v1",
+            "attacker/quoted@v2",
+            "attacker/flow@v3",
+            "attacker/folded@v4",
+            "Actions/Checkout@#{checkout_sha}",
+            "actions/checkout@#{checkout_sha}"
+          ]
+          raise "semantic uses parser missed a YAML representation" unless fixture_uses.map { |entry| entry.fetch("value") } == expected_fixture_uses
+          raise "unsafe checkout fixture was accepted" unless fixture_checkouts.length == 2 && fixture_checkouts.first.fetch("persistCredentialsFalse") == false
+          raise "safe terminal checkout fixture was rejected" unless fixture_checkouts.last.fetch("persistCredentialsFalse") == true
+
+          tracked, status = Open3.capture2("git", "ls-files", "-z")
+          raise "git ls-files failed" unless status.success?
+          tracked_files = tracked.split("\0").reject(&:empty?)
+          workflow_files = tracked_files.select { |path| path.match?(%r{\A\.github/workflows/.*\.ya?ml\z}) }.sort
+          action_metadata_files = tracked_files.select { |path| path.match?(%r{(?:\A|/)action\.ya?ml\z}) }.sort
+          policy_files = workflow_files + action_metadata_files
+          action_uses = []
+          checkout_steps = []
+          policy_files.each do |path|
+            document = YAML.safe_load(File.read(path), aliases: false)
+            raise "empty YAML: #{path}" if document.nil?
+            collect_uses(document, path, action_uses, checkout_steps)
+          end
+          unpinned = action_uses.reject { |entry| entry.fetch("value").start_with?("./") || entry.fetch("value").match?(/@[0-9a-f]{40}\z/) }
+          raise "unpinned workflow actions: #{unpinned.to_json}" unless unpinned.empty?
+          credential_violations = checkout_steps.reject { |entry| entry.fetch("persistCredentialsFalse") }
+          raise "checkout credential violations: #{credential_violations.to_json}" unless credential_violations.empty?
+          puts JSON.generate({
+            "workflowFiles" => workflow_files,
+            "actionMetadataFiles" => action_metadata_files,
+            "actionUses" => action_uses,
+            "checkoutSteps" => checkout_steps
+          })
+          RUBY
+          node <<'NODE' > "$RUNNER_TEMP/clover-source-integrity.json"
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const crypto = require('node:crypto');
+          const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+          const jsonFiles = tracked.filter((path) => path.endsWith('.json'));
+          const jsonlFiles = tracked.filter((path) => path.endsWith('.jsonl'));
+          let jsonlRecords = 0;
+          for (const path of jsonFiles) JSON.parse(fs.readFileSync(path, 'utf8'));
+          for (const path of jsonlFiles) {
+            const records = fs.readFileSync(path, 'utf8').split(/\r?\n/).filter((line) => line.trim());
+            for (const record of records) JSON.parse(record);
+            jsonlRecords += records.length;
+          }
+          const workflowFiles = tracked.filter((path) => /^\.github\/workflows\/.*\.ya?ml$/.test(path));
+          const workflowPolicy = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/clover-workflow-policy.json', 'utf8'));
+          const uses = workflowPolicy.actionUses;
+          const unpinned = uses.filter(({ value }) => !value.startsWith('./') && !/@[0-9a-f]{40}$/.test(value));
+          if (unpinned.length) throw new Error(`unpinned workflow actions: ${JSON.stringify(unpinned)}`);
+          const checkoutBlocks = workflowPolicy.checkoutSteps;
+          const credentialViolations = checkoutBlocks.filter(({ persistCredentialsFalse }) => !persistCredentialsFalse);
+          if (credentialViolations.length) throw new Error(`checkout credential violations: ${JSON.stringify(credentialViolations)}`);
+          const workflowPath = '.github/workflows/clover-required-main-gate.yml';
+          const workflowBytes = fs.readFileSync(workflowPath);
+          const workflowText = workflowBytes.toString('utf8');
+          const requiredFragments = [
+            'name: Clover Required Main Gate',
+            'on:\n  pull_request:\n    branches:\n      - main\n  push:\n    branches:\n      - main\n  workflow_dispatch:',
+            'jobs:\n  validate:',
+            'name: Clover required main gate (Node $' + '{{ matrix.node-version }})',
+            "node-version: ['22', '24']",
+            'permissions:\n  contents: read',
+            'persist-credentials: false',
+            'fetch-depth: 0'
+          ];
+          for (const fragment of requiredFragments) {
+            if (!workflowText.includes(fragment)) throw new Error(`missing workflow contract: ${fragment}`);
+          }
+          const triggerPrefix = workflowText.slice(0, workflowText.indexOf('\npermissions:'));
+          if (/\n\s+paths(?:-ignore)?:/.test(triggerPrefix)) throw new Error('required gate must not contain event path filters');
+          if (/pull_request_target:|merge_group:|schedule:/.test(triggerPrefix)) throw new Error('unauthorized workflow trigger');
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (head !== process.env.CLOVER_VALIDATION_SHA) throw new Error('source identity changed');
+          process.stdout.write(`${JSON.stringify({
+            status: 'passed',
+            head,
+            tree,
+            diffBase: process.env.CLOVER_DIFF_BASE,
+            committedRangeDiffCheck: 'passed',
+            jsonFiles: jsonFiles.length,
+            jsonlFiles: jsonlFiles.length,
+            jsonlRecords,
+            yamlFiles: workflowFiles.length,
+            actionMetadataFiles: workflowPolicy.actionMetadataFiles.length,
+            actionUses: uses.length,
+            fullShaPinnedActionUses: uses.filter(({ value }) => !value.startsWith('./')).length,
+            checkoutBlocks: checkoutBlocks.length,
+            checkoutCredentialsDisabled: true,
+            workflowPath,
+            workflowSha256: crypto.createHash('sha256').update(workflowBytes).digest('hex')
+          }, null, 2)}\n`);
+          NODE
+
+      - name: Verify privacy and default-deny authority boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/clover-privacy-result.json"
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const tracked = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
+          const publicFiles = tracked.filter((path) => {
+            if (!/\.(?:json|jsonl|md|html|js|mjs|ya?ml)$/.test(path)) return false;
+            if (/(?:^|\/)(?:test|tests|fixtures)(?:\/|$)/.test(path)) return false;
+            return path.startsWith('apps/clover-context-gateway/public/')
+              || path.startsWith('portfolio/')
+              || path.startsWith('standards/')
+              || !path.includes('/');
+          });
+          const patterns = [
+            ['private-key', /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/],
+            ['github-token', /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/],
+            ['openai-token', /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/],
+            ['aws-access-key', /\bAKIA[0-9A-Z]{16}\b/],
+            ['bearer-token', /\bBearer\s+[A-Za-z0-9._~+\/-]{20,}={0,2}\b/i],
+            ['local-user-path', /(?:\/Users\/[^/\s"']+|\/home\/[^/\s"']+|[A-Za-z]:\\Users\\[^\\\s"']+)/],
+            ['email-address', /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i]
+          ];
+          const findings = [];
+          let scannedBytes = 0;
+          for (const path of publicFiles) {
+            const text = fs.readFileSync(path, 'utf8');
+            scannedBytes += Buffer.byteLength(text);
+            for (const [kind, pattern] of patterns) {
+              if (pattern.test(text)) findings.push({ path, kind });
+            }
+          }
+          if (findings.length) throw new Error(`sensitive public content: ${JSON.stringify(findings)}`);
+          process.stdout.write(`${JSON.stringify({
+            status: 'passed',
+            scope: 'tracked governed and public non-test text',
+            scannedFiles: publicFiles.length,
+            scannedBytes,
+            findingCount: 0,
+            privateDataAccessed: false
+          }, null, 2)}\n`);
+          NODE
+          node <<'NODE' > "$RUNNER_TEMP/clover-authority-boundary.json"
+          const fs = require('node:fs');
+          const registry = JSON.parse(fs.readFileSync('portfolio/core/CAPABILITY_AUTHORITY_REGISTRY.json', 'utf8'));
+          const pointer = JSON.parse(fs.readFileSync('CLOVER_CONTEXT_GATEWAY_POINTER.json', 'utf8'));
+          const controlPlane = JSON.parse(fs.readFileSync('portfolio/context/control-plane.json', 'utf8'));
+          if (registry.defaultDeny !== true) throw new Error('Core default deny is not enabled');
+          if (registry.standingProductionAuthority !== false) throw new Error('standing production authority widened');
+          if (registry.standingPrivateDataAuthority !== false) throw new Error('standing private-data authority widened');
+          if (registry.standingSecretRevealAuthority !== false) throw new Error('standing secret authority widened');
+          if (registry.systems.some((system) => system.capabilities.execute_production === 'allow')) throw new Error('production execution allowed');
+          if (pointer.writeToolsEnabled !== false || pointer.standingProductionAuthority !== false) throw new Error('Gateway pointer authority widened');
+          if (controlPlane.authority.writeToolsEnabled !== false || controlPlane.authority.productionDataAccessEnabled !== false) throw new Error('control-plane authority widened');
+          process.stdout.write(`${JSON.stringify({
+            status: 'passed',
+            node: process.version,
+            defaultDeny: true,
+            writeToolsEnabled: false,
+            standingProductionAuthority: false,
+            standingPrivateDataAuthority: false,
+            standingSecretRevealAuthority: false,
+            consequentialAuthorityGranted: false
+          }, null, 2)}\n`);
+          NODE
+
+      - name: Validate master plan and Registry contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node portfolio/runtime/validate-master-plan.mjs > "$RUNNER_TEMP/clover-master-plan-validation.json"
+          node portfolio/registry/validate-registry-v2.mjs > "$RUNNER_TEMP/clover-registry-v2-validation.json"
+          node --test portfolio/registry/test/*.test.mjs
+          node --test portfolio/test/*.test.mjs
+
+      - name: Validate current and candidate Build Protocol contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/protocol-pointer.schema.json CLOVER_BUILD_PROTOCOL_POINTER.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/project-registry.schema.json standards/clover-build-protocol/registry/projects.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/project-policy.schema.json standards/clover-build-protocol/templates/project-policy.template.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-standard.mjs > "$RUNNER_TEMP/clover-build-current-validation.json"
+          node standards/clover-build-protocol/runtime/v1.2.0/validate-json.mjs standards/clover-build-protocol/schemas/v1.2.0/project-policy.schema.json standards/clover-build-protocol/templates/v1.2.0/project-policy.template.json
+          node standards/clover-build-protocol/runtime/v1.2.0/validate-json.mjs standards/clover-build-protocol/schemas/v1.2.0/enrollment.schema.json standards/clover-build-protocol/templates/v1.2.0/enrollment.template.json
+          node standards/clover-build-protocol/runtime/v1.2.0/validate-standard.mjs > "$RUNNER_TEMP/clover-build-candidate-validation.json"
+          node --test standards/clover-build-protocol/runtime/v1.2.0/test/*.test.mjs
+
+      - name: Validate current and candidate Data Protocol contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/protocol-pointer.schema.json CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-project-registry.schema.json standards/clover-data-change-protocol/registry/projects.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.template.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.v1.0.1.template.json
+          node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/data-change-receipt.schema.json standards/clover-data-change-protocol/schemas/1.0.1/fixtures/data-change-receipt.failed.fixture.json
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/verify-data-boundaries.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/run-project-command.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/data-rehearsal.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/assemble-data-receipt.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/sql-safety.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/role-safety.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/integrity.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/capture-state.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-state.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-final-receipt.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/validate-json.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/verify-data-boundaries.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/run-project-command.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/data-rehearsal.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/assemble-data-receipt.mjs
+          node --check standards/clover-data-change-protocol/runtime/v1.0.1/validate-data-standard.mjs
+          node --test standards/clover-data-change-protocol/runtime/v1.0.1/test/hardening.test.mjs
+          node standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs > "$RUNNER_TEMP/clover-data-current-validation.json"
+          node standards/clover-data-change-protocol/runtime/v1.0.1/validate-data-standard.mjs > "$RUNNER_TEMP/clover-data-candidate-validation.json"
+
+      - name: Validate Clover Core, Handoff, activation, and publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test portfolio/core/test/*.test.mjs
+          node portfolio/core/scripts/verify-core.mjs > "$RUNNER_TEMP/clover-core-verification.json"
+          node portfolio/runtime/validate-core-activation.mjs > "$RUNNER_TEMP/clover-core-activation-validation.json"
+          node portfolio/core/scripts/verify-publication-finalization.mjs > "$RUNNER_TEMP/clover-publication-finalization-validation.json"
+
+      - name: Validate complete Gateway and deterministic owner routing
+        working-directory: apps/clover-context-gateway
+        run: npm run validate
+
+      - name: Smoke technical and owner MCP surfaces
+        shell: bash
+        working-directory: apps/clover-context-gateway
+        run: |
+          set -euo pipefail
+          PORT=8787 npm start > "$RUNNER_TEMP/clover-required-main-gate-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8787/ > "$RUNNER_TEMP/clover-required-main-gate-health.json"; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8787/command-center | grep 'Clover Command Center' > /dev/null
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/mcp)" = "405"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8787/owner-mcp)" = "405"
+          npm run --silent smoke:mcp > "$RUNNER_TEMP/clover-required-main-gate-tool-surface.json"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const health = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/clover-required-main-gate-health.json`, 'utf8'));
+          const tools = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/clover-required-main-gate-tool-surface.json`, 'utf8'));
+          if (health.version !== '0.3.1') throw new Error('unexpected Gateway source version');
+          if (health.contextSource?.commit !== process.env.CONTEXT_SOURCE_COMMIT) throw new Error('Gateway source binding mismatch');
+          if (health.authority?.writeToolsEnabled !== false || health.authority?.standingProductionAuthority !== false) throw new Error('Gateway authority widened');
+          if (JSON.stringify(tools.technical?.tools) !== JSON.stringify(['fetch', 'prepare_clover_command', 'render_clover_command_center', 'search'])) throw new Error('technical MCP surface changed');
+          if (JSON.stringify(tools.owner?.tools) !== JSON.stringify(['clover_owner_request'])) throw new Error('owner MCP surface changed');
+          NODE
+
+      - name: Record deterministic required-gate evidence
+        shell: bash
+        env:
+          CLOVER_EVENT_NAME: ${{ github.event_name }}
+          CLOVER_REPOSITORY: ${{ github.repository }}
+          CLOVER_EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          CLOVER_NODE_VERSION: ${{ matrix.node-version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CLOVER_VALIDATION_SHA"
+          git diff --check
+          git fsck --full --strict
+          test -z "$(git status --porcelain --untracked-files=all)"
+          node <<'NODE' > "$RUNNER_TEMP/clover-required-main-gate-command-inventory.json"
+          const commands = [
+            'actions/checkout exact event head; persist-credentials=false; fetch-depth=0',
+            'accepted byte-identical Clover PR Integration Context V1 contract',
+            'git diff --check',
+            'git fsck --full --strict',
+            'parse every tracked JSON document',
+            'parse every tracked JSONL record',
+            'parse every tracked workflow and local action-metadata YAML document',
+            'audit every semantic workflow and composite-action use for a full commit SHA',
+            'scan tracked governed and public non-test text for sensitive content',
+            'verify Core, Gateway pointer, and control-plane default-deny authority',
+            'npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1',
+            'npm ci --prefix apps/clover-context-gateway --ignore-scripts --no-audit --no-fund',
+            'node portfolio/runtime/validate-master-plan.mjs',
+            'node portfolio/registry/validate-registry-v2.mjs',
+            'node --test portfolio/registry/test/*.test.mjs',
+            'node --test portfolio/test/*.test.mjs',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/protocol-pointer.schema.json CLOVER_BUILD_PROTOCOL_POINTER.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/project-registry.schema.json standards/clover-build-protocol/registry/projects.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-build-protocol/schemas/project-policy.schema.json standards/clover-build-protocol/templates/project-policy.template.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-standard.mjs',
+            'node standards/clover-build-protocol/runtime/v1.2.0/validate-json.mjs standards/clover-build-protocol/schemas/v1.2.0/project-policy.schema.json standards/clover-build-protocol/templates/v1.2.0/project-policy.template.json',
+            'node standards/clover-build-protocol/runtime/v1.2.0/validate-json.mjs standards/clover-build-protocol/schemas/v1.2.0/enrollment.schema.json standards/clover-build-protocol/templates/v1.2.0/enrollment.template.json',
+            'node standards/clover-build-protocol/runtime/v1.2.0/validate-standard.mjs',
+            'node --test standards/clover-build-protocol/runtime/v1.2.0/test/*.test.mjs',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/protocol-pointer.schema.json CLOVER_DATA_CHANGE_PROTOCOL_POINTER.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-project-registry.schema.json standards/clover-data-change-protocol/registry/projects.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.template.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/data-change-policy.schema.json standards/clover-data-change-protocol/templates/data-change-policy.v1.0.1.template.json',
+            'node standards/clover-build-protocol/runtime/v1.1.0/validate-json.mjs standards/clover-data-change-protocol/schemas/1.0.1/data-change-receipt.schema.json standards/clover-data-change-protocol/schemas/1.0.1/fixtures/data-change-receipt.failed.fixture.json',
+            'node --check standards/clover-data-change-protocol/runtime/v1.0.0/{verify-data-boundaries,run-project-command,data-rehearsal,assemble-data-receipt,validate-data-standard}.mjs (expanded as five exact commands)',
+            'node --check standards/clover-data-change-protocol/runtime/v1.0.1/{sql-safety,role-safety,integrity,capture-state,verify-state,verify-final-receipt,validate-json,verify-data-boundaries,run-project-command,data-rehearsal,assemble-data-receipt,validate-data-standard}.mjs (expanded as twelve exact commands)',
+            'node --test standards/clover-data-change-protocol/runtime/v1.0.1/test/hardening.test.mjs',
+            'node standards/clover-data-change-protocol/runtime/v1.0.0/validate-data-standard.mjs',
+            'node standards/clover-data-change-protocol/runtime/v1.0.1/validate-data-standard.mjs',
+            'node --test portfolio/core/test/*.test.mjs',
+            'node portfolio/core/scripts/verify-core.mjs',
+            'node portfolio/runtime/validate-core-activation.mjs',
+            'node portfolio/core/scripts/verify-publication-finalization.mjs',
+            'npm run validate (apps/clover-context-gateway)',
+            'PORT=8787 npm start (ephemeral localhost only)',
+            'GET /, /command-center, /mcp=405, and /owner-mcp=405 smoke assertions',
+            'npm run --silent smoke:mcp (apps/clover-context-gateway)',
+            'verify final exact HEAD, clean repository, diff check, and strict fsck'
+          ];
+          process.stdout.write(`${JSON.stringify({
+            schemaVersion: 'clover-required-main-gate-command-inventory-v1',
+            workflowIsCompleteExecutableInventory: true,
+            workflowPath: '.github/workflows/clover-required-main-gate.yml',
+            commands
+          }, null, 2)}\n`);
+          NODE
+          node <<'NODE' > "$RUNNER_TEMP/clover-required-main-gate-summary.json"
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
+          const read = (name) => JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/${name}`, 'utf8'));
+          const sha256 = (path) => crypto.createHash('sha256').update(fs.readFileSync(path)).digest('hex');
+          const source = read('clover-source-integrity.json');
+          const privacy = read('clover-privacy-result.json');
+          const authority = read('clover-authority-boundary.json');
+          const tools = read('clover-required-main-gate-tool-surface.json');
+          const integration = read('clover-pr-integration-context.json');
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          if (head !== process.env.CLOVER_VALIDATION_SHA) throw new Error('final source identity changed');
+          const summary = {
+            schemaVersion: 'clover-required-main-gate-evidence-v1',
+            status: 'passed',
+            eventName: process.env.CLOVER_EVENT_NAME,
+            repository: process.env.CLOVER_REPOSITORY,
+            headRef: process.env.CLOVER_EVENT_HEAD_REF,
+            headSha: head,
+            headTree: tree,
+            nodeMatrixVersion: process.env.CLOVER_NODE_VERSION,
+            nodeRuntimeVersion: process.version,
+            integrationContextResult: integration.result,
+            validation: {
+              sourceIntegrity: 'passed',
+              masterAndRegistry: 'passed',
+              buildCurrentAndCandidate: 'passed',
+              dataCurrentAndCandidate: 'passed',
+              coreAndHandoff: 'passed',
+              activationAndPublication: 'passed',
+              gateway: 'passed',
+              technicalAndOwnerMcp: 'passed',
+              tenRouteParityAndRequestIntegrity: 'passed'
+            },
+            toolSurface: tools,
+            authority,
+            privacy,
+            workflow: {
+              path: source.workflowPath,
+              sha256: source.workflowSha256
+            },
+            integrationContextSha256: sha256(`${process.env.RUNNER_TEMP}/clover-pr-integration-context.json`),
+            workflowPolicySha256: sha256(`${process.env.RUNNER_TEMP}/clover-workflow-policy.json`),
+            gatewayLockfileSha256: sha256('apps/clover-context-gateway/package-lock.json'),
+            commandInventorySha256: sha256(`${process.env.RUNNER_TEMP}/clover-required-main-gate-command-inventory.json`)
+          };
+          process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+          NODE
+
+      - name: Finalize deterministic evidence manifest
+        if: always()
+        shell: bash
+        env:
+          CLOVER_JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/clover-required-main-gate-evidence-manifest.json"
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const entries = [
+            ['workflow', '.github/workflows/clover-required-main-gate.yml'],
+            ['gateway-lockfile', 'apps/clover-context-gateway/package-lock.json'],
+            ['integration-context', `${process.env.RUNNER_TEMP}/clover-pr-integration-context.json`],
+            ['workflow-policy', `${process.env.RUNNER_TEMP}/clover-workflow-policy.json`],
+            ['source-integrity', `${process.env.RUNNER_TEMP}/clover-source-integrity.json`],
+            ['privacy', `${process.env.RUNNER_TEMP}/clover-privacy-result.json`],
+            ['authority', `${process.env.RUNNER_TEMP}/clover-authority-boundary.json`],
+            ['master-plan', `${process.env.RUNNER_TEMP}/clover-master-plan-validation.json`],
+            ['registry-v2', `${process.env.RUNNER_TEMP}/clover-registry-v2-validation.json`],
+            ['build-current', `${process.env.RUNNER_TEMP}/clover-build-current-validation.json`],
+            ['build-candidate', `${process.env.RUNNER_TEMP}/clover-build-candidate-validation.json`],
+            ['data-current', `${process.env.RUNNER_TEMP}/clover-data-current-validation.json`],
+            ['data-candidate', `${process.env.RUNNER_TEMP}/clover-data-candidate-validation.json`],
+            ['core', `${process.env.RUNNER_TEMP}/clover-core-verification.json`],
+            ['activation', `${process.env.RUNNER_TEMP}/clover-core-activation-validation.json`],
+            ['publication', `${process.env.RUNNER_TEMP}/clover-publication-finalization-validation.json`],
+            ['gateway-health', `${process.env.RUNNER_TEMP}/clover-required-main-gate-health.json`],
+            ['tool-surface', `${process.env.RUNNER_TEMP}/clover-required-main-gate-tool-surface.json`],
+            ['command-inventory', `${process.env.RUNNER_TEMP}/clover-required-main-gate-command-inventory.json`],
+            ['validation-summary', `${process.env.RUNNER_TEMP}/clover-required-main-gate-summary.json`]
+          ];
+          const files = entries.map(([name, path]) => {
+            const evidencePath = path.startsWith(process.env.RUNNER_TEMP) ? path.slice(process.env.RUNNER_TEMP.length + 1) : path;
+            if (!fs.existsSync(path)) return { name, path: evidencePath, present: false, bytes: null, sha256: null };
+            const bytes = fs.readFileSync(path);
+            return {
+              name,
+              path: evidencePath,
+              present: true,
+              bytes: bytes.length,
+              sha256: crypto.createHash('sha256').update(bytes).digest('hex')
+            };
+          });
+          const missing = files.filter((file) => !file.present).map((file) => file.name);
+          if (process.env.CLOVER_JOB_STATUS === 'success' && missing.length) throw new Error(`successful job is missing evidence: ${missing.join(', ')}`);
+          process.stdout.write(`${JSON.stringify({
+            schemaVersion: 'clover-required-main-gate-evidence-manifest-v1',
+            jobStatusBeforeManifest: process.env.CLOVER_JOB_STATUS,
+            complete: missing.length === 0,
+            missing,
+            files
+          }, null, 2)}\n`);
+          NODE
+
+      - name: Upload deterministic required-gate evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clover-required-main-gate-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            .github/workflows/clover-required-main-gate.yml
+            apps/clover-context-gateway/package-lock.json
+            ${{ runner.temp }}/clover-pr-integration-context.json
+            ${{ runner.temp }}/clover-workflow-policy.json
+            ${{ runner.temp }}/clover-source-integrity.json
+            ${{ runner.temp }}/clover-privacy-result.json
+            ${{ runner.temp }}/clover-authority-boundary.json
+            ${{ runner.temp }}/clover-master-plan-validation.json
+            ${{ runner.temp }}/clover-registry-v2-validation.json
+            ${{ runner.temp }}/clover-build-current-validation.json
+            ${{ runner.temp }}/clover-build-candidate-validation.json
+            ${{ runner.temp }}/clover-data-current-validation.json
+            ${{ runner.temp }}/clover-data-candidate-validation.json
+            ${{ runner.temp }}/clover-core-verification.json
+            ${{ runner.temp }}/clover-core-activation-validation.json
+            ${{ runner.temp }}/clover-publication-finalization-validation.json
+            ${{ runner.temp }}/clover-required-main-gate-health.json
+            ${{ runner.temp }}/clover-required-main-gate-tool-surface.json
+            ${{ runner.temp }}/clover-required-main-gate-command-inventory.json
+            ${{ runner.temp }}/clover-required-main-gate-summary.json
+            ${{ runner.temp }}/clover-required-main-gate-evidence-manifest.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
