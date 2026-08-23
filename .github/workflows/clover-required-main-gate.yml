@@ -283,6 +283,92 @@ jobs:
           git diff --check "$CLOVER_DIFF_BASE" "$CLOVER_VALIDATION_SHA"
           git fsck --full --strict
           ruby -e 'require "yaml"; ARGV.each { |path| raise "empty YAML: #{path}" unless Psych.parse_file(path) }' $(git ls-files '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          ruby <<'RUBY' > "$RUNNER_TEMP/clover-workflow-policy.json"
+          require "json"
+          require "open3"
+          require "yaml"
+
+          def collect_uses(node, path, action_uses, checkout_steps)
+            case node
+            when Hash
+              if node.key?("uses")
+                value = node.fetch("uses")
+                raise "non-string uses value in #{path}" unless value.is_a?(String)
+                action_uses << { "path" => path, "value" => value }
+                if value.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/i)
+                  with = node["with"]
+                  persisted = with.is_a?(Hash) ? with["persist-credentials"] : nil
+                  checkout_steps << {
+                    "path" => path,
+                    "value" => value,
+                    "persistCredentialsFalse" => persisted == false || persisted == "false"
+                  }
+                end
+              end
+              node.each_value { |value| collect_uses(value, path, action_uses, checkout_steps) }
+            when Array
+              node.each { |value| collect_uses(value, path, action_uses, checkout_steps) }
+            end
+          end
+
+          checkout_sha = "0123456789abcdef0123456789abcdef01234567"
+          fixture = YAML.safe_load(<<~YAML, aliases: false)
+            jobs:
+              audit:
+                steps:
+                  - uses : attacker/block@v1
+                  - "uses": attacker/quoted@v2 # valid YAML inline comment
+                  - { uses: attacker/flow@v3 }
+                  - uses: >-
+                      attacker/folded@v4
+                  - name: unsafe checkout
+                    uses: Actions/Checkout@#{checkout_sha}
+                    env: { NOTE: "persist-credentials: false" }
+                    # persist-credentials: false
+                  - name: safe terminal checkout
+                    uses : actions/checkout@#{checkout_sha} # valid YAML inline comment
+                    with: { persist-credentials: false }
+                  - run: echo next-step
+          YAML
+          fixture_uses = []
+          fixture_checkouts = []
+          collect_uses(fixture, "adversarial-fixture", fixture_uses, fixture_checkouts)
+          expected_fixture_uses = [
+            "attacker/block@v1",
+            "attacker/quoted@v2",
+            "attacker/flow@v3",
+            "attacker/folded@v4",
+            "Actions/Checkout@#{checkout_sha}",
+            "actions/checkout@#{checkout_sha}"
+          ]
+          raise "semantic uses parser missed a YAML representation" unless fixture_uses.map { |entry| entry.fetch("value") } == expected_fixture_uses
+          raise "unsafe checkout fixture was accepted" unless fixture_checkouts.length == 2 && fixture_checkouts.first.fetch("persistCredentialsFalse") == false
+          raise "safe terminal checkout fixture was rejected" unless fixture_checkouts.last.fetch("persistCredentialsFalse") == true
+
+          tracked, status = Open3.capture2("git", "ls-files", "-z")
+          raise "git ls-files failed" unless status.success?
+          tracked_files = tracked.split("\0").reject(&:empty?)
+          workflow_files = tracked_files.select { |path| path.match?(%r{\A\.github/workflows/.*\.ya?ml\z}) }.sort
+          action_metadata_files = tracked_files.select { |path| path.match?(%r{(?:\A|/)action\.ya?ml\z}) }.sort
+          policy_files = workflow_files + action_metadata_files
+          action_uses = []
+          checkout_steps = []
+          policy_files.each do |path|
+            document = YAML.safe_load(File.read(path), aliases: false)
+            raise "empty YAML: #{path}" if document.nil?
+            collect_uses(document, path, action_uses, checkout_steps)
+          end
+          unpinned = action_uses.reject { |entry| entry.fetch("value").start_with?("./") || entry.fetch("value").match?(/@[0-9a-f]{40}\z/) }
+          raise "unpinned workflow actions: #{unpinned.to_json}" unless unpinned.empty?
+          credential_violations = checkout_steps.reject { |entry| entry.fetch("persistCredentialsFalse") }
+          raise "checkout credential violations: #{credential_violations.to_json}" unless credential_violations.empty?
+          puts JSON.generate({
+            "workflowFiles" => workflow_files,
+            "actionMetadataFiles" => action_metadata_files,
+            "actionUses" => action_uses,
+            "checkoutSteps" => checkout_steps
+          })
+          RUBY
           node <<'NODE' > "$RUNNER_TEMP/clover-source-integrity.json"
           const fs = require('node:fs');
           const { execFileSync } = require('node:child_process');
@@ -298,22 +384,12 @@ jobs:
             jsonlRecords += records.length;
           }
           const workflowFiles = tracked.filter((path) => /^\.github\/workflows\/.*\.ya?ml$/.test(path));
-          const uses = [];
-          const extractActionUses = (text) => [...text.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+)\s*$/gm)].map((match) => match[1]);
-          const adversarialUses = extractActionUses('steps:\n  - uses: example/unpinned-action@v1\n  - name: pinned\n    uses: example/pinned-action@0123456789abcdef0123456789abcdef01234567\n');
-          if (adversarialUses.length !== 2 || adversarialUses[0] !== 'example/unpinned-action@v1') throw new Error('action-use parser does not cover sequence-form steps');
-          for (const path of workflowFiles) {
-            const text = fs.readFileSync(path, 'utf8');
-            for (const value of extractActionUses(text)) uses.push({ path, value });
-          }
+          const workflowPolicy = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/clover-workflow-policy.json', 'utf8'));
+          const uses = workflowPolicy.actionUses;
           const unpinned = uses.filter(({ value }) => !value.startsWith('./') && !/@[0-9a-f]{40}$/.test(value));
           if (unpinned.length) throw new Error(`unpinned workflow actions: ${JSON.stringify(unpinned)}`);
-          const checkoutBlocks = workflowFiles.flatMap((path) => {
-            const text = fs.readFileSync(path, 'utf8');
-            return [...text.matchAll(/uses:\s*actions\/checkout@[0-9a-f]{40}([\s\S]*?)(?=\n\s*-\s+name:|\n\s*-\s+uses:|\Z)/g)]
-              .map((match) => ({ path, block: match[1] }));
-          });
-          const credentialViolations = checkoutBlocks.filter(({ block }) => !/persist-credentials:\s*false/.test(block));
+          const checkoutBlocks = workflowPolicy.checkoutSteps;
+          const credentialViolations = checkoutBlocks.filter(({ persistCredentialsFalse }) => !persistCredentialsFalse);
           if (credentialViolations.length) throw new Error(`checkout credential violations: ${JSON.stringify(credentialViolations)}`);
           const workflowPath = '.github/workflows/clover-required-main-gate.yml';
           const workflowBytes = fs.readFileSync(workflowPath);
@@ -347,6 +423,7 @@ jobs:
             jsonlFiles: jsonlFiles.length,
             jsonlRecords,
             yamlFiles: workflowFiles.length,
+            actionMetadataFiles: workflowPolicy.actionMetadataFiles.length,
             actionUses: uses.length,
             fullShaPinnedActionUses: uses.filter(({ value }) => !value.startsWith('./')).length,
             checkoutBlocks: checkoutBlocks.length,
@@ -537,8 +614,8 @@ jobs:
             'git fsck --full --strict',
             'parse every tracked JSON document',
             'parse every tracked JSONL record',
-            'parse every .github/workflows YAML document',
-            'audit every executable workflow action use for a full commit SHA',
+            'parse every tracked workflow and local action-metadata YAML document',
+            'audit every semantic workflow and composite-action use for a full commit SHA',
             'scan tracked governed and public non-test text for sensitive content',
             'verify Core, Gateway pointer, and control-plane default-deny authority',
             'npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund ajv@8.17.1',
@@ -626,6 +703,7 @@ jobs:
               sha256: source.workflowSha256
             },
             integrationContextSha256: sha256(`${process.env.RUNNER_TEMP}/clover-pr-integration-context.json`),
+            workflowPolicySha256: sha256(`${process.env.RUNNER_TEMP}/clover-workflow-policy.json`),
             gatewayLockfileSha256: sha256('apps/clover-context-gateway/package-lock.json'),
             commandInventorySha256: sha256(`${process.env.RUNNER_TEMP}/clover-required-main-gate-command-inventory.json`)
           };
@@ -646,6 +724,7 @@ jobs:
             ['workflow', '.github/workflows/clover-required-main-gate.yml'],
             ['gateway-lockfile', 'apps/clover-context-gateway/package-lock.json'],
             ['integration-context', `${process.env.RUNNER_TEMP}/clover-pr-integration-context.json`],
+            ['workflow-policy', `${process.env.RUNNER_TEMP}/clover-workflow-policy.json`],
             ['source-integrity', `${process.env.RUNNER_TEMP}/clover-source-integrity.json`],
             ['privacy', `${process.env.RUNNER_TEMP}/clover-privacy-result.json`],
             ['authority', `${process.env.RUNNER_TEMP}/clover-authority-boundary.json`],
@@ -695,6 +774,7 @@ jobs:
             .github/workflows/clover-required-main-gate.yml
             apps/clover-context-gateway/package-lock.json
             ${{ runner.temp }}/clover-pr-integration-context.json
+            ${{ runner.temp }}/clover-workflow-policy.json
             ${{ runner.temp }}/clover-source-integrity.json
             ${{ runner.temp }}/clover-privacy-result.json
             ${{ runner.temp }}/clover-authority-boundary.json
