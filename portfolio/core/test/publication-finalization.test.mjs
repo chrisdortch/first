@@ -106,6 +106,35 @@ function handoffSnapshotPath(sequence) {
   return `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-${String(sequence).padStart(4, "0")}.json`;
 }
 
+function numberedHandoffSnapshotPaths(root) {
+  return fs.readdirSync(path.join(root, HANDOFF_INDEX_DIRECTORY))
+    .filter((name) => /^action-receipt-index-\d{4}\.json$/u.test(name))
+    .sort()
+    .map((name) => HANDOFF_INDEX_DIRECTORY + "/" + name);
+}
+
+function handoffSnapshotSequence(relativePath) {
+  return Number.parseInt(relativePath.match(/(\d{4})\.json$/u)[1], 10);
+}
+
+function createGenesisHandoffRoot() {
+  const root = createTempRoot();
+  const genesisPath = handoffSnapshotPath(1);
+  for (const relativePath of numberedHandoffSnapshotPaths(root)) {
+    if (relativePath !== genesisPath) fs.unlinkSync(path.join(root, relativePath));
+  }
+  fs.copyFileSync(path.join(root, genesisPath), path.join(root, HANDOFF_INDEX_PATH));
+  const chain = validateHandoffIndexChain(root);
+  assert.equal(chain.depth, 1);
+  assert.equal(chain.currentSnapshotPath, genesisPath);
+  assert.deepEqual(numberedHandoffSnapshotPaths(root), [genesisPath]);
+  assert.deepEqual(
+    fs.readFileSync(path.join(root, HANDOFF_INDEX_PATH)),
+    fs.readFileSync(path.join(root, genesisPath)),
+  );
+  return root;
+}
+
 function makeApprovedHandoffSuccessor(previous, sequence = 2) {
   const next = structuredClone(previous);
   next.indexId = `handoff-index:synthetic-approved-${sequence}:20260820`;
@@ -170,17 +199,39 @@ function makeReviewedHandoffSuccessor(previous, sequence = 4) {
 }
 
 function installHandoffChain(root, indexes) {
+  for (const relativePath of numberedHandoffSnapshotPaths(root)) {
+    fs.unlinkSync(path.join(root, relativePath));
+  }
   indexes.forEach((index, offset) => writeJson(root, handoffSnapshotPath(offset + 1), index));
   writeJson(root, HANDOFF_INDEX_PATH, indexes.at(-1));
+  assert.deepEqual(
+    numberedHandoffSnapshotPaths(root),
+    indexes.map((_, offset) => handoffSnapshotPath(offset + 1)),
+  );
+  assert.deepEqual(
+    fs.readFileSync(path.join(root, HANDOFF_INDEX_PATH)),
+    fs.readFileSync(path.join(root, handoffSnapshotPath(indexes.length))),
+  );
+  assert.equal(validateHandoffIndexChain(root).depth, indexes.length);
 }
 
 function installLatestHandoffIndex(root, index, sequence) {
+  for (let ancestor = 1; ancestor < sequence; ancestor += 1) {
+    assert.equal(fs.existsSync(path.join(root, handoffSnapshotPath(ancestor))), true);
+  }
+  for (const relativePath of numberedHandoffSnapshotPaths(root)) {
+    if (handoffSnapshotSequence(relativePath) > sequence) fs.unlinkSync(path.join(root, relativePath));
+  }
   writeJson(root, handoffSnapshotPath(sequence), index);
   writeJson(root, HANDOFF_INDEX_PATH, index);
+  assert.deepEqual(
+    fs.readFileSync(path.join(root, HANDOFF_INDEX_PATH)),
+    fs.readFileSync(path.join(root, handoffSnapshotPath(sequence))),
+  );
 }
 
 function createHandoffSuccessorRoot(state = "approved") {
-  const root = createTempRoot();
+  const root = createGenesisHandoffRoot();
   const genesis = readJson(root, handoffSnapshotPath(1));
   const approved = makeApprovedHandoffSuccessor(genesis);
   const indexes = [genesis, approved];
@@ -319,7 +370,7 @@ test("Handoff history rejects missing or rewritten ancestors and broken predeces
 
 test("Handoff history rejects duplicate hashes, predecessor-path reuse, and cycles", () => {
   {
-    const root = createTempRoot();
+    const root = createGenesisHandoffRoot();
     fs.copyFileSync(path.join(root, handoffSnapshotPath(1)), path.join(root, handoffSnapshotPath(2)));
     assert.throws(() => validateHandoffIndexChain(root), /exactly one numbered immutable snapshot/u);
   }
@@ -349,7 +400,7 @@ test("Handoff history rejects deleted, reordered, or substituted prior entries a
     [(next) => { next.createdAt = "2026-08-20T21:19:44.000Z"; }, /append-only|transition/u],
   ];
   for (const [mutate, expected] of mutations) {
-    const root = createTempRoot();
+    const root = createGenesisHandoffRoot();
     const genesis = readJson(root, handoffSnapshotPath(1));
     const next = makeApprovedHandoffSuccessor(genesis);
     mutate(next);
@@ -430,17 +481,20 @@ test("Handoff history rejects stable-root substitution, orphaned snapshots, and 
       return { currentSequence, nextSequence };
     };
 
-    const genesisRoot = createTempRoot();
-    const genesis = readJson(genesisRoot, handoffSnapshotPath(1));
-    writeJson(genesisRoot, HANDOFF_INDEX_PATH, genesis);
-    fs.unlinkSync(path.join(genesisRoot, handoffSnapshotPath(2)));
+    const genesisRoot = createGenesisHandoffRoot();
     assert.deepEqual(assertSuccessorAwareOrphan(genesisRoot), { currentSequence: 1, nextSequence: 2 });
 
     const successorRoot = createTempRoot();
-    assert.deepEqual(assertSuccessorAwareOrphan(successorRoot), { currentSequence: 2, nextSequence: 3 });
+    const currentChain = validateHandoffIndexChain(successorRoot);
+    const currentSequence = handoffSnapshotSequence(currentChain.currentSnapshotPath);
+    assert.equal(currentChain.depth, currentSequence);
+    assert.deepEqual(assertSuccessorAwareOrphan(successorRoot), {
+      currentSequence,
+      nextSequence: currentSequence + 1,
+    });
   }
   {
-    const root = createTempRoot();
+    const root = createGenesisHandoffRoot();
     const genesis = readJson(root, handoffSnapshotPath(1));
     const widened = makeApprovedHandoffSuccessor(genesis);
     const action = widened.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
