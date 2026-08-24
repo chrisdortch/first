@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { canonicalize, sha256Bytes, sha256Canonical } from "../lib/canonical-jso
 import {
   assertActionEnvelopeExecutable,
   assertSanitizedHandoffDocument,
+  canonicalOwnerApprovalStatement,
   computeHandoffHash,
   createOwnerApprovalAttestation,
   createOwnerApprovedIndexVersion,
@@ -64,6 +66,19 @@ const action004WorkOrder = readJson(path.join(phaseBProposalRoot, "phase-b-0.2a-
 const action004Manifest = readJson(path.join(phaseBProposalRoot, "phase-b-0.2a-proposal-manifest.json"));
 const action004Report = fs.readFileSync(path.join(phaseBProposalRoot, "PHASE_B_0.2A_PROPOSAL.md"), "utf8");
 const index0002 = readJson(action004IndexPath);
+const phaseB02bProposalRoot = path.join(versionRoot, "proposals/launch-studio-phase-b-0.2b");
+const action005IndexPath = path.join(versionRoot, "indexes/action-receipt-index-0003.json");
+const action004Revocation = readJson(path.join(phaseB02bProposalRoot, "action-004-revocation.json"));
+const action005 = readJson(path.join(phaseB02bProposalRoot, "action-005-source-envelope.json"));
+const action005ContextPack = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-context-pack.json"));
+const action005ImpactScan = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-impact-scan.json"));
+const action005Budget = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-budget.json"));
+const action005Acceptance = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-acceptance-contract.json"));
+const action005Charter = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-build-charter.json"));
+const action005WorkOrder = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-executor-work-order.json"));
+const action005Manifest = readJson(path.join(phaseB02bProposalRoot, "phase-b-0.2b-proposal-manifest.json"));
+const action005Report = fs.readFileSync(path.join(phaseB02bProposalRoot, "PHASE_B_0.2B_PROPOSAL.md"), "utf8");
+const index0003 = readJson(action005IndexPath);
 
 function resealReceipt(receipt) {
   return sealHandoffDocument(receipt, "receiptHash");
@@ -1065,10 +1080,10 @@ test("Action 004 persists one closed 14-path source-bound proposal and immutable
   assert.equal(sha256Canonical(index0001.entries[0]), "28d6cd8a65375c4bff902d2d048b114c335041cbc50332769c9b271b165354a0");
   assert.equal(sha256Canonical(index0001.entries[1]), "0f0e94e337c57629278cddd303ae31675a70b5be6ee8a499357e1739eaa223f5");
   assert.deepEqual(index0002.entries.slice(0, 2), index0001.entries);
-  assert.equal(fs.readFileSync(stableIndexPath).equals(fs.readFileSync(action004IndexPath)), true);
+  assert.equal(fs.readFileSync(stableIndexPath).equals(fs.readFileSync(action005IndexPath)), true);
   const chain = validateHandoffIndexChain(repositoryRoot, { historicalIndexHash: genesisIndexHash });
-  assert.equal(chain.depth, 2);
-  assert.equal(chain.currentSnapshotPath, "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0002.json");
+  assert.equal(chain.depth, 3);
+  assert.equal(chain.currentSnapshotPath, "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json");
 
   const absentActionId = ["CLOVER", "2026", "08", "24", "003"].join("-");
   const absentEnvelopePrefix = ["handoff-action", "003"].join(":");
@@ -1403,4 +1418,801 @@ test("Action 004 expiry, single use, traversal and symlink boundaries fail close
   fs.writeFileSync(path.join(tempRoot, "outside.json"), "{}\n");
   fs.symlinkSync("../outside.json", path.join(isolatedRoot, "linked.json"));
   assert.throws(() => resolveRegularRepositoryFile(isolatedRoot, "linked.json", "Action 004 artifact"), /symbolic link/u);
+});
+
+const expectedAction005Paths = Object.freeze([
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/action-004-revocation.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-context-pack.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-impact-scan.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-budget.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-acceptance-contract.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-build-charter.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-executor-work-order.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/action-005-source-envelope.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/phase-b-0.2b-proposal-manifest.json",
+  "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2b/PHASE_B_0.2B_PROPOSAL.md",
+  "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json",
+  "portfolio/core/handoff/index.json",
+  "portfolio/core/test/handoff-ledger.test.mjs",
+  "portfolio/core/test/publication-finalization.test.mjs"
+]);
+
+const expectedAction005AllowedActions = Object.freeze([
+  "read-public-metadata",
+  "verify-exact-identity",
+  "verify-local-cleanliness",
+  "verify-source-ancestry",
+  "create-isolated-branch",
+  "commit-candidate",
+  "record-handoff-artifacts"
+]);
+
+const expectedAction005RecordingPaths = Object.freeze([
+  "portfolio/core/handoff/versions/0.1.0/receipts/action-005-launch-studio-phase-b-source-receipt.json",
+  "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0005.json",
+  "portfolio/core/handoff/index.json"
+]);
+
+const expectedAction005ApprovalPaths = Object.freeze([
+  "portfolio/core/handoff/versions/0.1.0/approvals/action-005-launch-studio-phase-b-source-approval.json",
+  "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0004.json",
+  "portfolio/core/handoff/index.json"
+]);
+
+const expectedAction005Destination = [
+  "feature",
+  "clover-launch-studio-private-owner-app-v0.2b-20260824"
+].join("/");
+
+const expectedAction005FailureStops = Object.freeze([
+  "Stop after the same failure signature occurs twice.",
+  "Stop after one repair loop produces no new evidence.",
+  "Maximum future repair loops remains three; Action 005 has no repair authority."
+]);
+
+function assertFutureAction005ReceiptContract(receipt) {
+  assert.deepEqual(receipt.source, {
+    bindingRole: "target-source",
+    repository: action005.target.repository,
+    branch: action005.target.branch,
+    commit: action005.target.expectedCommit,
+    tree: action004Capsule.identities.current.tree
+  });
+  assert.deepEqual(receipt.candidateEffects.branch, {
+    performed: true,
+    repository: action005WorkOrder.repository,
+    branch: action005WorkOrder.worktreeBranch,
+    baseCommit: action005WorkOrder.baseCommit
+  });
+  assert.equal(receipt.candidateEffects.commit.performed, true);
+  assert.match(receipt.candidateEffects.commit.commit, /^[a-f0-9]{40}$/u);
+  assert.match(receipt.candidateEffects.commit.tree, /^[a-f0-9]{40}$/u);
+  assert.notEqual(receipt.candidateEffects.commit.commit, receipt.source.commit);
+  assert.ok(receipt.changes.changedPaths.length > 0);
+  assert.equal(new Set(receipt.changes.changedPaths).size, receipt.changes.changedPaths.length);
+  assert.ok(receipt.changes.changedPaths.every((entry) => action005WorkOrder.allowedPaths.includes(entry)));
+  assert.deepEqual(receipt.changes.recordedHandoffPaths, expectedAction005RecordingPaths);
+  assert.equal(receipt.changes.changedPaths.includes(".github/workflows/clover-required-main-gate.yml"), false);
+  return true;
+}
+
+test("Action 005 persists one closed 14-path successor proposal with exact hashes, truth and zero authority", () => {
+  const schemaRecords = [
+    ["launch-context-pack.schema.json", action005ContextPack],
+    ["impact-scan.schema.json", action005ImpactScan],
+    ["session-budget.schema.json", action005Budget],
+    ["acceptance-contract.schema.json", action005Acceptance],
+    ["build-charter.schema.json", action005Charter],
+    ["executor-work-order.schema.json", action005WorkOrder]
+  ];
+  for (const [schema, record] of schemaRecords) assert.equal(validateContract(schema, record, record.recordId).valid, true);
+  for (const record of [action005ContextPack, action005ImpactScan, action005Acceptance, action005Charter, action005WorkOrder]) {
+    assert.equal(assertRecordHash(record), true);
+  }
+  assert.equal(assertBuildCharter(action005Charter), true);
+  assert.equal(assertExecutorWorkOrder(action005WorkOrder), true);
+  assert.equal(assertSanitizedHandoffDocument(action004Revocation, "Action 004 proposal-local revocation evidence"), true);
+
+  assert.deepEqual(action005Manifest.artifactPaths, expectedAction005Paths);
+  assert.equal(action005Manifest.artifactPaths.length, 14);
+  assert.equal(action005Manifest.artifactPathListHash, sha256Canonical(expectedAction005Paths));
+  assert.deepEqual(action005Manifest.generatedDocumentPaths, expectedAction005Paths.slice(0, 12));
+  for (const relativePath of expectedAction005Paths) {
+    const stat = fs.lstatSync(path.join(repositoryRoot, relativePath));
+    assert.equal(stat.isFile(), true);
+    assert.equal(stat.isSymbolicLink(), false);
+  }
+
+  assert.deepEqual(Object.keys(action004Revocation).sort(), [
+    "consequentialAuthorityGranted", "documentType", "historicalRecordRewritten", "reason", "recordId",
+    "revocationHash", "revokedAt", "schemaVersion", "successorActionId", "synthetic",
+    "targetActionId", "targetEnvelopeHash", "targetEnvelopeId"
+  ].sort());
+  const unsignedRevocation = clone(action004Revocation);
+  delete unsignedRevocation.revocationHash;
+  assert.equal(action004Revocation.revocationHash, sha256Canonical(unsignedRevocation));
+  assert.equal(action004Revocation.documentType, "clover-handoff-action-revocation-evidence");
+  assert.equal(action004Revocation.schemaVersion, "0.2b");
+  assert.equal(action004Revocation.recordId, "handoff-revocation:004:action-005-successor");
+  assert.equal(action004Revocation.targetActionId, action004.actionId);
+  assert.equal(action004Revocation.targetEnvelopeId, action004.envelopeId);
+  assert.equal(action004Revocation.targetEnvelopeHash, action004.envelopeHash);
+  assert.equal(action004Revocation.reason, "execution-consumption-index-path-not-authorized");
+  assert.equal(action004Revocation.synthetic, false);
+  assert.equal(action004Revocation.historicalRecordRewritten, false);
+  assert.equal(action004Revocation.consequentialAuthorityGranted, false);
+  assert.equal(action004Revocation.successorActionId, action005.actionId);
+
+  const manifestUnsigned = clone(action005Manifest);
+  delete manifestUnsigned.manifestHash;
+  assert.equal(action005Manifest.manifestHash, sha256Canonical(manifestUnsigned));
+  assert.deepEqual(Object.keys(action005Manifest).sort(), [
+    "actionSource", "artifactPathListHash", "artifactPaths", "authority", "createdAt", "documentType",
+    "embeddedTruthStatuses", "futureSessionControls", "generatedDocumentPaths", "humanReport", "indexSuccessor",
+    "lifecyclePlan", "manifestHash", "manifestId", "proposalVersion", "providerClassifications",
+    "publicationGate", "records", "schemaVersion", "source", "sourceDestinationSeparation"
+  ].sort());
+  assert.equal(action005Manifest.records.length, 9);
+  assert.equal(action005Manifest.records.some((binding) => binding.path === expectedAction005Paths[8]), false);
+  assert.equal(action005Manifest.records.some((binding) => [
+    expectedAction005Paths[9], expectedAction005Paths[10], expectedAction005Paths[11],
+    expectedAction005Paths[12], expectedAction005Paths[13]
+  ].includes(binding.path)), false);
+  for (const binding of action005Manifest.records) {
+    assert.deepEqual(Object.keys(binding).sort(), [
+      "canonicalRecordHashIncludingSelfHash", "documentType", "path", "rawByteSha256",
+      "recordId", "selfHashExcludingOwnField", "selfHashField"
+    ].sort());
+    const bytes = fs.readFileSync(path.join(repositoryRoot, binding.path));
+    const record = JSON.parse(bytes);
+    assert.equal(sha256Bytes(bytes), binding.rawByteSha256);
+    assert.equal(sha256Canonical(record), binding.canonicalRecordHashIncludingSelfHash);
+    if (binding.selfHashField === null) assert.equal(binding.selfHashExcludingOwnField, null);
+    else {
+      const unsigned = clone(record);
+      delete unsigned[binding.selfHashField];
+      assert.equal(record[binding.selfHashField], binding.selfHashExcludingOwnField);
+      assert.equal(record[binding.selfHashField], sha256Canonical(unsigned));
+    }
+  }
+  const revocationBindings = action005Manifest.records.filter((binding) =>
+    binding.path === expectedAction005Paths[0]);
+  assert.equal(revocationBindings.length, 1);
+  assert.equal(revocationBindings[0].documentType, action004Revocation.documentType);
+  assert.equal(revocationBindings[0].recordId, action004Revocation.recordId);
+  assert.equal(revocationBindings[0].selfHashField, "revocationHash");
+  assert.equal(revocationBindings[0].selfHashExcludingOwnField, action004Revocation.revocationHash);
+  assert.deepEqual(action005Manifest.lifecyclePlan, {
+    revokedActionId: action004.actionId,
+    revocationEvidencePath: expectedAction005Paths[0],
+    revocationEvidenceHash: action004Revocation.revocationHash,
+    proposedIndexPath: expectedAction005Paths[10],
+    approvalAttestationPath: expectedAction005ApprovalPaths[0],
+    approvalIndexPath: expectedAction005ApprovalPaths[1],
+    executionReceiptPath: expectedAction005RecordingPaths[0],
+    consumptionIndexPath: expectedAction005RecordingPaths[1],
+    stableRootPath: expectedAction005RecordingPaths[2],
+    approvalPathsAreExecutionEffects: false,
+    syntheticRehearsalPersisted: false
+  });
+  const reportBytes = fs.readFileSync(path.join(repositoryRoot, action005Manifest.humanReport.path));
+  assert.equal(sha256Bytes(reportBytes), action005Manifest.humanReport.rawByteSha256);
+  assert.equal(Buffer.byteLength(action005Report), action005Manifest.humanReport.utf8Bytes);
+  assert.match(action005Report, /no native revocation-record schema or evidence resolver/u);
+  assert.match(action005Report, /Synthetic approval and receipt records are not persisted/u);
+
+  assert.deepEqual(action005Acceptance.tests.map((entry) => entry.testId), expectedAction004AcceptanceIds);
+  assert.equal(action005Acceptance.tests.length, 30);
+  assert.deepEqual(action005Charter.allowedPaths, expectedAction004AppPaths);
+  assert.deepEqual(action005WorkOrder.allowedPaths, expectedAction004AppPaths);
+  assert.deepEqual(action005.scope.allowedWritePaths, expectedAction004AppPaths);
+  assert.equal(action005.scope.allowedWritePaths.length, 31);
+  assert.equal(action005.scope.allowedWritePaths.includes(".github/workflows/clover-required-main-gate.yml"), false);
+  assert.deepEqual(action005.scope.allowedActions, expectedAction005AllowedActions);
+  assert.equal(action005.scope.allowedActions.includes("assemble-sanitized-receipt"), false);
+  assert.deepEqual(action005.scope.allowedRecordingPaths, expectedAction005RecordingPaths);
+  assert.equal(action005.scope.allowedRecordingPaths.includes(expectedAction005ApprovalPaths[0]), false);
+  assert.equal(action005.scope.allowedRecordingPaths.includes(expectedAction005ApprovalPaths[1]), false);
+  assert.equal(action005.scope.allowedRecordingPaths.includes(expectedAction005Paths[10]), false);
+
+  assert.deepEqual(action005.target, {
+    projectId: "clover-launch-studio-private-owner",
+    repository: "chrisdortch/first",
+    branch: "main",
+    expectedCommit: "e5688c771d384d80a8c723cfa655298ce8257889",
+    environment: "local-checkout"
+  });
+  assert.equal(action005WorkOrder.repository, action005.target.repository);
+  assert.equal(action005WorkOrder.baseCommit, action005.target.expectedCommit);
+  assert.equal(action005WorkOrder.worktreeBranch, expectedAction005Destination);
+  const destinationBearingDocuments = expectedAction005Paths.slice(0, 12).filter((relativePath) =>
+    fs.readFileSync(path.join(repositoryRoot, relativePath), "utf8").includes(expectedAction005Destination));
+  assert.deepEqual(destinationBearingDocuments, [expectedAction005Paths[4], expectedAction005Paths[6]]);
+  assert.equal(JSON.stringify(action005Acceptance).includes(expectedAction005Destination), true);
+  assert.equal(JSON.stringify(action005WorkOrder).includes(expectedAction005Destination), true);
+  assert.deepEqual(action005Manifest.sourceDestinationSeparation, {
+    envelopeTargetBranch: action005.target.branch,
+    envelopeTargetCommit: action005.target.expectedCommit,
+    destinationDefinitionPath: expectedAction005Paths[6],
+    destinationBranchExists: false,
+    destinationRepresentedAsVerified: false
+  });
+  assert.equal(action005Manifest.source.commit, "3bf01627272d6c3a3da578dc7080b441e4fa3d47");
+  assert.equal(action005Manifest.source.tree, "e30153603796d12539444d88c4ca7f36ffc8fd04");
+  assert.deepEqual(action005Manifest.source.orderedParents, [
+    "e5688c771d384d80a8c723cfa655298ce8257889",
+    "c7a2720e6c60b0cfce945ef315d0df7ae010e892"
+  ]);
+  assert.equal(action005ContextPack.sources[0].sourceId, "source_owner_authorization_action_005_v02b_14_path_001");
+  assert.equal(action005ContextPack.sources[0].contentHash, "d3f34519bae23cd5e459eb5b387c6a6c2f8277a7602fe024317803622d4fee83");
+  assert.equal(action005ImpactScan.contextPackHash, sha256Canonical(action005ContextPack));
+  assert.equal(action005Charter.contextPackHash, sha256Canonical(action005ContextPack));
+  assert.equal(action005Charter.impactScanHash, sha256Canonical(action005ImpactScan));
+  assert.equal(action005Charter.acceptanceContractHash, sha256Canonical(action005Acceptance));
+  assert.equal(action005WorkOrder.charterId, action005Charter.recordId);
+  assert.equal(action005WorkOrder.contextPackHash, sha256Canonical(action005ContextPack));
+  assert.equal(action005WorkOrder.impactScanHash, sha256Canonical(action005ImpactScan));
+  assert.equal(action005WorkOrder.handoffAuthorityReferenceId, action005.envelopeId);
+
+  const expectedBoundHashes = new Map([
+    ["context-pack", sha256Canonical(action005ContextPack)],
+    ["impact-scan", sha256Canonical(action005ImpactScan)],
+    ["budget", sha256Canonical(action005Budget)],
+    ["acceptance-contract", sha256Canonical(action005Acceptance)],
+    ["build-charter", sha256Canonical(action005Charter)],
+    ["executor-work-order", sha256Canonical(action005WorkOrder)]
+  ]);
+  for (const [kind, hash] of expectedBoundHashes) {
+    assert.equal(action005.sourceRequirements.some((entry) => entry.expectedIdentity === `${kind}:canonical:${hash}`), true);
+    assert.equal(action005.readbackRequirements.some((entry) => entry.expectedIdentity === `${kind}:canonical:${hash}`), true);
+  }
+  assert.equal(action005.sourceRequirements.some((entry) => entry.expectedIdentity.includes(action005Manifest.manifestHash)), false);
+  assert.equal(action005.readbackRequirements.some((entry) => entry.expectedIdentity.includes(action005Manifest.manifestHash)), false);
+
+  assert.deepEqual({
+    maximumModelCalls: action005Budget.maximumModelCalls,
+    maximumImplementationAgents: action005Budget.maximumImplementationAgents,
+    maximumRepairLoops: action005Budget.maximumRepairLoops,
+    maximumElapsedMinutes: action005Budget.maximumElapsedMinutes,
+    maximumProviderCiRuns: action005Budget.maximumProviderCiRuns,
+    maximumTargetNullPreviews: action005Budget.maximumTargetNullPreviews,
+    explicitPurchaseCeilingUsd: action005Budget.explicitPurchaseCeilingUsd,
+    automaticAdditionalCreditPurchase: action005Budget.automaticAdditionalCreditPurchase
+  }, {
+    maximumModelCalls: 12,
+    maximumImplementationAgents: 2,
+    maximumRepairLoops: 3,
+    maximumElapsedMinutes: 120,
+    maximumProviderCiRuns: 1,
+    maximumTargetNullPreviews: 1,
+    explicitPurchaseCeilingUsd: 0,
+    automaticAdditionalCreditPurchase: false
+  });
+  assert.equal(action005Budget.repeatedFailureStop, true);
+  assert.equal(action005Budget.noNewEvidenceStop, true);
+  assert.equal(action005.requestedAuthority.runNonProductionChecks, false);
+  assert.equal(action005.requestedAuthority.createNonProductionPreview, false);
+  assert.equal(action005WorkOrder.repairLoopBudget, 0);
+  assert.deepEqual(action005Charter.stopConditions.slice(-3), expectedAction005FailureStops);
+  assert.deepEqual(action005WorkOrder.stopConditions.slice(-3), expectedAction005FailureStops);
+  assert.equal(action005Manifest.futureSessionControls.repeatedFailureStop, expectedAction005FailureStops[0]);
+  assert.equal(action005Manifest.futureSessionControls.noNewEvidenceStop, expectedAction005FailureStops[1]);
+  assert.equal(action005Manifest.futureSessionControls.action005ValidationRepairCiPreviewAuthority, false);
+
+  assert.deepEqual(action005ContextPack.sharedResources.providers, expectedAction004ProviderClassifications);
+  assert.deepEqual(action005ImpactScan.authenticationBoundaries.filter((entry) =>
+    expectedAction004ProviderClassifications.includes(entry)), expectedAction004ProviderClassifications);
+  assert.deepEqual(action005Charter.scope.filter((entry) =>
+    expectedAction004ProviderClassifications.includes(entry)), expectedAction004ProviderClassifications);
+  assert.deepEqual(action005WorkOrder.testPlan.filter((entry) =>
+    expectedAction004ProviderClassifications.includes(entry)), expectedAction004ProviderClassifications);
+  assert.deepEqual(action005Manifest.providerClassifications, expectedAction004ProviderClassifications);
+  for (const classification of expectedAction004ProviderClassifications) assert.equal(action005Report.includes(classification), true);
+
+  const { providerStorage, speech, repair } = action005Manifest.embeddedTruthStatuses;
+  for (const status of [providerStorage, speech, repair]) {
+    const unsigned = clone(status);
+    delete unsigned.recordHash;
+    assert.equal(status.recordHash, sha256Canonical(unsigned));
+  }
+  assert.deepEqual(providerStorage.candidates.map(({ provider, status }) => [provider, status]), [
+    ["Clerk", "candidate-unselected"],
+    ["Neon", "candidate-unselected"],
+    ["Vercel Blob", "candidate-unselected"],
+    ["Vercel hosting", "candidate-unprovisioned"]
+  ]);
+  assert.equal(providerStorage.resourcesProvisioned, false);
+  assert.deepEqual(providerStorage.selectedProviders, []);
+  assert.deepEqual({
+    hostAssistedSpeechToReviewedTranscript: speech.hostAssistedSpeechToReviewedTranscript,
+    nativeInAppVoiceImplemented: speech.nativeInAppVoiceImplemented,
+    rawAudioRetained: speech.rawAudioRetained,
+    exactReviewedTranscriptRequired: speech.exactReviewedTranscriptRequired,
+    textFallbackRequired: speech.textFallbackRequired,
+    personalChatGptMemoryIngested: speech.personalChatGptMemoryIngested
+  }, {
+    hostAssistedSpeechToReviewedTranscript: true,
+    nativeInAppVoiceImplemented: false,
+    rawAudioRetained: false,
+    exactReviewedTranscriptRequired: true,
+    textFallbackRequired: true,
+    personalChatGptMemoryIngested: false
+  });
+  assert.deepEqual({
+    automaticDiagnoseFixRetestSupportedByCurrentAction: repair.automaticDiagnoseFixRetestSupportedByCurrentAction,
+    separateValidationActionRequired: repair.separateValidationActionRequired,
+    failedValidationRequiresSeparateRepairAuthority: repair.failedValidationRequiresSeparateRepairAuthority,
+    maximumFutureRepairLoops: repair.maximumFutureRepairLoops,
+    pushAuthorized: repair.pushAuthorized,
+    previewAuthorized: repair.previewAuthorized
+  }, {
+    automaticDiagnoseFixRetestSupportedByCurrentAction: false,
+    separateValidationActionRequired: true,
+    failedValidationRequiresSeparateRepairAuthority: true,
+    maximumFutureRepairLoops: 3,
+    pushAuthorized: false,
+    previewAuthorized: false
+  });
+  assert.equal(Object.values(action005.authority).every((value) => value === false), true);
+  assert.deepEqual(Object.entries(action005.requestedAuthority).filter(([, enabled]) => enabled)
+    .map(([field]) => field).sort(), [
+    "commitCandidate", "createIsolatedBranch", "readPublicMetadata", "recordHandoffArtifacts"
+  ]);
+  assert.equal(Date.parse(action005.expiresAt) - Date.parse(action005.createdAt), 72 * 60 * 60 * 1000);
+});
+
+test("Action 005 index 0003 revokes Action 004, appends one proposal and preserves history", () => {
+  assert.deepEqual(validateIndexTransition(index0002, index0003), {
+    valid: true,
+    transitionedEntries: 1,
+    appendedEntries: 1
+  });
+  assert.equal(index0003.previousIndexPath, "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0002.json");
+  assert.equal(index0003.previousIndexHash, "80cf1221d705eb7c62f50e2d9e63f849d82a42bc35365b3f730975bdff5729a9");
+  assert.deepEqual(index0003.entries.slice(0, 2), index0002.entries.slice(0, 2));
+  assert.equal(sha256Canonical(index0003.entries[0]), "28d6cd8a65375c4bff902d2d048b114c335041cbc50332769c9b271b165354a0");
+  assert.equal(sha256Canonical(index0003.entries[1]), "0f0e94e337c57629278cddd303ae31675a70b5be6ee8a499357e1739eaa223f5");
+  assert.equal(index0003.entries.some((entry) => entry.actionId === "CLOVER-2026-08-24-003"), false);
+
+  const before004 = index0002.entries[2];
+  const revoked004 = index0003.entries[2];
+  assert.deepEqual({
+    sequence: revoked004.sequence,
+    actionId: revoked004.actionId,
+    branchCapsuleId: revoked004.branchCapsuleId,
+    branchCapsuleHash: revoked004.branchCapsuleHash,
+    envelopeId: revoked004.envelopeId,
+    envelopePath: revoked004.envelopePath,
+    envelopeHash: revoked004.envelopeHash
+  }, {
+    sequence: before004.sequence,
+    actionId: before004.actionId,
+    branchCapsuleId: before004.branchCapsuleId,
+    branchCapsuleHash: before004.branchCapsuleHash,
+    envelopeId: before004.envelopeId,
+    envelopePath: before004.envelopePath,
+    envelopeHash: before004.envelopeHash
+  });
+  assert.equal(revoked004.status, "pending");
+  assert.equal(revoked004.lifecycle.state, "revoked");
+  assert.equal(revoked004.lifecycle.revokedAt, action004Revocation.revokedAt);
+  assert.equal(revoked004.lifecycle.revokedAt, index0003.createdAt);
+  assert.equal(revoked004.recordedAt, index0003.createdAt);
+  assert.equal(revoked004.lifecycle.revocationEvidenceHash, action004Revocation.revocationHash);
+  assert.equal(revoked004.lifecycle.consumedAt, null);
+  assert.equal(revoked004.lifecycle.consumedByReceiptId, null);
+  assert.deepEqual(revoked004.ownerApproval, before004.ownerApproval);
+  assert.equal(revoked004.receiptId, before004.receiptId);
+  assert.equal(revoked004.receiptPath, before004.receiptPath);
+  assert.equal(revoked004.receiptHash, before004.receiptHash);
+  assert.equal(revoked004.outcome, before004.outcome);
+  assert.deepEqual(revoked004.review, before004.review);
+
+  const proposed005 = index0003.entries[3];
+  assert.equal(proposed005.sequence, 4);
+  assert.equal(proposed005.actionId, action005.actionId);
+  assert.equal(proposed005.envelopeId, action005.envelopeId);
+  assert.equal(proposed005.envelopeHash, action005.envelopeHash);
+  assert.equal(proposed005.status, "pending");
+  assert.equal(proposed005.lifecycle.state, "proposed");
+  assert.equal(proposed005.lifecycle.revokedAt, null);
+  assert.equal(proposed005.lifecycle.revocationEvidenceHash, null);
+  assert.equal(proposed005.ownerApproval.status, "pending");
+  assert.equal(proposed005.receiptId, null);
+  assert.equal(proposed005.outcome, "pending");
+  assert.equal(proposed005.review.status, "pending");
+  assert.equal(fs.readFileSync(stableIndexPath).equals(fs.readFileSync(action005IndexPath)), true);
+
+  const pending = validateActionEnvelope(action005, {
+    branchCapsule: action004Capsule,
+    index: index0003,
+    repositoryRoot,
+    now: new Date(Date.parse(action005.createdAt) + 1_000).toISOString()
+  });
+  assert.deepEqual(pending, {
+    valid: true,
+    executable: false,
+    reason: "owner-approval-required",
+    effectiveAuthority: action005.authority
+  });
+  assert.throws(() => assertActionEnvelopeExecutable(action005, {
+    branchCapsule: action004Capsule,
+    index: index0003,
+    repositoryRoot,
+    now: new Date(Date.parse(action005.createdAt) + 1_000).toISOString()
+  }), (error) => error.code === "HANDOFF_DEFAULT_DENY");
+  assert.throws(() => assertActionEnvelopeExecutable(action004, {
+    branchCapsule: action004Capsule,
+    index: index0003,
+    repositoryRoot,
+    now: new Date(Date.parse(action005.createdAt) + 1_000).toISOString()
+  }), (error) => error.code === "HANDOFF_REVOKED");
+
+  const chain = validateHandoffIndexChain(repositoryRoot, { historicalIndexHash: genesisIndexHash });
+  assert.equal(chain.depth, 3);
+  assert.equal(chain.currentIndexHash, index0003.indexHash);
+  assert.equal(chain.currentSnapshotPath, "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json");
+  assert.equal(fs.existsSync(path.join(repositoryRoot,
+    "portfolio/core/handoff/versions/0.1.0/approvals/action-005-launch-studio-phase-b-source-approval.json")), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot,
+    "portfolio/core/handoff/versions/0.1.0/receipts/action-005-launch-studio-phase-b-source-receipt.json")), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+});
+
+test("Action 005 deterministic synthetic approval and consumption rehearsal is lifecycle-complete and fail-closed", (t) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "clover-action005-lifecycle-"));
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  const approvalPath = "portfolio/core/handoff/versions/0.1.0/approvals/action-005-launch-studio-phase-b-source-approval.json";
+  const approvalIndexPath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0004.json";
+  const receiptPath = expectedAction005RecordingPaths[0];
+  const consumptionIndexPath = expectedAction005RecordingPaths[1];
+  const approvedAt = new Date(Date.parse(action005.createdAt) + 60_000).toISOString();
+  const approvalIndexCreatedAt = new Date(Date.parse(action005.createdAt) + 120_000).toISOString();
+  const executionStartedAt = new Date(Date.parse(action005.createdAt) + 180_000).toISOString();
+  const executionCompletedAt = new Date(Date.parse(action005.createdAt) + 240_000).toISOString();
+  const consumptionIndexCreatedAt = new Date(Date.parse(action005.createdAt) + 300_000).toISOString();
+  const candidateCommit = "5".repeat(40);
+  const candidateTree = "6".repeat(40);
+
+  const approvalStatement = canonicalOwnerApprovalStatement(action005);
+  assert.equal(approvalStatement, `APPROVE ${action005.actionId} ${action005.envelopeHash}`);
+  const attestation = createOwnerApprovalAttestation(action005, {
+    attestationId: "handoff-approval:005:synthetic-lifecycle-rehearsal",
+    ownerId: "owner:chris-dortch",
+    decision: "approve",
+    approvalStatement,
+    approvedAt,
+    recordingLane: "codex-bounded-approval-recording",
+    recordingAuthorizationEvidenceHash: sha256Canonical({ basis: "synthetic-action005-lifecycle-rehearsal" })
+  });
+  writeJson(tempRoot, approvalPath, attestation);
+  const approvedIndex = createOwnerApprovedIndexVersion(index0003, action005, attestation, {
+    indexId: "handoff-index:action-005-synthetic-approved:20260824",
+    createdAt: approvalIndexCreatedAt,
+    previousIndexPath: "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json",
+    attestationPath: approvalPath
+  });
+  assert.deepEqual(validateIndexTransition(index0003, approvedIndex), {
+    valid: true,
+    transitionedEntries: 1,
+    appendedEntries: 0
+  });
+  assert.equal(approvedIndex.previousIndexPath, "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json");
+  assert.equal(approvedIndex.previousIndexHash, index0003.indexHash);
+  assert.equal(approvedIndex.entries[2].lifecycle.state, "revoked");
+  assert.equal(approvedIndex.entries[2].lifecycle.revocationEvidenceHash, action004Revocation.revocationHash);
+  assert.equal(approvedIndex.entries[3].status, "pending");
+  assert.equal(approvedIndex.entries[3].lifecycle.state, "available");
+  assert.equal(approvedIndex.entries[3].ownerApproval.status, "approved");
+  assert.equal(approvedIndex.entries[3].ownerApproval.attestationPath, approvalPath);
+  assert.equal(approvedIndex.entries[3].ownerApproval.attestationHash, attestation.attestationHash);
+
+  const executable = assertActionEnvelopeExecutable(action005, {
+    branchCapsule: action004Capsule,
+    index: approvedIndex,
+    repositoryRoot: tempRoot,
+    now: executionStartedAt
+  });
+  assert.equal(executable.executable, true);
+  assert.deepEqual(Object.entries(executable.effectiveAuthority).filter(([, enabled]) => enabled)
+    .map(([field]) => field).sort(), [
+    "commitCandidate", "createIsolatedBranch", "readPublicMetadata", "recordHandoffArtifacts"
+  ]);
+  assert.throws(() => assertActionEnvelopeExecutable(action005, {
+    branchCapsule: action004Capsule,
+    index: approvedIndex,
+    repositoryRoot: tempRoot,
+    now: action005.expiresAt
+  }), (error) => error.code === "HANDOFF_EXPIRED");
+  assert.throws(() => assertActionEnvelopeExecutable(action005, {
+    branchCapsule: action004Capsule,
+    index: index0003,
+    repositoryRoot: tempRoot,
+    now: executionStartedAt
+  }), (error) => error.code === "HANDOFF_DEFAULT_DENY");
+  assert.throws(() => assertActionEnvelopeExecutable(action004, {
+    branchCapsule: action004Capsule,
+    index: approvedIndex,
+    repositoryRoot: tempRoot,
+    now: executionStartedAt
+  }), (error) => error.code === "HANDOFF_REVOKED");
+
+  const observations = action005.readbackRequirements.map((readback, offset) => {
+    const sourceRequirement = action005.sourceRequirements[offset];
+    assert.equal(readback.connector, sourceRequirement.sourceId);
+    assert.equal(readback.expectedIdentity, sourceRequirement.expectedIdentity);
+    return sealNested({
+      observationId: `observation:action005-source-${offset + 1}`,
+      sourceId: readback.connector,
+      subject: readback.subject,
+      observedIdentity: readback.expectedIdentity,
+      identityKey: readback.expectedIdentity,
+      availability: "available",
+      identityResolution: "exact-resolved",
+      state: "synthetic exact source and canonical record identity verified",
+      observedAt: executionStartedAt,
+      evidenceRef: `synthetic-action005-readback:${offset + 1}`
+    }, "evidenceHash");
+  });
+  const cleanlinessCheck = sealNested({
+    checkId: "check:action005-synthetic-cleanliness",
+    conclusion: "passed",
+    summary: "Synthetic source checkout is clean before the isolated candidate branch is created."
+  }, "checkHash");
+  const ancestryCheck = sealNested({
+    checkId: "check:action005-synthetic-ancestry",
+    conclusion: "passed",
+    summary: "Synthetic candidate branch base binds exact immutable source commit e5688c771d384d80a8c723cfa655298ce8257889."
+  }, "checkHash");
+  const resultingState = {
+    projectId: action005.target.projectId,
+    sourceCommit: candidateCommit,
+    summary: "Synthetic source-only candidate identity recorded; validation, push, PR, provider and preview remain absent.",
+    persistedReceiptRef: receiptPath,
+    productionStateChanged: false,
+    unknowns: []
+  };
+  const syntheticReceipt = sealHandoffDocument({
+    documentType: "clover-handoff-execution-receipt",
+    schemaVersion: "0.1.0",
+    actionId: action005.actionId,
+    receiptId: "handoff-receipt:005:synthetic-lifecycle-rehearsal",
+    envelopeId: action005.envelopeId,
+    envelopeHash: action005.envelopeHash,
+    branchCapsuleId: action004Capsule.capsuleId,
+    branchCapsuleHash: action004Capsule.capsuleHash,
+    startedAt: executionStartedAt,
+    completedAt: executionCompletedAt,
+    executorLane: "codex-bounded-execution",
+    source: {
+      bindingRole: "target-source",
+      repository: action005.target.repository,
+      branch: action005.target.branch,
+      commit: action005.target.expectedCommit,
+      tree: action004Capsule.identities.current.tree
+    },
+    reconciliation: {
+      status: "not-applicable",
+      inputCapsuleId: action004Capsule.capsuleId,
+      inputCapsuleHash: action004Capsule.capsuleHash,
+      resultCapsuleId: null,
+      resultCapsulePath: null,
+      resultCapsuleHash: null
+    },
+    outcome: "succeeded",
+    observations,
+    checks: [cleanlinessCheck, ancestryCheck],
+    actionsPerformed: expectedAction005AllowedActions,
+    evidenceBindings: [
+      {
+        evidenceId: "evidence:action-005-source-identity",
+        kind: "source-identity",
+        bindingType: "observation",
+        boundHashes: observations.map((entry) => entry.evidenceHash)
+      },
+      {
+        evidenceId: "evidence:action-005-cleanliness",
+        kind: "cleanliness",
+        bindingType: "check",
+        boundHashes: [cleanlinessCheck.checkHash]
+      },
+      {
+        evidenceId: "evidence:action-005-ancestry",
+        kind: "ancestry",
+        bindingType: "check",
+        boundHashes: [ancestryCheck.checkHash]
+      },
+      {
+        evidenceId: "evidence:action-005-receipt",
+        kind: "receipt",
+        bindingType: "resulting-state",
+        boundHashes: [sha256Canonical(resultingState)]
+      }
+    ],
+    changes: {
+      targetSourceMutationPerformed: true,
+      changedPaths: [
+        expectedAction004AppPaths[0],
+        expectedAction004AppPaths[4],
+        expectedAction004AppPaths.at(-1)
+      ],
+      recordedHandoffPaths: expectedAction005RecordingPaths,
+      summary: "Synthetic source-only candidate commit and exact Handoff receipt lifecycle; no validation, publication or provider effect."
+    },
+    candidateEffects: {
+      branch: {
+        performed: true,
+        repository: action005WorkOrder.repository,
+        branch: action005WorkOrder.worktreeBranch,
+        baseCommit: action005WorkOrder.baseCommit
+      },
+      commit: { performed: true, commit: candidateCommit, tree: candidateTree },
+      push: { performed: false, remoteBranch: null, commit: null },
+      draftPullRequest: {
+        performed: false,
+        repository: null,
+        number: null,
+        url: null,
+        baseBranch: null,
+        headBranch: null,
+        headCommit: null
+      }
+    },
+    previews: [],
+    resultingState,
+    authorityUsed: {
+      readPublicMetadata: true,
+      createIsolatedBranch: true,
+      commitCandidate: true,
+      pushCandidateBranch: false,
+      openDraftPullRequest: false,
+      runNonProductionChecks: false,
+      createNonProductionPreview: false,
+      recordHandoffArtifacts: true
+    },
+    sideEffects: {
+      mergePerformed: false,
+      productionDeploymentPerformed: false,
+      productionDataAccessed: false,
+      persistentConfigurationChanged: false,
+      domainOrAliasChanged: false,
+      secretChanged: false,
+      externalMessageSent: false,
+      paymentExercised: false,
+      purchaseMade: false,
+      handoffLedgerArtifactsRecorded: true,
+      productionTargetChanged: false
+    },
+    cost: {
+      lane: "existing-local-compute",
+      explicitPurchaseOrMoneyMovementUsd: 0,
+      providerMeteredUsageCostUsd: null,
+      providerMeteredUsageCostStatus: "unknown",
+      paidExternalServicePurchased: false
+    },
+    rollback: {
+      anchorType: "git-commit",
+      anchorIdentity: action005.target.expectedCommit,
+      required: true,
+      exercised: false
+    },
+    unknowns: []
+  }, "receiptHash");
+  assert.equal(validateExecutionReceipt(syntheticReceipt, {
+    branchCapsule: action004Capsule,
+    envelope: action005,
+    index: approvedIndex,
+    repositoryRoot: tempRoot,
+    executionNow: executionStartedAt
+  }).valid, true);
+  assert.equal(assertFutureAction005ReceiptContract(syntheticReceipt), true);
+
+  const substitutedApprovalIndexReceipt = clone(syntheticReceipt);
+  substitutedApprovalIndexReceipt.changes.recordedHandoffPaths[1] = approvalIndexPath;
+  assert.throws(() => validateExecutionReceipt(
+    sealHandoffDocument(substitutedApprovalIndexReceipt, "receiptHash"), {
+      branchCapsule: action004Capsule,
+      envelope: action005,
+      index: approvedIndex,
+      repositoryRoot: tempRoot,
+      executionNow: executionStartedAt
+    }
+  ), (error) => error.code === "HANDOFF_AUTHORITY_DENIED");
+  const substitutedProposalIndexReceipt = clone(syntheticReceipt);
+  substitutedProposalIndexReceipt.changes.recordedHandoffPaths[1] =
+    "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json";
+  assert.throws(() => validateExecutionReceipt(
+    sealHandoffDocument(substitutedProposalIndexReceipt, "receiptHash"), {
+      branchCapsule: action004Capsule,
+      envelope: action005,
+      index: approvedIndex,
+      repositoryRoot: tempRoot,
+      executionNow: executionStartedAt
+    }
+  ), (error) => error.code === "HANDOFF_AUTHORITY_DENIED");
+  const escapedReceipt = clone(syntheticReceipt);
+  escapedReceipt.changes.changedPaths.push("../escape");
+  assert.throws(() => validateExecutionReceipt(sealHandoffDocument(escapedReceipt, "receiptHash"), {
+    branchCapsule: action004Capsule,
+    envelope: action005,
+    index: approvedIndex,
+    repositoryRoot: tempRoot,
+    executionNow: executionStartedAt
+  }), /closed JSON schema|outside its envelope/u);
+
+  const consumedValue = clone(approvedIndex);
+  consumedValue.indexId = "handoff-index:action-005-synthetic-consumed:20260824";
+  consumedValue.createdAt = consumptionIndexCreatedAt;
+  consumedValue.previousIndexPath = approvalIndexPath;
+  consumedValue.previousIndexHash = approvedIndex.indexHash;
+  const consumedEntry = consumedValue.entries[3];
+  consumedEntry.recordedAt = consumptionIndexCreatedAt;
+  consumedEntry.status = "completed";
+  consumedEntry.lifecycle.state = "consumed";
+  consumedEntry.lifecycle.consumedAt = syntheticReceipt.completedAt;
+  consumedEntry.lifecycle.consumedByReceiptId = syntheticReceipt.receiptId;
+  consumedEntry.receiptId = syntheticReceipt.receiptId;
+  consumedEntry.receiptPath = syntheticReceipt.resultingState.persistedReceiptRef;
+  consumedEntry.receiptHash = syntheticReceipt.receiptHash;
+  consumedEntry.outcome = syntheticReceipt.outcome;
+  const consumedIndex = sealHandoffDocument(consumedValue, "indexHash");
+  assert.deepEqual(validateIndexTransition(approvedIndex, consumedIndex), {
+    valid: true,
+    transitionedEntries: 1,
+    appendedEntries: 0
+  });
+  assert.equal(consumedIndex.previousIndexPath, approvalIndexPath);
+  assert.equal(consumedIndex.previousIndexHash, approvedIndex.indexHash);
+  assert.equal(consumedIndex.entries[2].lifecycle.state, "revoked");
+  assert.equal(consumedIndex.entries[3].status, "completed");
+  assert.equal(consumedIndex.entries[3].lifecycle.state, "consumed");
+  assert.equal(consumedIndex.entries[3].lifecycle.consumedByReceiptId, syntheticReceipt.receiptId);
+  assert.equal(consumedIndex.entries[3].receiptHash, syntheticReceipt.receiptHash);
+
+  const collapsedValue = clone(index0003);
+  collapsedValue.indexId = "handoff-index:action-005-invalid-collapsed:20260824";
+  collapsedValue.createdAt = consumptionIndexCreatedAt;
+  collapsedValue.previousIndexPath = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0003.json";
+  collapsedValue.previousIndexHash = index0003.indexHash;
+  const collapsedEntry = collapsedValue.entries[3];
+  collapsedEntry.recordedAt = consumptionIndexCreatedAt;
+  collapsedEntry.status = "completed";
+  collapsedEntry.lifecycle.state = "consumed";
+  collapsedEntry.lifecycle.consumedAt = syntheticReceipt.completedAt;
+  collapsedEntry.lifecycle.consumedByReceiptId = syntheticReceipt.receiptId;
+  collapsedEntry.receiptId = syntheticReceipt.receiptId;
+  collapsedEntry.receiptPath = receiptPath;
+  collapsedEntry.receiptHash = syntheticReceipt.receiptHash;
+  collapsedEntry.outcome = syntheticReceipt.outcome;
+  assert.throws(() => validateIndexTransition(index0003,
+    sealHandoffDocument(collapsedValue, "indexHash")),
+  (error) => error.code === "HANDOFF_INDEX_TRANSITION_INVALID");
+  assert.throws(() => assertActionEnvelopeExecutable(action005, {
+    branchCapsule: action004Capsule,
+    index: consumedIndex,
+    repositoryRoot: tempRoot,
+    now: new Date(Date.parse(executionCompletedAt) + 120_000).toISOString()
+  }), (error) => error.code === "HANDOFF_REPLAY_DENIED");
+
+  assert.throws(() => assertSafeRepositoryPath("../escape"), /unsafe|traversal/u);
+  assert.throws(() => resolveRegularRepositoryFile(tempRoot, "../escape", "Action 005 artifact"), /unsafe|traversal/u);
+  const isolatedRoot = path.join(tempRoot, "isolated");
+  fs.mkdirSync(isolatedRoot);
+  fs.writeFileSync(path.join(tempRoot, "outside.json"), "{}\n");
+  fs.symlinkSync("../outside.json", path.join(isolatedRoot, "linked.json"));
+  assert.throws(() => resolveRegularRepositoryFile(isolatedRoot, "linked.json", "Action 005 artifact"), /symbolic link/u);
+
+  assert.equal(fs.existsSync(path.join(repositoryRoot, approvalPath)), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, receiptPath)), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, approvalIndexPath)), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, consumptionIndexPath)), false);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  const localFutureBranch = spawnSync("git", [
+    "show-ref", "--verify", "--quiet", `refs/heads/${action005WorkOrder.worktreeBranch}`
+  ], { cwd: repositoryRoot });
+  const remoteFutureBranch = spawnSync("git", [
+    "show-ref", "--verify", "--quiet", `refs/remotes/origin/${action005WorkOrder.worktreeBranch}`
+  ], { cwd: repositoryRoot });
+  assert.equal(localFutureBranch.status, 1);
+  assert.equal(remoteFutureBranch.status, 1);
 });
