@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/launch-studio/0.1.0/session-budget.schema.json",
+  "title": "Launch Session budget",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "recordId", "maximumModelCalls", "maximumImplementationAgents", "maximumRepairLoops", "maximumElapsedMinutes", "maximumProviderCiRuns", "maximumTargetNullPreviews", "explicitPurchaseCeilingUsd", "automaticAdditionalCreditPurchase", "providerUsageCeiling", "repeatedFailureStop", "noNewEvidenceStop", "synthetic", "consequentialAuthorityGranted"],
+  "properties": {
+    "documentType": {"const": "clover-launch-session-budget"}, "schemaVersion": {"const": "0.1.0"}, "recordId": {"$ref": "common.schema.json#/$defs/id"},
+    "maximumModelCalls": {"type": "integer", "minimum": 0}, "maximumImplementationAgents": {"type": "integer", "minimum": 0}, "maximumRepairLoops": {"type": "integer", "minimum": 0},
+    "maximumElapsedMinutes": {"type": "integer", "minimum": 0}, "maximumProviderCiRuns": {"type": "integer", "minimum": 0}, "maximumTargetNullPreviews": {"type": "integer", "minimum": 0},
+    "explicitPurchaseCeilingUsd": {"type": "number", "minimum": 0}, "automaticAdditionalCreditPurchase": {"const": false},
+    "providerUsageCeiling": {"type": "object", "additionalProperties": false, "required": ["unit", "maximum"], "properties": {"unit": {"enum": ["none", "calls", "tokens", "usd"]}, "maximum": {"type": "number", "minimum": 0}}},
+    "repeatedFailureStop": {"const": true}, "noNewEvidenceStop": {"const": true}, "synthetic": {"type": "boolean"}, "consequentialAuthorityGranted": {"const": false}
+  }
+}

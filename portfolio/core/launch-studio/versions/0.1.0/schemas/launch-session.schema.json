@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/launch-studio/0.1.0/launch-session.schema.json",
+  "title": "Reconstructed Launch Session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "sessionId", "workspaceId", "projectId", "profileId", "state", "sessionVersion", "eventCount", "headEventHash", "fixtureHash", "approvals", "resolvedModels", "personalChatGptMemoryStored", "sharedTruthAutomaticallyPromoted", "externalEffects", "synthetic", "consequentialAuthorityGranted"],
+  "properties": {
+    "documentType": {"const": "clover-launch-session"}, "schemaVersion": {"const": "0.1.0"}, "sessionId": {"$ref": "common.schema.json#/$defs/id"}, "workspaceId": {"$ref": "common.schema.json#/$defs/id"}, "projectId": {"$ref": "common.schema.json#/$defs/id"}, "profileId": {"$ref": "common.schema.json#/$defs/id"},
+    "state": {"$ref": "common.schema.json#/$defs/sessionState"}, "sessionVersion": {"type": "integer", "minimum": 1}, "eventCount": {"type": "integer", "minimum": 1}, "headEventHash": {"$ref": "common.schema.json#/$defs/hash"}, "fixtureHash": {"$ref": "common.schema.json#/$defs/hash"},
+    "approvals": {"type": "object", "additionalProperties": false, "properties": {"APPROVE_BUILD_CHARTER": {"$ref": "common.schema.json#/$defs/hash"}, "ACCEPT_PREVIEW_CANDIDATE": {"$ref": "common.schema.json#/$defs/hash"}, "APPROVE_MERGE": {"$ref": "common.schema.json#/$defs/hash"}, "APPROVE_PRODUCTION": {"$ref": "common.schema.json#/$defs/hash"}}},
+    "resolvedModels": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["capabilityClass", "resolvedModelId", "resolvedAt"], "properties": {"capabilityClass": {"enum": ["high-reasoning", "implementation", "mechanical", "deterministic"]}, "resolvedModelId": {"type": "string"}, "resolvedAt": {"$ref": "common.schema.json#/$defs/timestamp"}}}},
+    "personalChatGptMemoryStored": {"const": false}, "sharedTruthAutomaticallyPromoted": {"const": false}, "externalEffects": {"$ref": "common.schema.json#/$defs/externalEffects"}, "synthetic": {"type": "boolean"}, "consequentialAuthorityGranted": {"const": false}
+  }
+}
