@@ -6,7 +6,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { sha256Bytes, sha256Canonical } from "../lib/canonical-json.mjs";
-import { sealHandoffDocument } from "../lib/handoff-ledger.mjs";
+import { sealHandoffDocument, validateIndexTransition } from "../lib/handoff-ledger.mjs";
 import {
   ACTION_002_HASH,
   HANDOFF_INDEX_DIRECTORY,
@@ -385,11 +385,59 @@ test("Handoff history rejects stable-root substitution, orphaned snapshots, and 
     assert.throws(() => validateHandoffIndexChain(root), /does not resolve byte-for-byte/u);
   }
   {
-    const root = createTempRoot();
-    const genesis = readJson(root, handoffSnapshotPath(1));
-    const approved = makeApprovedHandoffSuccessor(genesis);
-    writeJson(root, handoffSnapshotPath(2), approved);
-    assert.throws(() => validateHandoffIndexChain(root), /orphaned|ambiguous/u);
+    const assertSuccessorAwareOrphan = (root) => {
+      const stableRootPath = path.join(root, HANDOFF_INDEX_PATH);
+      const stableRootBytes = fs.readFileSync(stableRootPath);
+      const current = JSON.parse(stableRootBytes);
+      const immutablePaths = fs.readdirSync(path.join(root, HANDOFF_INDEX_DIRECTORY))
+        .filter((name) => /^action-receipt-index-\d{4}\.json$/u.test(name))
+        .map((name) => `${HANDOFF_INDEX_DIRECTORY}/${name}`);
+      const currentMatches = immutablePaths.filter((relativePath) =>
+        fs.readFileSync(path.join(root, relativePath)).equals(stableRootBytes));
+      assert.equal(currentMatches.length, 1);
+      const currentSnapshotPath = currentMatches[0];
+      const currentSequence = Number.parseInt(currentSnapshotPath.match(/(\d{4})\.json$/u)[1], 10);
+      const nextSequence = currentSequence + 1;
+      const nextSnapshotPath = handoffSnapshotPath(nextSequence);
+      const next = structuredClone(current);
+      const nextCreatedAt = new Date(Date.parse(current.createdAt) + 60_000).toISOString();
+      next.indexId = `handoff-index:synthetic-orphan-${nextSequence}:20260824`;
+      next.createdAt = nextCreatedAt;
+      next.previousIndexPath = currentSnapshotPath;
+      next.previousIndexHash = current.indexHash;
+      const action = next.entries.find((entry) => entry.actionId === "CLOVER-2026-08-20-002");
+      action.recordedAt = nextCreatedAt;
+      action.lifecycle.state = "available";
+      action.ownerApproval = {
+        status: "approved",
+        approverId: "owner:chris-dortch",
+        approvedAt: nextCreatedAt,
+        approvedEnvelopeHash: ACTION_002_HASH,
+        approvalEvidenceHash: "a".repeat(64),
+        attestationId: "handoff-approval:002:synthetic-orphan",
+        attestationPath: "portfolio/core/handoff/versions/0.1.0/approvals/action-002.synthetic-orphan.json",
+        attestationHash: "b".repeat(64),
+      };
+      const sealed = sealHandoffDocument(next, "indexHash");
+      assert.deepEqual(validateIndexTransition(current, sealed), {
+        valid: true,
+        transitionedEntries: 1,
+        appendedEntries: 0,
+      });
+      writeJson(root, nextSnapshotPath, sealed);
+      assert.equal(fs.readFileSync(stableRootPath).equals(stableRootBytes), true);
+      assert.throws(() => validateHandoffIndexChain(root), /orphaned|ambiguous/u);
+      return { currentSequence, nextSequence };
+    };
+
+    const genesisRoot = createTempRoot();
+    const genesis = readJson(genesisRoot, handoffSnapshotPath(1));
+    writeJson(genesisRoot, HANDOFF_INDEX_PATH, genesis);
+    fs.unlinkSync(path.join(genesisRoot, handoffSnapshotPath(2)));
+    assert.deepEqual(assertSuccessorAwareOrphan(genesisRoot), { currentSequence: 1, nextSequence: 2 });
+
+    const successorRoot = createTempRoot();
+    assert.deepEqual(assertSuccessorAwareOrphan(successorRoot), { currentSequence: 2, nextSequence: 3 });
   }
   {
     const root = createTempRoot();
