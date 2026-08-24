@@ -1,0 +1,5 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://cloverapps.ai/schemas/launch-studio/0.1.0/launch-profile.schema.json","title":"Launch profile","type":"object","additionalProperties":false,
+  "required":["documentType","schemaVersion","recordId","displayName","requiredStages","additionalRequirements","mayWeakenInvariants","synthetic","consequentialAuthorityGranted"],
+  "properties":{"documentType":{"const":"clover-launch-profile"},"schemaVersion":{"const":"0.1.0"},"recordId":{"$ref":"common.schema.json#/$defs/id"},"displayName":{"enum":["Idea","Build","Repair","Release","Improvement","Strategy","Collaboration"]},"requiredStages":{"$ref":"common.schema.json#/$defs/stringArray"},"additionalRequirements":{"$ref":"common.schema.json#/$defs/stringArray"},"mayWeakenInvariants":{"const":false},"synthetic":{"type":"boolean"},"consequentialAuthorityGranted":{"const":false}}
+}

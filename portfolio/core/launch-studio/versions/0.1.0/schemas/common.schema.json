@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/launch-studio/0.1.0/common.schema.json",
+  "title": "Clover Launch Studio common record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "recordId"],
+  "properties": {
+    "documentType": {"type": "string", "minLength": 1},
+    "schemaVersion": {"const": "0.1.0"},
+    "recordId": {"$ref": "#/$defs/id"}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{2,159}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "nullableHash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "timestamp": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"},
+    "nullableTimestamp": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/timestamp"}]},
+    "privacyClass": {"enum": ["public", "synthetic", "private", "sensitive", "restricted"]},
+    "visibility": {"enum": ["participant-private", "role-restricted", "project-members", "workspace-members", "public-approved"]},
+    "participantRole": {"enum": ["Owner", "Steward", "Builder", "Contributor", "Reviewer", "Observer", "External Partner"]},
+    "sessionState": {"enum": ["captured", "understanding_pending", "understanding_confirmed", "context_grounded", "impact_scanned", "charter_pending", "charter_approved", "execution_proposed", "execution_authority_pending", "worktree_ready", "building", "validating", "preview_ready", "preview_review_pending", "revision_requested", "revising", "preview_accepted", "merge_proposed", "merge_approved", "merged", "production_proposed", "production_approved", "production_completed", "fruit_observation_pending", "completed", "held", "failed", "cancelled", "rolled_back"]},
+    "recordReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recordId", "recordHash"],
+      "properties": {
+        "recordId": {"$ref": "#/$defs/id"},
+        "recordHash": {"$ref": "#/$defs/hash"}
+      }
+    },
+    "participantRoleReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recordId", "recordHash", "role"],
+      "properties": {
+        "recordId": {"$ref": "#/$defs/id"},
+        "recordHash": {"$ref": "#/$defs/hash"},
+        "role": {"$ref": "#/$defs/participantRole"}
+      }
+    },
+    "roleVisibilityBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["visibleToRoles", "participantRoleReferences"],
+      "properties": {
+        "visibleToRoles": {"type": "array", "items": {"$ref": "#/$defs/participantRole"}, "uniqueItems": true},
+        "participantRoleReferences": {"type": "array", "items": {"$ref": "#/$defs/participantRoleReference"}}
+      }
+    },
+    "truthClassification": {"enum": ["source-fact", "owner-statement", "observation", "verified-claim", "disputed-claim", "inference", "assumption", "forecast", "conditional-potential", "unknown", "contradiction", "decision", "observed-outcome"]},
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["participantId", "role", "displayName"],
+      "properties": {
+        "participantId": {"$ref": "#/$defs/id"},
+        "role": {"enum": ["Owner", "Steward", "Builder", "Contributor", "Reviewer", "Observer", "External Partner", "system"]},
+        "displayName": {"type": ["string", "null"]}
+      }
+    },
+    "sourcePointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "sourceType", "contentHash", "observedAt", "freshness"],
+      "properties": {
+        "sourceId": {"$ref": "#/$defs/id"},
+        "sourceType": {"type": "string", "minLength": 1},
+        "contentHash": {"$ref": "#/$defs/hash"},
+        "observedAt": {"$ref": "#/$defs/timestamp"},
+        "freshness": {"enum": ["current", "candidate", "historical", "stale", "unknown"]}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidenceId", "contentHash", "sourceType"],
+      "properties": {
+        "evidenceId": {"$ref": "#/$defs/id"},
+        "contentHash": {"$ref": "#/$defs/hash"},
+        "sourceType": {"type": "string", "minLength": 1}
+      }
+    },
+    "stringArray": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "idArray": {"type": "array", "items": {"$ref": "#/$defs/id"}, "uniqueItems": true},
+    "externalEffects": {"type": "array", "items": {"$ref": "#/$defs/externalEffect"}, "uniqueItems": true},
+    "externalEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effectId", "effectType", "status", "sourceIdentity", "targetIdentity", "authorityReferenceId", "authorityReferenceHash", "executionReceiptId", "executionReceiptHash", "recordedAt", "rollback"],
+      "properties": {
+        "effectId": {"$ref": "#/$defs/id"},
+        "effectType": {"enum": ["isolated-branch", "source-commit", "draft-pull-request", "provider-ci", "target-null-preview", "merge", "production-deployment", "message", "payment", "purchase", "configuration-change", "rollback"]},
+        "status": {"enum": ["proposed", "performed", "failed", "compensated"]},
+        "sourceIdentity": {"type": ["string", "null"]},
+        "targetIdentity": {"type": ["string", "null"]},
+        "authorityReferenceId": {"type": ["string", "null"]},
+        "authorityReferenceHash": {"$ref": "#/$defs/nullableHash"},
+        "executionReceiptId": {"type": ["string", "null"]},
+        "executionReceiptHash": {"$ref": "#/$defs/nullableHash"},
+        "recordedAt": {"$ref": "#/$defs/timestamp"},
+        "rollback": {"type": "object", "additionalProperties": false, "required": ["required", "status", "receiptId", "receiptHash"], "properties": {"required": {"type": "boolean"}, "status": {"enum": ["not-required", "pending", "completed", "failed"]}, "receiptId": {"type": ["string", "null"]}, "receiptHash": {"$ref": "#/$defs/nullableHash"}}, "allOf": [
+          {"if": {"properties": {"required": {"const": true}}}, "then": {"properties": {"status": {"enum": ["pending", "completed", "failed"]}}}, "else": {"properties": {"status": {"const": "not-required"}, "receiptId": {"const": null}, "receiptHash": {"const": null}}}},
+          {"if": {"properties": {"status": {"enum": ["completed", "failed"]}}}, "then": {"properties": {"receiptId": {"type": "string", "minLength": 1}, "receiptHash": {"$ref": "#/$defs/hash"}}}, "else": {"properties": {"receiptId": {"const": null}, "receiptHash": {"const": null}}}}
+        ]}
+      },
+      "allOf": [
+        {"if": {"properties": {"authorityReferenceId": {"type": "string"}}}, "then": {"properties": {"authorityReferenceHash": {"$ref": "#/$defs/hash"}}}, "else": {"properties": {"authorityReferenceId": {"const": null}, "authorityReferenceHash": {"const": null}}}},
+        {"if": {"properties": {"executionReceiptId": {"type": "string"}}}, "then": {"properties": {"executionReceiptHash": {"$ref": "#/$defs/hash"}}}, "else": {"properties": {"executionReceiptId": {"const": null}, "executionReceiptHash": {"const": null}}}},
+        {"if": {"properties": {"status": {"enum": ["performed", "failed", "compensated"]}}}, "then": {"properties": {"authorityReferenceId": {"type": "string", "minLength": 1}, "authorityReferenceHash": {"$ref": "#/$defs/hash"}, "executionReceiptId": {"type": "string", "minLength": 1}, "executionReceiptHash": {"$ref": "#/$defs/hash"}}}},
+        {"if": {"properties": {"status": {"const": "proposed"}}}, "then": {"properties": {"executionReceiptId": {"const": null}, "executionReceiptHash": {"const": null}, "rollback": {"allOf": [{"if": {"properties": {"required": {"const": true}}}, "then": {"properties": {"status": {"const": "pending"}, "receiptId": {"const": null}, "receiptHash": {"const": null}}}, "else": {"properties": {"status": {"const": "not-required"}, "receiptId": {"const": null}, "receiptHash": {"const": null}}}}]}}}},
+        {"if": {"properties": {"status": {"const": "performed"}}}, "then": {"properties": {"rollback": {"allOf": [{"if": {"properties": {"required": {"const": true}}}, "then": {"properties": {"status": {"const": "pending"}, "receiptId": {"const": null}, "receiptHash": {"const": null}}}, "else": {"properties": {"status": {"const": "not-required"}, "receiptId": {"const": null}, "receiptHash": {"const": null}}}}]}}}},
+        {"if": {"properties": {"status": {"const": "compensated"}}}, "then": {"properties": {"rollback": {"properties": {"required": {"const": true}, "status": {"const": "completed"}, "receiptId": {"type": "string", "minLength": 1}, "receiptHash": {"$ref": "#/$defs/hash"}}}}}}
+      ]
+    },
+    "classifiedItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["itemId", "category", "statement", "classification", "provenance", "provenanceOwnerEventId", "provenanceOwnerEventHash", "confidence", "privacyClass", "proposedAudience", "promotionStatus", "verificationStatus", "consentReference"],
+      "properties": {
+        "itemId": {"$ref": "#/$defs/id"},
+        "category": {"enum": ["owner-fact", "owner-preference", "owner-goal", "correction", "superseded-belief", "observation", "inference", "assumption", "contradiction", "priority-implication"]},
+        "statement": {"type": "string", "minLength": 1},
+        "classification": {"$ref": "#/$defs/truthClassification"},
+        "provenance": {"$ref": "#/$defs/sourcePointer"},
+        "provenanceOwnerEventId": {"$ref": "#/$defs/id"},
+        "provenanceOwnerEventHash": {"$ref": "#/$defs/hash"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "privacyClass": {"$ref": "#/$defs/privacyClass"},
+        "proposedAudience": {"$ref": "#/$defs/visibility"},
+        "promotionStatus": {"enum": ["proposed", "accepted", "rejected", "superseded", "revoked"]},
+        "verificationStatus": {"enum": ["unverified", "verified", "disputed", "not-applicable"]},
+        "consentReference": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

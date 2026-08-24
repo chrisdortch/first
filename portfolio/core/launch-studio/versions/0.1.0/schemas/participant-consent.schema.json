@@ -1,0 +1,10 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"https://cloverapps.ai/schemas/launch-studio/0.1.0/participant-consent.schema.json","title":"Exact participant consent","type":"object","additionalProperties":false,
+  "required":["documentType","schemaVersion","recordId","workspaceId","projectId","participantId","projectionId","audience","purpose","retention","attribution","ownership","grantedAt","expiresAt","revokedAt","status","sourceHash","recordHash","synthetic","consequentialAuthorityGranted"],
+  "properties":{"documentType":{"const":"clover-participant-consent"},"schemaVersion":{"const":"0.1.0"},"recordId":{"$ref":"common.schema.json#/$defs/id"},"workspaceId":{"$ref":"common.schema.json#/$defs/id"},"projectId":{"$ref":"common.schema.json#/$defs/id"},"participantId":{"$ref":"common.schema.json#/$defs/id"},"projectionId":{"$ref":"common.schema.json#/$defs/id"},"audience":{"$ref":"common.schema.json#/$defs/visibility"},"purpose":{"type":"string","minLength":1},"retention":{"type":"string","minLength":1},"attribution":{"type":"string","minLength":1},"ownership":{"type":"string","minLength":1},"grantedAt":{"$ref":"common.schema.json#/$defs/timestamp"},"expiresAt":{"$ref":"common.schema.json#/$defs/nullableTimestamp"},"revokedAt":{"$ref":"common.schema.json#/$defs/nullableTimestamp"},"status":{"enum":["proposed","granted","expired","revoked"]},"sourceHash":{"$ref":"common.schema.json#/$defs/hash"},"recordHash":{"$ref":"common.schema.json#/$defs/hash"},"synthetic":{"type":"boolean"},"consequentialAuthorityGranted":{"const":false}},
+  "allOf":[
+    {"if":{"properties":{"status":{"enum":["proposed","granted","expired"]}}},"then":{"properties":{"revokedAt":{"const":null}}}},
+    {"if":{"properties":{"status":{"const":"expired"}}},"then":{"properties":{"expiresAt":{"type":"string"}}}},
+    {"if":{"properties":{"status":{"const":"revoked"}}},"then":{"properties":{"revokedAt":{"type":"string"}}}}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/launch-studio/0.1.0/owner-event.schema.json",
+  "title": "Owner Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["documentType", "schemaVersion", "recordId", "workspaceId", "projectId", "actor", "modality", "transcript", "transcriptUtf8Bytes", "transcriptSha256", "sourcePointer", "capturedAt", "privacyClass", "visibility", "retentionClass", "editPredecessorId", "editPredecessorHash", "supersessionReason", "synthetic", "consequentialAuthorityGranted"],
+  "properties": {
+    "documentType": {"const": "clover-owner-event"}, "schemaVersion": {"const": "0.1.0"},
+    "recordId": {"$ref": "common.schema.json#/$defs/id"}, "workspaceId": {"$ref": "common.schema.json#/$defs/id"}, "projectId": {"$ref": "common.schema.json#/$defs/id"},
+    "actor": {"$ref": "common.schema.json#/$defs/actor"}, "modality": {"enum": ["voice", "text"]}, "transcript": {"type": "string", "minLength": 1},
+    "transcriptUtf8Bytes": {"type": "integer", "minimum": 1}, "transcriptSha256": {"$ref": "common.schema.json#/$defs/hash"}, "sourcePointer": {"$ref": "common.schema.json#/$defs/sourcePointer"},
+    "capturedAt": {"$ref": "common.schema.json#/$defs/timestamp"}, "privacyClass": {"$ref": "common.schema.json#/$defs/privacyClass"}, "visibility": {"$ref": "common.schema.json#/$defs/visibility"}, "roleVisibilityBinding": {"$ref": "common.schema.json#/$defs/roleVisibilityBinding"},
+    "retentionClass": {"enum": ["ephemeral", "session", "project", "workspace", "legal-hold"]}, "editPredecessorId": {"type": ["string", "null"]}, "editPredecessorHash": {"$ref": "common.schema.json#/$defs/nullableHash"},
+    "supersessionReason": {"type": ["string", "null"]}, "synthetic": {"type": "boolean"}, "consequentialAuthorityGranted": {"const": false}
+  },
+  "if": {"properties": {"editPredecessorId": {"type": "null"}}},
+  "then": {"properties": {"editPredecessorHash": {"type": "null"}, "supersessionReason": {"type": "null"}}},
+  "else": {"properties": {"editPredecessorId": {"type": "string", "minLength": 1}, "editPredecessorHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "supersessionReason": {"type": "string", "minLength": 1}}}
+}
