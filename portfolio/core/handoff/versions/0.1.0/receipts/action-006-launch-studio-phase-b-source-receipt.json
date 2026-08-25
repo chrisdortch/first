@@ -1,0 +1,586 @@
+{
+  "actionId": "CLOVER-2026-08-24-006",
+  "actionsPerformed": [
+    "read-public-metadata",
+    "verify-exact-identity",
+    "verify-local-cleanliness",
+    "verify-source-ancestry",
+    "create-isolated-branch",
+    "commit-candidate",
+    "record-handoff-artifacts"
+  ],
+  "authorityUsed": {
+    "commitCandidate": true,
+    "createIsolatedBranch": true,
+    "createNonProductionPreview": false,
+    "openDraftPullRequest": false,
+    "pushCandidateBranch": false,
+    "readPublicMetadata": true,
+    "recordHandoffArtifacts": true,
+    "runNonProductionChecks": false
+  },
+  "branchCapsuleHash": "7c859ee6ad9330e7f42b78467236948280b1765e7c045b4d0dc17e4753d6e2d4",
+  "branchCapsuleId": "cell-capsule:clover-launch-studio-private-owner:20260824",
+  "candidateEffects": {
+    "branch": {
+      "baseCommit": "e5688c771d384d80a8c723cfa655298ce8257889",
+      "branch": "feature/clover-launch-studio-private-owner-app-v0.2c-20260824",
+      "performed": true,
+      "repository": "chrisdortch/first"
+    },
+    "commit": {
+      "commit": "582427e403fe96ccfea85db365a210421e76e16e",
+      "performed": true,
+      "tree": "233c96e56d13fccf49d55b4f6af976c60e5c517b"
+    },
+    "draftPullRequest": {
+      "baseBranch": null,
+      "headBranch": null,
+      "headCommit": null,
+      "number": null,
+      "performed": false,
+      "repository": null,
+      "url": null
+    },
+    "push": {
+      "commit": null,
+      "performed": false,
+      "remoteBranch": null
+    }
+  },
+  "changes": {
+    "changedPaths": [
+      "apps/clover-launch-studio/package.json",
+      "apps/clover-launch-studio/package-lock.json",
+      "apps/clover-launch-studio/tsconfig.json",
+      "apps/clover-launch-studio/next.config.mjs",
+      "apps/clover-launch-studio/src/app/layout.tsx",
+      "apps/clover-launch-studio/src/app/page.tsx",
+      "apps/clover-launch-studio/src/app/globals.css",
+      "apps/clover-launch-studio/src/app/api/health/route.ts",
+      "apps/clover-launch-studio/src/middleware.ts",
+      "apps/clover-launch-studio/src/app/sign-in/[[...sign-in]]/page.tsx",
+      "apps/clover-launch-studio/src/app/access-denied/page.tsx",
+      "apps/clover-launch-studio/src/app/api/sessions/route.ts",
+      "apps/clover-launch-studio/src/app/api/sessions/[sessionId]/route.ts",
+      "apps/clover-launch-studio/src/app/api/sessions/[sessionId]/events/route.ts",
+      "apps/clover-launch-studio/src/app/api/sessions/[sessionId]/export/route.ts",
+      "apps/clover-launch-studio/src/app/api/sessions/[sessionId]/restore/route.ts",
+      "apps/clover-launch-studio/src/app/api/sessions/[sessionId]/handoff/route.ts",
+      "apps/clover-launch-studio/src/components/launch-studio-shell.tsx",
+      "apps/clover-launch-studio/src/components/transcript-editor.tsx",
+      "apps/clover-launch-studio/src/components/progress-timeline.tsx",
+      "apps/clover-launch-studio/src/components/decision-rail.tsx",
+      "apps/clover-launch-studio/src/components/preview-pane.tsx",
+      "apps/clover-launch-studio/src/lib/config.ts",
+      "apps/clover-launch-studio/src/lib/auth.ts",
+      "apps/clover-launch-studio/src/lib/acl.ts",
+      "apps/clover-launch-studio/src/lib/crypto.ts",
+      "apps/clover-launch-studio/src/lib/storage.ts",
+      "apps/clover-launch-studio/src/lib/launch-session-service.ts",
+      "apps/clover-launch-studio/src/lib/handoff-codex-adapter.ts",
+      "apps/clover-launch-studio/test/launch-studio-app.test.mjs",
+      "apps/clover-launch-studio/test/launch-studio-browser.test.mjs"
+    ],
+    "recordedHandoffPaths": [
+      "portfolio/core/handoff/versions/0.1.0/receipts/action-006-launch-studio-phase-b-source-receipt.json",
+      "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0006.json",
+      "portfolio/core/handoff/index.json"
+    ],
+    "summary": "Created exactly 31 local app-source files and one local commit, then recorded the source-bound receipt and consumption index; no validation or external publication occurred.",
+    "targetSourceMutationPerformed": true
+  },
+  "checks": [
+    {
+      "checkHash": "90fdfc52a8c9687d646788eea0dfae50817e4ef34fe5b0732f18180f49161caf",
+      "checkId": "check:action006-source-identity",
+      "conclusion": "passed",
+      "summary": "Exact source commit, tree and ordered parents match the immutable reviewed baseline."
+    },
+    {
+      "checkHash": "c3aa77ba2fe1f0b20471e838768ea71014400701000ce8e827a1e7ef5b30cfb1",
+      "checkId": "check:action006-source-cleanliness",
+      "conclusion": "passed",
+      "summary": "The source baseline was clean before isolated branch construction; candidate is clean after its one commit."
+    },
+    {
+      "checkHash": "065f94b4cd30ad9272f1d015f04bf8991ee004ef176d081ebdf1c9fb7a4443ab",
+      "checkId": "check:action006-source-ancestry",
+      "conclusion": "passed",
+      "summary": "The immutable source baseline remains an ancestor of current protected main."
+    },
+    {
+      "checkHash": "1a8462c7f58b9f8b092d3b591f0cbc0fe5a2d2289695d1c80719c1df65e0e245",
+      "checkId": "check:action006-action-executable",
+      "conclusion": "passed",
+      "summary": "Action 006 was approved, available, unconsumed and executable at the recorded start time."
+    },
+    {
+      "checkHash": "c4d4fd6d89e7e8d08f025508f9b4f1107f5ba455e4ba2be3fe4e6a33102ca96f",
+      "checkId": "check:action006-path-boundary",
+      "conclusion": "passed",
+      "summary": "Candidate changed paths equal the exact ordered 31-path envelope boundary; path-list hash a6622842b852d0bd0476b805db2b209b78167d596f23a935d4086a73c966c9d3."
+    },
+    {
+      "checkHash": "a8ec635adf24a38b536c036656945cb11daa8c63ebd5dc2025d394bd2de465a7",
+      "checkId": "check:action006-file-modes",
+      "conclusion": "passed",
+      "summary": "All 31 candidate files are regular mode 100644 with no symlink, submodule or executable mode."
+    },
+    {
+      "checkHash": "23176a8d258c3752229b1407b7499a5df14832eabce827ab9476923d7e411e20",
+      "checkId": "check:action006-single-commit",
+      "conclusion": "passed",
+      "summary": "One local commit 582427e403fe96ccfea85db365a210421e76e16e with exact tree 233c96e56d13fccf49d55b4f6af976c60e5c517b and sole parent e5688c771d384d80a8c723cfa655298ce8257889 was created."
+    },
+    {
+      "checkHash": "caaaf523482bf9a4b6dc448b489ba21c483068c42378fc36bb330ca0f153847d",
+      "checkId": "check:action006-no-push",
+      "conclusion": "passed",
+      "summary": "No candidate push or remote destination branch occurred."
+    },
+    {
+      "checkHash": "5960da84afb27e36820882d7175ed7b0e92ea48b1e85edf5d1176a5cf5b4f49f",
+      "checkId": "check:action006-no-pr",
+      "conclusion": "passed",
+      "summary": "No application pull request or GitHub Actions run occurred."
+    },
+    {
+      "checkHash": "91145a1548b5d2da3012746e6c838946b2d997e0ea38c37af372d8ee3791cb0b",
+      "checkId": "check:action006-no-provider",
+      "conclusion": "passed",
+      "summary": "No provider project, deployment, configuration, OAuth, database, Blob, environment or secret effect occurred."
+    },
+    {
+      "checkHash": "9560ccee0247b731024b8092e1e9e8e9c39e6b6e5e0ef337a35f7df528688392",
+      "checkId": "check:action006-no-preview",
+      "conclusion": "passed",
+      "summary": "No application preview, deployment, server or production target was created."
+    },
+    {
+      "checkHash": "15b635ee1df300e4816035c9031a01e29c765f0279230bf535d8c6c54321cce9",
+      "checkId": "check:action006-recording-scope",
+      "conclusion": "passed",
+      "summary": "Recorded Handoff paths equal receipt 006, immutable index 0006 and stable root only."
+    },
+    {
+      "checkHash": "3c027d2314e5d37987452f89b9851651fe10c74b46a26ffcd2eb03a03063ff25",
+      "checkId": "check:action006-zero-purchase",
+      "conclusion": "passed",
+      "summary": "Explicit purchase and money movement remained USD 0; no paid external service was purchased."
+    }
+  ],
+  "completedAt": "2026-08-25T17:03:19.984Z",
+  "cost": {
+    "explicitPurchaseOrMoneyMovementUsd": 0,
+    "lane": "existing-local-compute",
+    "paidExternalServicePurchased": false,
+    "providerMeteredUsageCostStatus": "unknown",
+    "providerMeteredUsageCostUsd": null
+  },
+  "documentType": "clover-handoff-execution-receipt",
+  "envelopeHash": "d1bd1b261cfa0b7c52b5cd7bb69058f2011d526ec874492a2253255ce65d9965",
+  "envelopeId": "handoff-action:006:launch-studio-phase-b-source",
+  "evidenceBindings": [
+    {
+      "bindingType": "observation",
+      "boundHashes": [
+        "90839ed5d998b213c28e1c84302d7542bbc1f008fd251931aa77b91c63ca2d1b",
+        "6b48bde82ad7b706930a99a4697c3eec31af20e193ae70012325b9dd1cf0f539",
+        "626b248f7ffb62b158b8e9b39ac120342d567b5681946134222973718d001b2a",
+        "12498e596cdb2aed4303967ac88c7e243744b766e96c975e35b562276a42c1b9",
+        "c712360108c28b35955e6b21e7792e2b5ec12e3d066984f36c37041d26832e7a",
+        "a432059a8ba9099d499c59465cea02974ae41653bcff7573a47489a28d8182b5",
+        "6254dc4d5e8b73c7dc5d5b246f77c60f2dd78e20bb6f10428c8ae620de768c22",
+        "6136c58b6614c4931852f4009414eadf9269f5695f22be17d89f4df8f3dc2902",
+        "0c960376044669cc6092cf240180b63a6ee428a483cf86509b9d26e2c03de9b3",
+        "67eee8bdb4ce77560ee6d3efefe24350eab5f056a63ebf8a509132bbe5efe237",
+        "2bccd0ebcd8d44ea3e24b82c16035b60cf78101d293044896a37c5a8cb2bd987",
+        "50bafdf86c881c7bc8b95852afa770ca0b8525e9cd6c8bac4e49a6e3ffed828c",
+        "46db55fe85c189b315e4af87129d832de50be08461bb139ce034f9042bc16191",
+        "4e1000057101c43e7fb771860d795a918c841f7b58214858f0a6d0fefb11cb1a",
+        "94be75e095943cd9b5dc29fbfe7f71e8417c1b86de8d792f8e3cb83afa737cff",
+        "f8034498b419d6cd70d6bd8ccb3fbc8483ef0cc3cb59dd1a59d69571c2d4e003",
+        "3729a3a3bd6682788e4db73fe7a8729ea28498e78e89d4217ad5d8dca8039b5f",
+        "a13eb3a2e87210ef54d54e88e781786975cf6146e55f662a13457279ec648e3f",
+        "dba036f9a6e855e75a058bc2df1d9f2a9dd80a2f565c30f70d951003467a1b7e",
+        "409d854877b2b95e7922c9265f37fc58672aa9631e4f46647e1d0a074647a196"
+      ],
+      "evidenceId": "evidence:action-006-source-identity",
+      "kind": "source-identity"
+    },
+    {
+      "bindingType": "check",
+      "boundHashes": [
+        "90fdfc52a8c9687d646788eea0dfae50817e4ef34fe5b0732f18180f49161caf",
+        "c3aa77ba2fe1f0b20471e838768ea71014400701000ce8e827a1e7ef5b30cfb1",
+        "1a8462c7f58b9f8b092d3b591f0cbc0fe5a2d2289695d1c80719c1df65e0e245",
+        "c4d4fd6d89e7e8d08f025508f9b4f1107f5ba455e4ba2be3fe4e6a33102ca96f",
+        "a8ec635adf24a38b536c036656945cb11daa8c63ebd5dc2025d394bd2de465a7",
+        "23176a8d258c3752229b1407b7499a5df14832eabce827ab9476923d7e411e20",
+        "caaaf523482bf9a4b6dc448b489ba21c483068c42378fc36bb330ca0f153847d",
+        "5960da84afb27e36820882d7175ed7b0e92ea48b1e85edf5d1176a5cf5b4f49f",
+        "91145a1548b5d2da3012746e6c838946b2d997e0ea38c37af372d8ee3791cb0b",
+        "9560ccee0247b731024b8092e1e9e8e9c39e6b6e5e0ef337a35f7df528688392",
+        "15b635ee1df300e4816035c9031a01e29c765f0279230bf535d8c6c54321cce9",
+        "3c027d2314e5d37987452f89b9851651fe10c74b46a26ffcd2eb03a03063ff25"
+      ],
+      "evidenceId": "evidence:action-006-cleanliness",
+      "kind": "cleanliness"
+    },
+    {
+      "bindingType": "check",
+      "boundHashes": [
+        "065f94b4cd30ad9272f1d015f04bf8991ee004ef176d081ebdf1c9fb7a4443ab"
+      ],
+      "evidenceId": "evidence:action-006-ancestry",
+      "kind": "ancestry"
+    },
+    {
+      "bindingType": "resulting-state",
+      "boundHashes": [
+        "05f981512334aa37cd880eea7908a86ed3558698458ae1673dbd45df13d3ae98"
+      ],
+      "evidenceId": "evidence:action-006-receipt",
+      "kind": "receipt"
+    }
+  ],
+  "executorLane": "codex-bounded-execution",
+  "observations": [
+    {
+      "availability": "available",
+      "evidenceHash": "90839ed5d998b213c28e1c84302d7542bbc1f008fd251931aa77b91c63ca2d1b",
+      "evidenceRef": "source-requirement:source:action-006-protected-main",
+      "identityKey": "chrisdortch/first:main@e5688c771d384d80a8c723cfa655298ce8257889:tree:4c84129b4fb5ea098ac9d2325bc2cb387857a471:parents:dc7a299309edad70558483bb1816e6dd68dd4171,62ada264d10098ac9e9077a5d73553ebacaf5a39",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-1",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "chrisdortch/first:main@e5688c771d384d80a8c723cfa655298ce8257889:tree:4c84129b4fb5ea098ac9d2325bc2cb387857a471:parents:dc7a299309edad70558483bb1816e6dd68dd4171,62ada264d10098ac9e9077a5d73553ebacaf5a39",
+      "sourceId": "github",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "verified protected-main Action input source"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "6b48bde82ad7b706930a99a4697c3eec31af20e193ae70012325b9dd1cf0f539",
+      "evidenceRef": "source-requirement:source:action-006-launch-stable-index",
+      "identityKey": "launch-studio-index:self:97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89:canonical:d957a5bb786194f367b3b7410acedc518390d6643b6241362c3499fedf67b0bb:raw:c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-2",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "launch-studio-index:self:97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89:canonical:d957a5bb786194f367b3b7410acedc518390d6643b6241362c3499fedf67b0bb:raw:c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "merged Launch Studio stable index"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "626b248f7ffb62b158b8e9b39ac120342d567b5681946134222973718d001b2a",
+      "evidenceRef": "source-requirement:source:action-006-context-pack",
+      "identityKey": "context-pack:canonical:15c8d13ae88f90b48b0038157e0af2ff0cd1fa9efd5f55b95f4b64747b515781",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-3",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "context-pack:canonical:15c8d13ae88f90b48b0038157e0af2ff0cd1fa9efd5f55b95f4b64747b515781",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "sealed Phase B 0.2C context-pack"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "12498e596cdb2aed4303967ac88c7e243744b766e96c975e35b562276a42c1b9",
+      "evidenceRef": "source-requirement:source:action-006-impact-scan",
+      "identityKey": "impact-scan:canonical:87ec570eba0b2131fcca380e4af9d6edaed91b8cbff6f851b8eafc67c98bc762",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-4",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "impact-scan:canonical:87ec570eba0b2131fcca380e4af9d6edaed91b8cbff6f851b8eafc67c98bc762",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "sealed Phase B 0.2C impact-scan"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "c712360108c28b35955e6b21e7792e2b5ec12e3d066984f36c37041d26832e7a",
+      "evidenceRef": "source-requirement:source:action-006-budget",
+      "identityKey": "budget:canonical:cff5460faa51f49287e4acede4c17da5617d39a10ed35bc4d0d7cb35891d5c2a",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-5",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "budget:canonical:cff5460faa51f49287e4acede4c17da5617d39a10ed35bc4d0d7cb35891d5c2a",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "sealed Phase B 0.2C budget"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "a432059a8ba9099d499c59465cea02974ae41653bcff7573a47489a28d8182b5",
+      "evidenceRef": "source-requirement:source:action-006-acceptance-contract",
+      "identityKey": "acceptance-contract:canonical:6a58e0ff41597761ad06fec91776e32611eb31b6e79f72574b760fb7c3042f8f",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-6",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "acceptance-contract:canonical:6a58e0ff41597761ad06fec91776e32611eb31b6e79f72574b760fb7c3042f8f",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "sealed Phase B 0.2C acceptance-contract"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "6254dc4d5e8b73c7dc5d5b246f77c60f2dd78e20bb6f10428c8ae620de768c22",
+      "evidenceRef": "source-requirement:source:action-006-build-charter",
+      "identityKey": "build-charter:canonical:666df36d6bb5567aa8eb59f01dfac48b6b3b735d42cf64bbb0f17fc14f818072",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-7",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "build-charter:canonical:666df36d6bb5567aa8eb59f01dfac48b6b3b735d42cf64bbb0f17fc14f818072",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "sealed Phase B 0.2C build-charter"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "6136c58b6614c4931852f4009414eadf9269f5695f22be17d89f4df8f3dc2902",
+      "evidenceRef": "source-requirement:source:action-006-executor-work-order",
+      "identityKey": "executor-work-order:canonical:564e316a9ebed8ba8dad9299193e0626c25630d40267cf694a772b8fc0b4061f",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-required-source-8",
+      "observedAt": "2026-08-25T16:42:35.823Z",
+      "observedIdentity": "executor-work-order:canonical:564e316a9ebed8ba8dad9299193e0626c25630d40267cf694a772b8fc0b4061f",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact immutable source requirement resolved before source-only execution.",
+      "subject": "sealed Phase B 0.2C executor-work-order"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "0c960376044669cc6092cf240180b63a6ee428a483cf86509b9d26e2c03de9b3",
+      "evidenceRef": "github:branch:main",
+      "identityKey": "current-main:270c83bc1b8af76dd91619b3b26edf747033c504:tree:283286d075bbc5878b7af0d80464eaca9a9b892a",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-current-main",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "current-main:270c83bc1b8af76dd91619b3b26edf747033c504:tree:283286d075bbc5878b7af0d80464eaca9a9b892a",
+      "sourceId": "github",
+      "state": "Protected main remained exact and GitHub verified/valid at execution readback.",
+      "subject": "protected current main"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "67eee8bdb4ce77560ee6d3efefe24350eab5f056a63ebf8a509132bbe5efe237",
+      "evidenceRef": "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0005.json",
+      "identityKey": "handoff-index-0005:self:baf1b68673be3f8c3920b40f91279b5f87a2a2224b0ca8f7f4193e59c8f8ca47:raw:c6b8b1c9b6c59bee6ee7583c532af98ed16d8c3082580a0fb78a1c11432c2caf",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-approved-index",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "handoff-index-0005:self:baf1b68673be3f8c3920b40f91279b5f87a2a2224b0ca8f7f4193e59c8f8ca47:raw:c6b8b1c9b6c59bee6ee7583c532af98ed16d8c3082580a0fb78a1c11432c2caf",
+      "sourceId": "local-canonical-checkout",
+      "state": "Stable root was byte-identical to approved immutable index 0005 before consumption.",
+      "subject": "approved Handoff index 0005"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "2bccd0ebcd8d44ea3e24b82c16035b60cf78101d293044896a37c5a8cb2bd987",
+      "evidenceRef": "portfolio/core/handoff/versions/0.1.0/approvals/action-006-launch-studio-phase-b-source-approval.json",
+      "identityKey": "approval:handoff-approval:006:launch-studio-phase-b-source:self:988704658b9deecd6e343147f14bf69e054a218c63e9af140063d7cf85d7983d:statement:df16607a0e2f00d3e94ff05949314fe005e1ff4ae57f7016f1c9c20b7374d53c",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-owner-approval",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "approval:handoff-approval:006:launch-studio-phase-b-source:self:988704658b9deecd6e343147f14bf69e054a218c63e9af140063d7cf85d7983d:statement:df16607a0e2f00d3e94ff05949314fe005e1ff4ae57f7016f1c9c20b7374d53c",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact merged owner approval remained valid and unconsumed at execution start.",
+      "subject": "Action 006 owner approval attestation"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "50bafdf86c881c7bc8b95852afa770ca0b8525e9cd6c8bac4e49a6e3ffed828c",
+      "evidenceRef": "github:commit:e5688c771d384d80a8c723cfa655298ce8257889",
+      "identityKey": "source:e5688c771d384d80a8c723cfa655298ce8257889:tree:4c84129b4fb5ea098ac9d2325bc2cb387857a471",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-immutable-source",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "source:e5688c771d384d80a8c723cfa655298ce8257889:tree:4c84129b4fb5ea098ac9d2325bc2cb387857a471",
+      "sourceId": "github",
+      "state": "Reviewed application source commit and tree remained immutable.",
+      "subject": "immutable application source baseline"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "46db55fe85c189b315e4af87129d832de50be08461bb139ce034f9042bc16191",
+      "evidenceRef": "github:commit:e5688c771d384d80a8c723cfa655298ce8257889:parents",
+      "identityKey": "source:e5688c771d384d80a8c723cfa655298ce8257889:parents:dc7a299309edad70558483bb1816e6dd68dd4171,62ada264d10098ac9e9077a5d73553ebacaf5a39",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-source-parents",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "source:e5688c771d384d80a8c723cfa655298ce8257889:parents:dc7a299309edad70558483bb1816e6dd68dd4171,62ada264d10098ac9e9077a5d73553ebacaf5a39",
+      "sourceId": "github",
+      "state": "Exact source tree and ordered merge parents remained resolved.",
+      "subject": "immutable source tree and ordered parents"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "4e1000057101c43e7fb771860d795a918c841f7b58214858f0a6d0fefb11cb1a",
+      "evidenceRef": "git:merge-base:e5688c771d384d80a8c723cfa655298ce8257889:270c83bc1b8af76dd91619b3b26edf747033c504",
+      "identityKey": "ancestor:e5688c771d384d80a8c723cfa655298ce8257889:of:270c83bc1b8af76dd91619b3b26edf747033c504",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-source-ancestry",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "ancestor:e5688c771d384d80a8c723cfa655298ce8257889:of:270c83bc1b8af76dd91619b3b26edf747033c504",
+      "sourceId": "local-canonical-checkout",
+      "state": "Immutable application source remained an ancestor of protected main.",
+      "subject": "source ancestry"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "94be75e095943cd9b5dc29fbfe7f71e8417c1b86de8d792f8e3cb83afa737cff",
+      "evidenceRef": "github:branch-search:feature/clover-launch-studio-private-owner-app-v0.2c-20260824:pre-execution",
+      "identityKey": "branch-absent:feature/clover-launch-studio-private-owner-app-v0.2c-20260824",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-destination-absent-before",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "branch-absent:feature/clover-launch-studio-private-owner-app-v0.2c-20260824",
+      "sourceId": "github",
+      "state": "Destination branch was absent locally and remotely before the isolated local branch was created.",
+      "subject": "destination branch absence before execution"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "f8034498b419d6cd70d6bd8ccb3fbc8483ef0cc3cb59dd1a59d69571c2d4e003",
+      "evidenceRef": "git:branch:feature/clover-launch-studio-private-owner-app-v0.2c-20260824",
+      "identityKey": "local-branch:feature/clover-launch-studio-private-owner-app-v0.2c-20260824:base:e5688c771d384d80a8c723cfa655298ce8257889",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-candidate-branch",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "local-branch:feature/clover-launch-studio-private-owner-app-v0.2c-20260824:base:e5688c771d384d80a8c723cfa655298ce8257889",
+      "sourceId": "local-canonical-checkout",
+      "state": "Exact isolated application branch exists locally only.",
+      "subject": "local candidate branch after execution"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "3729a3a3bd6682788e4db73fe7a8729ea28498e78e89d4217ad5d8dca8039b5f",
+      "evidenceRef": "git:commit:582427e403fe96ccfea85db365a210421e76e16e",
+      "identityKey": "candidate:582427e403fe96ccfea85db365a210421e76e16e:tree:233c96e56d13fccf49d55b4f6af976c60e5c517b:paths:31:path-list:a6622842b852d0bd0476b805db2b209b78167d596f23a935d4086a73c966c9d3:manifest:285c113b4e1703c76f83c0893c821371cfa4516419ba25a927c31bbe74c988ee",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-candidate-commit",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "candidate:582427e403fe96ccfea85db365a210421e76e16e:tree:233c96e56d13fccf49d55b4f6af976c60e5c517b:paths:31:path-list:a6622842b852d0bd0476b805db2b209b78167d596f23a935d4086a73c966c9d3:manifest:285c113b4e1703c76f83c0893c821371cfa4516419ba25a927c31bbe74c988ee",
+      "sourceId": "local-canonical-checkout",
+      "state": "One local source commit contains exactly 31 regular mode-100644 paths.",
+      "subject": "local application commit and tree"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "a13eb3a2e87210ef54d54e88e781786975cf6146e55f662a13457279ec648e3f",
+      "evidenceRef": "github:branch-search:feature/clover-launch-studio-private-owner-app-v0.2c-20260824:post-execution",
+      "identityKey": "remote-branch-absent:feature/clover-launch-studio-private-owner-app-v0.2c-20260824",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-remote-branch-absent",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "remote-branch-absent:feature/clover-launch-studio-private-owner-app-v0.2c-20260824",
+      "sourceId": "github",
+      "state": "No remote destination branch, push or application pull request exists.",
+      "subject": "remote candidate branch absence after execution"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "dba036f9a6e855e75a058bc2df1d9f2a9dd80a2f565c30f70d951003467a1b7e",
+      "evidenceRef": "vercel:readback:action006-source-execution",
+      "identityKey": "vercel:team:team_kx19aCrSTnej6wpz0fLgmYDY:projects:10:gateway-deployments:18:newest:dpl_DNkMJ7XHi5gkwRQLwMJT6i8cZAk7",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-vercel-inventory",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "vercel:team:team_kx19aCrSTnej6wpz0fLgmYDY:projects:10:gateway-deployments:18:newest:dpl_DNkMJ7XHi5gkwRQLwMJT6i8cZAk7",
+      "sourceId": "vercel",
+      "state": "Vercel inventory remained unchanged; no Launch Studio project or deployment exists.",
+      "subject": "unchanged Vercel and Gateway inventories"
+    },
+    {
+      "availability": "available",
+      "evidenceHash": "409d854877b2b95e7922c9265f37fc58672aa9631e4f46647e1d0a074647a196",
+      "evidenceRef": "local:source-boundary:285c113b4e1703c76f83c0893c821371cfa4516419ba25a927c31bbe74c988ee",
+      "identityKey": "effects:provider:0:preview:0:private-data:0:source-files:31",
+      "identityResolution": "exact-resolved",
+      "observationId": "observation:action006-no-provider-private-effect",
+      "observedAt": "2026-08-25T17:03:19.984Z",
+      "observedIdentity": "effects:provider:0:preview:0:private-data:0:source-files:31",
+      "sourceId": "local-canonical-checkout",
+      "state": "No provider mutation, preview, private-data ingestion or sensitive-content finding occurred.",
+      "subject": "provider and private-data effect boundary"
+    }
+  ],
+  "outcome": "succeeded",
+  "previews": [],
+  "receiptId": "handoff-receipt:006:launch-studio-phase-b-source",
+  "reconciliation": {
+    "inputCapsuleHash": "7c859ee6ad9330e7f42b78467236948280b1765e7c045b4d0dc17e4753d6e2d4",
+    "inputCapsuleId": "cell-capsule:clover-launch-studio-private-owner:20260824",
+    "resultCapsuleHash": null,
+    "resultCapsuleId": null,
+    "resultCapsulePath": null,
+    "status": "not-applicable"
+  },
+  "resultingState": {
+    "persistedReceiptRef": "portfolio/core/handoff/versions/0.1.0/receipts/action-006-launch-studio-phase-b-source-receipt.json",
+    "productionStateChanged": false,
+    "projectId": "clover-launch-studio-private-owner",
+    "sourceCommit": "582427e403fe96ccfea85db365a210421e76e16e",
+    "summary": "One unvalidated local source-only candidate commit was created; no validation, push, PR, provider, preview or production effect occurred.",
+    "unknowns": [
+      "Application source is unvalidated.",
+      "Dependencies were not installed.",
+      "Unit, integration and browser tests were not run.",
+      "Build, lint and typecheck were not run.",
+      "Authentication implementation is unverified.",
+      "ACL implementation is unverified.",
+      "Encryption and storage implementation is unverified.",
+      "Export and restore behavior is unverified.",
+      "Accessibility is unverified.",
+      "Provider selection and readiness remain unknown.",
+      "No preview exists.",
+      "Exact marginal included-model usage cost is unavailable because it is not exposed."
+    ]
+  },
+  "rollback": {
+    "anchorIdentity": "e5688c771d384d80a8c723cfa655298ce8257889",
+    "anchorType": "git-commit",
+    "exercised": false,
+    "required": true
+  },
+  "schemaVersion": "0.1.0",
+  "sideEffects": {
+    "domainOrAliasChanged": false,
+    "externalMessageSent": false,
+    "handoffLedgerArtifactsRecorded": true,
+    "mergePerformed": false,
+    "paymentExercised": false,
+    "persistentConfigurationChanged": false,
+    "productionDataAccessed": false,
+    "productionDeploymentPerformed": false,
+    "productionTargetChanged": false,
+    "purchaseMade": false,
+    "secretChanged": false
+  },
+  "source": {
+    "bindingRole": "target-source",
+    "branch": "main",
+    "commit": "e5688c771d384d80a8c723cfa655298ce8257889",
+    "repository": "chrisdortch/first",
+    "tree": "4c84129b4fb5ea098ac9d2325bc2cb387857a471"
+  },
+  "startedAt": "2026-08-25T16:42:35.823Z",
+  "unknowns": [
+    "Application source is unvalidated.",
+    "Dependencies were not installed.",
+    "Unit, integration and browser tests were not run.",
+    "Build, lint and typecheck were not run.",
+    "Authentication implementation is unverified.",
+    "ACL implementation is unverified.",
+    "Encryption and storage implementation is unverified.",
+    "Export and restore behavior is unverified.",
+    "Accessibility is unverified.",
+    "Provider selection and readiness remain unknown.",
+    "No preview exists.",
+    "Exact marginal included-model usage cost is unavailable because it is not exposed."
+  ],
+  "receiptHash": "d57da7f0ac78121f42e7f7d9363c7a7a65a5e73bd3df06c1ec905530b5f4bbf5"
+}
