@@ -1,0 +1,29 @@
+{
+  "actionId": "CLOVER-2026-08-24-006",
+  "approvalStatement": "APPROVE CLOVER-2026-08-24-006 d1bd1b261cfa0b7c52b5cd7bb69058f2011d526ec874492a2253255ce65d9965",
+  "approvedAt": "2026-08-25T13:21:54.804Z",
+  "assurance": {
+    "cryptographicOwnerIdentityVerified": false,
+    "identityBasis": "owner-provided-exact-authorization-record",
+    "nonProductionCandidateAuthorityOnly": true
+  },
+  "attestationId": "handoff-approval:006:launch-studio-phase-b-source",
+  "authority": {
+    "mergeAuthority": false,
+    "productionDataAuthority": false,
+    "productionDeploymentAuthority": false,
+    "recordsApprovalOnly": true,
+    "standingWriteAuthority": false
+  },
+  "decision": "approve",
+  "documentType": "clover-handoff-owner-approval-attestation",
+  "envelopeHash": "d1bd1b261cfa0b7c52b5cd7bb69058f2011d526ec874492a2253255ce65d9965",
+  "envelopeId": "handoff-action:006:launch-studio-phase-b-source",
+  "ownerId": "owner:chris-dortch",
+  "recordingAuthorizationEvidenceHash": "df16607a0e2f00d3e94ff05949314fe005e1ff4ae57f7016f1c9c20b7374d53c",
+  "recordingLane": "codex-bounded-approval-recording",
+  "schemaVersion": "0.1.0",
+  "statementHash": "df16607a0e2f00d3e94ff05949314fe005e1ff4ae57f7016f1c9c20b7374d53c",
+  "validUntil": "2026-08-28T00:30:18.000Z",
+  "attestationHash": "988704658b9deecd6e343147f14bf69e054a218c63e9af140063d7cf85d7983d"
+}
