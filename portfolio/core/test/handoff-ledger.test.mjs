@@ -1891,7 +1891,7 @@ test("Action 005 deterministic synthetic approval and consumption rehearsal is l
   const approvalStatement = canonicalOwnerApprovalStatement(action005);
   assert.equal(approvalStatement, `APPROVE ${action005.actionId} ${action005.envelopeHash}`);
   const attestation = createOwnerApprovalAttestation(action005, {
-    attestationId: "handoff-approval:006:synthetic-lifecycle-rehearsal",
+    attestationId: "handoff-approval:005:synthetic-lifecycle-rehearsal",
     ownerId: "owner:chris-dortch",
     decision: "approve",
     approvalStatement,
@@ -1899,6 +1899,13 @@ test("Action 005 deterministic synthetic approval and consumption rehearsal is l
     recordingLane: "codex-bounded-approval-recording",
     recordingAuthorizationEvidenceHash: sha256Canonical({ basis: "synthetic-action005-lifecycle-rehearsal" })
   });
+  assert.equal(
+    attestation.attestationId,
+    "handoff-approval:005:synthetic-lifecycle-rehearsal"
+  );
+  assert.equal(attestation.actionId, action005.actionId);
+  assert.equal(attestation.envelopeId, action005.envelopeId);
+  assert.equal(attestation.envelopeHash, action005.envelopeHash);
   writeJson(tempRoot, approvalPath, attestation);
   const approvedIndex = createOwnerApprovedIndexVersion(index0003, action005, attestation, {
     indexId: "handoff-index:action-005-synthetic-approved:20260824",
@@ -2762,7 +2769,7 @@ test("Action 006 deterministic synthetic approval and consumption rehearsal is l
   const approvalStatement = canonicalOwnerApprovalStatement(action006);
   assert.equal(approvalStatement, `APPROVE ${action006.actionId} ${action006.envelopeHash}`);
   const attestation = createOwnerApprovalAttestation(action006, {
-    attestationId: "handoff-approval:005:synthetic-lifecycle-rehearsal",
+    attestationId: "handoff-approval:006:synthetic-lifecycle-rehearsal",
     ownerId: "owner:chris-dortch",
     decision: "approve",
     approvalStatement,
@@ -2770,6 +2777,13 @@ test("Action 006 deterministic synthetic approval and consumption rehearsal is l
     recordingLane: "codex-bounded-approval-recording",
     recordingAuthorizationEvidenceHash: sha256Canonical({ basis: "synthetic-action006-lifecycle-rehearsal" })
   });
+  assert.equal(
+    attestation.attestationId,
+    "handoff-approval:006:synthetic-lifecycle-rehearsal"
+  );
+  assert.equal(attestation.actionId, action006.actionId);
+  assert.equal(attestation.envelopeId, action006.envelopeId);
+  assert.equal(attestation.envelopeHash, action006.envelopeHash);
   writeJson(tempRoot, approvalPath, attestation);
   const approvedIndex = createOwnerApprovedIndexVersion(index0004, action006, attestation, {
     indexId: "handoff-index:action-006-synthetic-approved:20260824",
