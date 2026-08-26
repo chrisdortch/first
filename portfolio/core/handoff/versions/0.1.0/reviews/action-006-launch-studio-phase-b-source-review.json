@@ -1,0 +1,31 @@
+{
+  "authority": {
+    "decisionIsMergeApproval": false,
+    "decisionIsProductionDataApproval": false,
+    "decisionIsProductionDeploymentApproval": false,
+    "decisionIsStandingAuthority": false
+  },
+  "decision": "hold",
+  "decisionId": "handoff-review:006:connector-scope-hold",
+  "documentType": "clover-handoff-independent-review-decision",
+  "envelopeHash": "d1bd1b261cfa0b7c52b5cd7bb69058f2011d526ec874492a2253255ce65d9965",
+  "envelopeId": "handoff-action:006:launch-studio-phase-b-source",
+  "findings": [
+    {
+      "findingId": "finding:action006-out-of-scope-vercel-observation",
+      "severity": "high",
+      "status": "observed",
+      "summary": "The successful receipt records a Vercel observation even though the immutable Action 006 envelope allows only github and local-canonical-checkout. Physical source creation remains succeeded, but the receipt is held from downstream validation acceptance."
+    }
+  ],
+  "receiptHash": "d57da7f0ac78121f42e7f7d9363c7a7a65a5e73bd3df06c1ec905530b5f4bbf5",
+  "receiptId": "handoff-receipt:006:launch-studio-phase-b-source",
+  "reviewedAt": "2026-08-26T13:18:21.300Z",
+  "reviewer": {
+    "executionLaneDifferent": true,
+    "independenceDeclared": true,
+    "reviewerId": "reviewer:chatgpt-personal-pro"
+  },
+  "schemaVersion": "0.1.0",
+  "decisionHash": "d5e11599f495b98398766a7c55f2cac26ed46c285aa878fcdc552533597297cb"
+}
