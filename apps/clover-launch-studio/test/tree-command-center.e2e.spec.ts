@@ -1,11 +1,56 @@
 import AxeBuilder from "@axe-core/playwright";
-import { expect, test, type Page } from "@playwright/test";
+import path from "node:path";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 const exactViews = [
   "Today", "Tree", "Master Plan", "Branches", "Roots and Source Coverage", "Captain's Log", "Fruit Ledger",
   "Collaboration and JV Center", "Action Center", "System Health", "Launch Studio session"
 ];
+const exactSyntheticOwnerText = "Create a new synthetic SongAndStage collaboration opportunity with no private data.";
 const runtimeFindings = new WeakMap<Page, string[]>();
+
+function screenshotPath(testInfo: TestInfo, filename: string) {
+  return process.env.CLOVER_SCREENSHOT_DIR ? path.join(process.env.CLOVER_SCREENSHOT_DIR, filename) : testInfo.outputPath(filename);
+}
+
+async function expectNoHorizontalOverflow(page: Page, view: string) {
+  const widths = await page.evaluate((activeView) => {
+    const measure = (element: Element | null) => {
+      if (!(element instanceof HTMLElement)) return null;
+      const bounds = element.getBoundingClientRect();
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        left: bounds.left,
+        right: bounds.right,
+        width: bounds.width
+      };
+    };
+    return {
+      view: activeView,
+      viewportWidth: window.innerWidth,
+      document: measure(document.documentElement),
+      body: measure(document.body),
+      main: measure(document.querySelector(".command-main")),
+      panels: Array.from(document.querySelectorAll(".command-panel, .prototype-card, .owner-input-card, .understanding-card, .recommended-packet")).map((panel, index) => {
+        const measured = measure(panel);
+        if (!measured) throw new Error(`Expected an HTML panel at index ${index}`);
+        return { label: panel.querySelector("h2, h3")?.textContent?.trim() ?? `panel-${index + 1}`, ...measured };
+      })
+    };
+  }, view);
+  const diagnostic = JSON.stringify(widths, null, 2);
+  for (const [label, measured] of [["document", widths.document], ["body", widths.body], ["main", widths.main]] as const) {
+    expect(measured, `${label} missing\n${diagnostic}`).not.toBeNull();
+    expect(measured!.scrollWidth, `${label} overflow in ${view}\n${diagnostic}`).toBeLessThanOrEqual(measured!.clientWidth);
+    expect(measured!.right, `${label} exceeds viewport in ${view}\n${diagnostic}`).toBeLessThanOrEqual(widths.viewportWidth + 0.5);
+  }
+  for (const panel of widths.panels) {
+    expect(panel.scrollWidth, `panel ${panel.label} overflow in ${view}\n${diagnostic}`).toBeLessThanOrEqual(panel.clientWidth);
+    expect(panel.left, `panel ${panel.label} starts outside viewport in ${view}\n${diagnostic}`).toBeGreaterThanOrEqual(-0.5);
+    expect(panel.right, `panel ${panel.label} exceeds viewport in ${view}\n${diagnostic}`).toBeLessThanOrEqual(widths.viewportWidth + 0.5);
+  }
+}
 
 test.beforeEach(async ({ page }) => {
   const runtimeErrors: string[] = [];
@@ -30,7 +75,9 @@ test("renders the exact source-bound command center without runtime or privacy l
   await expect(page.getByText("Private data accessed: false")).toBeVisible();
   const body = await page.locator("body").innerText();
   expect(body).not.toMatch(/\/Users\/|BEGIN [A-Z ]*PRIVATE KEY|sk-(?:proj-)?[A-Za-z0-9_-]{20,}/u);
-  await page.screenshot({ path: testInfo.outputPath(`tree-command-center-${testInfo.project.name}.png`), fullPage: true });
+  if (testInfo.project.name === "desktop-chromium") {
+    await page.screenshot({ path: screenshotPath(testInfo, "clover-tree-command-center-desktop-today.png"), fullPage: true });
+  }
 });
 
 test("Tree and status views preserve held, candidate, unknown and provider-degraded truth", async ({ page }) => {
@@ -48,7 +95,7 @@ test("Tree and status views preserve held, candidate, unknown and provider-degra
 test("owner input classifies reviewed text, hashes it and records only a local successor", async ({ page }) => {
   await page.getByRole("button", { name: "Action Center", exact: true }).click();
   const input = page.getByLabel("Exact editable text");
-  await input.fill("Create a new synthetic SongAndStage collaboration opportunity with no private data.");
+  await input.fill(exactSyntheticOwnerText);
   await expect(page.getByRole("heading", { name: "collaboration opportunity" })).toBeVisible();
   await expect(page.locator(".metric code").nth(1)).toHaveText(/^[a-f0-9]{64}$/u);
   await page.getByRole("button", { name: "Save immutable successor" }).click();
@@ -93,9 +140,46 @@ test("security and accessibility boundaries hold on the rendered command center"
   expect(results.violations).toEqual([]);
 });
 
-test("mobile layout has no horizontal document overflow", async ({ page }, testInfo) => {
+test("mobile 390x844 preserves all views, full integrity digests and shrink boundaries", async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith("mobile"), "mobile project only");
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-  await page.getByRole("button", { name: "Tree", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectNoHorizontalOverflow(page, "Today");
+  await page.screenshot({ path: screenshotPath(testInfo, "clover-tree-command-center-mobile-today.png"), fullPage: true });
+
+  for (const view of exactViews) {
+    const viewButton = page.getByRole("button", { name: view, exact: true });
+    await viewButton.click();
+    await expect(viewButton).toHaveAttribute("aria-current", "page");
+
+    if (view === "Action Center") {
+      await page.getByLabel("Exact editable text").fill(exactSyntheticOwnerText);
+      const digestNode = page.locator(".owner-input-card .metric").filter({ hasText: "SHA-256" }).locator("code");
+      await expect(digestNode).toHaveText(/^[a-f0-9]{64}$/u);
+      const digest = await digestNode.textContent();
+      expect(digest).toMatch(/^[a-f0-9]{64}$/u);
+      await expect(digestNode).toHaveAttribute("title", digest!);
+      expect(await digestNode.evaluate((node) => node.textContent)).toBe(digest);
+      await expectNoHorizontalOverflow(page, view);
+      await page.screenshot({ path: screenshotPath(testInfo, "clover-tree-command-center-mobile-action-center.png"), fullPage: true });
+      continue;
+    }
+
+    if (view === "Launch Studio session") {
+      const transcript = page.getByLabel("Reviewed instruction or transcript");
+      await transcript.fill(exactSyntheticOwnerText);
+      const integrityGrid = page.locator("#transcript-integrity");
+      await expect(integrityGrid).toBeVisible();
+      const digestNode = integrityGrid.locator(".metric").filter({ hasText: "SHA-256" }).locator("code");
+      await expect(digestNode).toHaveText(/^[a-f0-9]{64}$/u);
+      const digest = await digestNode.textContent();
+      expect(digest).toMatch(/^[a-f0-9]{64}$/u);
+      await expect(digestNode).toHaveAttribute("title", digest!);
+      expect(await digestNode.evaluate((node) => node.textContent)).toBe(digest);
+      await expectNoHorizontalOverflow(page, view);
+      await page.screenshot({ path: screenshotPath(testInfo, "clover-tree-command-center-mobile-launch-studio.png"), fullPage: true });
+      continue;
+    }
+
+    await expectNoHorizontalOverflow(page, view);
+  }
 });
