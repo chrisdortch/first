@@ -7,7 +7,9 @@ import test from "node:test";
 
 import { canonicalize, sha256Bytes, sha256Canonical } from "../lib/canonical-json.mjs";
 import {
+  assessReceiptEvidenceScope,
   assertActionEnvelopeExecutable,
+  assertReceiptEvidenceScope,
   assertSanitizedHandoffDocument,
   canonicalOwnerApprovalStatement,
   computeHandoffHash,
@@ -20,7 +22,8 @@ import {
   validateHandoffLedger,
   validateIndependentReviewDecision,
   validateIndexTransition,
-  validateOwnerApprovalAttestation
+  validateOwnerApprovalAttestation,
+  validateProspectiveConsumptionTransition
 } from "../lib/handoff-ledger.mjs";
 import {
   assertBuildCharter,
@@ -3218,6 +3221,42 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
   assert.deepEqual(action006Receipt.observations
     .filter((observation) => observation.observationId === "observation:action006-vercel-inventory")
     .map((observation) => observation.sourceId), ["vercel"]);
+  assert.deepEqual(assessReceiptEvidenceScope(action006Receipt, action006), {
+    compliant: false,
+    allowedConnectors: ["github", "local-canonical-checkout"],
+    evidenceSourceIds: ["github", "local-canonical-checkout", "vercel"],
+    outOfScopeSourceIds: ["vercel"]
+  });
+  assert.throws(() => assertReceiptEvidenceScope(action006Receipt, action006),
+    (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION" &&
+      error.details.outOfScopeSourceIds[0] === "vercel");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+    envelopes: [action006],
+    receipts: [action006Receipt]
+  }), (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  const structurallyValidHistoricalConsumption = validateIndexTransition(index0005, index0006);
+  assert.deepEqual(structurallyValidHistoricalConsumption,
+    { valid: true, transitionedEntries: 1, appendedEntries: 0 });
+  const allowedOnlyReceipt = clone(action006Receipt);
+  allowedOnlyReceipt.observations = allowedOnlyReceipt.observations.filter(({ sourceId }) => sourceId !== "vercel");
+  assert.equal(assessReceiptEvidenceScope(allowedOnlyReceipt, action006).compliant, true);
+  for (const invalidSourceId of ["Vercel", "../vercel", " vercel", "", null]) {
+    const malformed = clone(action006Receipt);
+    malformed.observations[0].sourceId = invalidSourceId;
+    assert.throws(() => assessReceiptEvidenceScope(malformed, action006),
+      (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  }
+  const duplicatedAllowlist = clone(action006);
+  duplicatedAllowlist.scope.allowedConnectors.push("github");
+  assert.throws(() => assessReceiptEvidenceScope(action006Receipt, duplicatedAllowlist),
+    (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  const invalidApproval = clone(action006Review);
+  invalidApproval.decision = "approve";
+  const sealedInvalidApproval = sealHandoffDocument(invalidApproval, "decisionHash");
+  assert.throws(() => validateIndependentReviewDecision(sealedInvalidApproval, {
+    receipt: action006Receipt,
+    envelope: action006
+  }), (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
   assert.equal(action006Receipt.outcome, "succeeded");
   assert.equal(sha256Bytes(fs.readFileSync(action006ReceiptPath)),
     "a2d1a11c128b72aa58ea7a59e2303e6ba011d113f458cc797a09f6581f68a823");
@@ -3301,17 +3340,22 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
   assert.equal(fs.lstatSync(action006ReviewIndexPath).isSymbolicLink(), false);
   assert.equal(sha256Bytes(fs.readFileSync(path.join(repositoryRoot,
     "portfolio/core/lib/handoff-ledger.mjs"))),
-  "e169202b2d750fb79b5a76a7d9e67094e5cb8035cca6db9617cd0b2058837dc0");
+  "0ca8538ee50dcd4f51c7ec4e5bbef7b51eb16970e734993564bf7d908c7fc13b");
   const launchStablePath = path.join(repositoryRoot, "portfolio/core/launch-studio/index.json");
-  const launchImmutablePath = path.join(repositoryRoot,
+  const launchGenesisPath = path.join(repositoryRoot,
     "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
+  const launchImmutablePath = path.join(repositoryRoot,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
   assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchImmutablePath)), true);
-  assert.equal(sha256Bytes(fs.readFileSync(launchStablePath)),
+  assert.equal(sha256Bytes(fs.readFileSync(launchGenesisPath)),
     "c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a");
+  assert.equal(sha256Bytes(fs.readFileSync(launchStablePath)),
+    "44d17cdb17fb3d96366f13880f109d6a65534e21aabc812a054bf7ab9ea0383f");
   const launchIndex = readJson(launchImmutablePath);
-  assert.equal(launchIndex.indexId, "launch_studio_index_0001");
+  assert.equal(launchIndex.indexId, "launch_studio_index_0002");
+  assert.equal(launchIndex.successorMode, "dependency-pin-rollover");
   assert.equal(launchIndex.indexHash,
-    "97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89");
+    "f890fc80f851a7dbf4693c482fe84b47d406b0fed40b846c841b8588a8862a04");
 });
 
 test("Action 006 deterministic synthetic approval and consumption rehearsal is lifecycle-complete and fail-closed", (t) => {

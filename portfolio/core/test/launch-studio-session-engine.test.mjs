@@ -43,7 +43,7 @@ function participantRole(overrides = {}) {
   return { ...unsigned, recordHash: sha256Canonical(unsigned) };
 }
 
-test("the frozen implementation contains exactly 46 authorized paths", () => {
+test("the append-only dependency-pin successor contains exactly 48 authorized paths", () => {
   function walk(directory) {
     return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
       const absolute = path.join(directory, entry.name);
@@ -51,7 +51,7 @@ test("the frozen implementation contains exactly 46 authorized paths", () => {
     });
   }
   const paths = [...walk(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio")), "portfolio/core/test/launch-studio-session-engine.test.mjs"].sort();
-  assert.equal(paths.length, 46);
+  assert.equal(paths.length, 48);
   assert.ok(paths.every((entry) => entry.startsWith("portfolio/core/launch-studio/") || entry === "portfolio/core/test/launch-studio-session-engine.test.mjs"));
   assert.equal(SCHEMA_FILES.length, 29);
 });
@@ -578,13 +578,13 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
   const reseal = (value) => { const copy = clone(value); delete copy.indexHash; return { ...copy, indexHash: sha256Canonical(copy) }; };
   const invalidIndexTime = clone(index); invalidIndexTime.createdAt = "2026-02-30T12:23:00.000Z";
   assert.throws(() => verifyLaunchIndexDocument(reseal(invalidIndexTime), INDEX_VERIFY_OPTIONS), /real canonical|index createdAt/);
-  const futureEntry = clone(index); futureEntry.entries[0].recordedAt = "2026-08-23T12:23:00.001Z";
+  const futureEntry = clone(index);
+  futureEntry.entries[0].recordedAt = new Date(Date.parse(index.createdAt) + 1).toISOString();
   assert.throws(() => verifyLaunchIndexDocument(reseal(futureEntry), INDEX_VERIFY_OPTIONS), /cannot postdate its containing index/);
   const prematureEntry = clone(index); prematureEntry.entries[0].recordedAt = "2026-08-23T12:21:59.999Z";
   assert.throws(() => verifyLaunchIndexDocument(reseal(prematureEntry), INDEX_VERIFY_OPTIONS), /chronology is inconsistent/);
   const nonIncreasingSuccessor = clone(index);
-  Object.assign(nonIncreasingSuccessor, { indexId: "launch_studio_index_0002", previousIndexPath: "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json", previousIndexHash: index.indexHash });
-  nonIncreasingSuccessor.entries.push({ ...clone(index.entries[0]), sequence: 2, sessionId: "launch_session_synthetic_owner_002", recordedAt: "2026-08-23T12:24:00.000Z" });
+  nonIncreasingSuccessor.createdAt = "2026-08-23T12:23:00.000Z";
   assert.throws(() => verifyLaunchIndexDocument(reseal(nonIncreasingSuccessor), INDEX_VERIFY_OPTIONS), /index chronology is not increasing/);
   assert.throws(() => verifyLaunchIndexDocument(index, { eventStreamVerifier: () => ({ valid: true }), fixtureGraphVerifier: () => true }), /rejects caller-supplied verifier/);
   const zero = clone(index); zero.schemas[0].sha256 = "0".repeat(64);
@@ -594,7 +594,8 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
   const missing = clone(index); missing.entries[0].fixturePath = "portfolio/core/launch-studio/versions/0.1.0/synthetic/missing.json";
   assert.throws(() => verifyLaunchIndexDocument(reseal(missing), INDEX_VERIFY_OPTIONS), /does not exist/);
   const reportSubstitution = clone(index); reportSubstitution.syntheticSession.reportPath = reportSubstitution.entries[0].fixturePath;
-  assert.throws(() => verifyLaunchIndexDocument(reseal(reportSubstitution), INDEX_VERIFY_OPTIONS), /report cross-binding/);
+  assert.throws(() => verifyLaunchIndexDocument(reseal(reportSubstitution), INDEX_VERIFY_OPTIONS),
+    /successor substituted immutable syntheticSession/);
   for (const mutate of [
     (copy) => { copy.engine.stateCount = 1; },
     (copy) => { copy.profiles[0] = "Bogus"; },
@@ -608,9 +609,9 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
   }
   const temp = tempRoot("launch-index-symlink-");
   try {
-    const firstRuntime = index.engine.runtimeModules[0].path;
-    const link = path.join(temp, firstRuntime); fs.mkdirSync(path.dirname(link), { recursive: true });
-    fs.symlinkSync(path.join(REPOSITORY_ROOT, firstRuntime), link);
+    const schemaPath = index.indexSchema.path;
+    const link = path.join(temp, schemaPath); fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(path.join(REPOSITORY_ROOT, schemaPath), link);
     assert.throws(() => verifyLaunchIndexDocument(index, { ...INDEX_VERIFY_OPTIONS, repositoryRoot: temp }), /symbolic link/);
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   const parentLinkRoot = tempRoot("launch-index-parent-link-");
@@ -635,6 +636,8 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
   const integrityRoot = tempRoot("launch-index-full-integrity-");
   try {
     const referencedPaths = new Set([
+      index.indexSchema.path,
+      index.previousIndexPath,
       ...index.engine.runtimeModules.map((entry) => entry.path),
       ...index.engine.coreDependencies.map((entry) => entry.path),
       ...index.schemas.map((entry) => entry.path),
@@ -648,11 +651,13 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
       fs.copyFileSync(path.join(REPOSITORY_ROOT, relativePath), target);
     }
     const stablePath = path.join(integrityRoot, "portfolio/core/launch-studio/index.json");
-    const immutablePath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
+    const genesisPath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
+    const immutablePath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
     fs.mkdirSync(path.dirname(stablePath), { recursive: true });
     fs.mkdirSync(path.dirname(immutablePath), { recursive: true });
     fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/index.json"), stablePath);
-    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json"), immutablePath);
+    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json"), genesisPath);
+    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json"), immutablePath);
     const verificationOptions = { repositoryRoot: integrityRoot, stableIndexPath: stablePath, immutableIndexPath: immutablePath };
     assert.equal(verifyStableIndex(verificationOptions).valid, true);
     const validatorPath = path.join(integrityRoot, "portfolio/core/lib/validators.mjs");
@@ -667,6 +672,67 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
       fs.writeFileSync(artifactPath, originalBytes);
     }
   } finally { fs.rmSync(integrityRoot, { recursive: true, force: true }); }
+});
+
+test("dependency-pin rollover preserves genesis and rejects rollback, removal, substitution, duplication, and mixed modes", () => {
+  const genesisPath = path.join(REPOSITORY_ROOT,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
+  const successorPath = path.join(REPOSITORY_ROOT,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+  const stablePath = path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/index.json");
+  const genesis = readCanonicalJson(genesisPath);
+  const successor = readCanonicalJson(successorPath);
+  const sealIndex = (value) => {
+    const copy = clone(value);
+    delete copy.indexHash;
+    copy.indexHash = sha256Canonical(copy);
+    return copy;
+  };
+
+  assert.equal(sha256Bytes(fs.readFileSync(genesisPath)),
+    "c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a");
+  assert.equal(genesis.indexHash,
+    "97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89");
+  assert.equal(fs.readFileSync(stablePath).equals(fs.readFileSync(successorPath)), true);
+  assert.equal(successor.previousIndexHash, genesis.indexHash);
+  assert.equal(successor.successorMode, "dependency-pin-rollover");
+  assert.deepEqual(successor.entries, genesis.entries);
+  assert.equal(verifyStableIndex(INDEX_VERIFY_OPTIONS).valid, true);
+
+  const mixed = clone(successor);
+  mixed.successorMode = "session-append";
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(mixed), INDEX_VERIFY_OPTIONS), /mixed session and dependency-pin changes/);
+
+  for (const mutate of [
+    (copy) => { copy.engine.coreDependencies.pop(); },
+    (copy) => { copy.engine.coreDependencies[1] = clone(copy.engine.coreDependencies[0]); },
+    (copy) => { copy.engine.coreDependencies[0].path = "portfolio/core/lib/substituted.mjs"; }
+  ]) {
+    const invalid = clone(successor);
+    mutate(invalid);
+    assert.throws(() => verifyLaunchIndexDocument(sealIndex(invalid), INDEX_VERIFY_OPTIONS),
+      /too few|unique|removed|duplicated|substituted|cardinality|path order/iu);
+  }
+
+  const rollback = clone(successor);
+  rollback.indexId = "launch_studio_index_0003";
+  rollback.createdAt = "2026-08-26T19:31:54.000Z";
+  rollback.previousIndexPath =
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json";
+  rollback.previousIndexHash = successor.indexHash;
+  rollback.engine.coreDependencies.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/handoff-ledger.mjs")).sha256 =
+      genesis.engine.coreDependencies.find(({ path: dependencyPath }) =>
+        dependencyPath.endsWith("/handoff-ledger.mjs")).sha256;
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(rollback), INDEX_VERIFY_OPTIONS),
+    /dependency pin rollback/);
+
+  const traversal = clone(successor);
+  traversal.indexSchema.path = "../launch-session-index.schema.json";
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(traversal), INDEX_VERIFY_OPTIONS),
+    /schema path substitution|unsafe|escape/);
+  assert.throws(() => verifyLaunchIndexDocument({ ...successor, indexHash: "0".repeat(64) }, INDEX_VERIFY_OPTIONS),
+    /index hash mismatch/);
 });
 
 test("export rejects traversal, duplicate paths, tamper, path escape, and symbolic links", () => {

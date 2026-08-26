@@ -750,6 +750,57 @@ function pathAllowed(candidate, allowedPaths) {
   });
 }
 
+const CONNECTOR_IDENTIFIER_PATTERN = /^[a-z][a-z0-9-]*$/u;
+
+function normalizeConnectorIdentifier(value, label) {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+      !CONNECTOR_IDENTIFIER_PATTERN.test(value)) {
+    fail(`${label} is not an exact connector identifier`, "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  }
+  return value;
+}
+
+function bytewise(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function assessReceiptEvidenceScope(receipt, envelope) {
+  assertPlainObject(receipt, "execution receipt");
+  assertPlainObject(envelope, "action envelope");
+  if (!Array.isArray(receipt.observations) || !Array.isArray(envelope.scope?.allowedConnectors)) {
+    fail("Receipt observations and envelope allowedConnectors are required",
+      "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  }
+  const allowedSequence = envelope.scope.allowedConnectors.map((connector, offset) =>
+    normalizeConnectorIdentifier(connector, `allowedConnectors[${offset}]`));
+  if (new Set(allowedSequence).size !== allowedSequence.length) {
+    fail("Envelope allowedConnectors contains a duplicate connector",
+      "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  }
+  const evidenceSequence = receipt.observations.map((observation, offset) => {
+    assertPlainObject(observation, `execution receipt observation ${offset}`);
+    return normalizeConnectorIdentifier(observation.sourceId, `observations[${offset}].sourceId`);
+  });
+  const allowed = new Set(allowedSequence);
+  const evidenceSourceIds = [...new Set(evidenceSequence)].sort(bytewise);
+  const outOfScopeSourceIds = evidenceSourceIds.filter((sourceId) => !allowed.has(sourceId));
+  return {
+    compliant: outOfScopeSourceIds.length === 0,
+    allowedConnectors: [...allowed].sort(bytewise),
+    evidenceSourceIds,
+    outOfScopeSourceIds
+  };
+}
+
+export function assertReceiptEvidenceScope(receipt, envelope) {
+  const assessment = assessReceiptEvidenceScope(receipt, envelope);
+  if (!assessment.compliant) {
+    fail(`Receipt evidence uses connector(s) outside the immutable envelope: ${assessment.outOfScopeSourceIds.join(", ")}`,
+      "HANDOFF_CONNECTOR_SCOPE_VIOLATION", assessment);
+  }
+  return assessment;
+}
+
 function assertReceiptEvidence(receipt, envelope) {
   for (const source of envelope.sourceRequirements) {
     const observations = receipt.observations.filter((entry) => entry.sourceId === source.sourceId);
@@ -925,6 +976,11 @@ export function validateIndependentReviewDecision(decision, options = {}) {
   }
   if (timestampMs(decision.reviewedAt, "reviewedAt") < timestampMs(receipt.completedAt, "receipt completedAt")) {
     fail("Independent review predates the receipt", "HANDOFF_TIME_INVALID");
+  }
+  const connectorScope = assessReceiptEvidenceScope(receipt, envelope);
+  if (!connectorScope.compliant && decision.decision === "approve") {
+    fail("Independent review cannot approve a connector-scope-noncompliant receipt",
+      "HANDOFF_CONNECTOR_SCOPE_VIOLATION", connectorScope);
   }
   return { valid: true };
 }
@@ -1106,6 +1162,32 @@ export function validateIndexTransition(previous, current) {
     }
   }
   return { valid: true, transitionedEntries: transitions, appendedEntries: current.entries.length - previous.entries.length };
+}
+
+export function validateProspectiveConsumptionTransition(previous, current, options = {}) {
+  const transition = validateIndexTransition(previous, current);
+  if (!Array.isArray(options.envelopes) || !Array.isArray(options.receipts)) {
+    fail("Prospective consumption validation requires envelopes and receipts",
+      "HANDOFF_CONTEXT_REQUIRED");
+  }
+  const consumed = current.entries.filter((entry, offset) => {
+    const before = previous.entries[offset];
+    return before && before.lifecycle.state === "available" && entry.lifecycle.state === "consumed";
+  });
+  if (consumed.length !== 1) {
+    fail("Prospective consumption must contain exactly one available-to-consumed transition",
+      "HANDOFF_INDEX_TRANSITION_INVALID");
+  }
+  const entry = consumed[0];
+  const envelope = options.envelopes.find((candidate) => candidate.envelopeId === entry.envelopeId);
+  const receipt = options.receipts.find((candidate) => candidate.receiptId === entry.receiptId);
+  if (!envelope || !receipt || receipt.envelopeId !== envelope.envelopeId ||
+      receipt.envelopeHash !== envelope.envelopeHash || receipt.actionId !== entry.actionId) {
+    fail("Prospective consumption lacks the exact envelope and receipt binding",
+      "HANDOFF_INDEX_INCONSISTENT");
+  }
+  const connectorScope = assertReceiptEvidenceScope(receipt, envelope);
+  return { ...transition, connectorScope };
 }
 
 function resolveIndexedApprovalAttestation(entry, envelope, repositoryRoot) {
