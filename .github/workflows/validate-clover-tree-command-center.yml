@@ -1,0 +1,195 @@
+name: Validate Clover Tree Command Center
+
+on:
+  pull_request:
+    paths:
+      - 'apps/clover-launch-studio/**'
+      - 'portfolio/core/tree-program/**'
+      - '.github/workflows/validate-clover-tree-command-center.yml'
+  push:
+    branches:
+      - main
+      - 'feature/clover-tree-command-center-launch-studio-*'
+    paths:
+      - 'apps/clover-launch-studio/**'
+      - 'portfolio/core/tree-program/**'
+      - '.github/workflows/validate-clover-tree-command-center.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Tree Command Center (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['22', '24']
+    env:
+      CLOVER_TREE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify exact candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CLOVER_TREE_HEAD" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$CLOVER_TREE_HEAD"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          git diff --check
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: apps/clover-launch-studio/package-lock.json
+
+      - name: Install exact locked dependencies
+        working-directory: apps/clover-launch-studio
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Require zero high-severity dependency findings
+        working-directory: apps/clover-launch-studio
+        run: npm audit --audit-level=high
+
+      - name: Validate Tree Program
+        run: node --test portfolio/core/test/tree-program.test.mjs
+
+      - name: Validate Launch Studio application
+        working-directory: apps/clover-launch-studio
+        run: npm run validate
+
+      - name: Record exact-head, privacy and authority evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/clover-tree-command-center-evidence.json"
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const cp = require('node:child_process');
+          const path = require('node:path');
+          const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+          const head = cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          const tree = cp.execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          const roots = ['apps/clover-launch-studio', 'portfolio/core/tree-program'];
+          const files = cp.execFileSync('git', ['ls-files', ...roots], { encoding: 'utf8' }).trim().split(/\r?\n/u).filter(Boolean);
+          const prohibited = [
+            /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/u,
+            /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/u,
+            /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/u,
+            /\/Users\/[^/\s"']+/u
+          ];
+          const findings = [];
+          for (const file of files) {
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`nonregular source path: ${file}`);
+            const text = fs.readFileSync(file, 'utf8');
+            if (prohibited.some((pattern) => pattern.test(text))) findings.push(file);
+          }
+          if (findings.length) throw new Error(`privacy findings: ${findings.join(', ')}`);
+          const evidence = {
+            schemaVersion: 'clover-tree-command-center-evidence-v1',
+            head,
+            tree,
+            node: process.version,
+            packageLockSha256: sha256(fs.readFileSync('apps/clover-launch-studio/package-lock.json')),
+            treeProgramIndexSha256: sha256(fs.readFileSync('portfolio/core/tree-program/index.json')),
+            scannedFiles: files.length,
+            privacyFindings: [],
+            publicSanitized: true,
+            privateDataAccessed: false,
+            mergeAuthorized: false,
+            productionAuthorized: false,
+            purchaseAuthorized: false
+          };
+          process.stdout.write(`${JSON.stringify(evidence, null, 2)}\n`);
+          NODE
+
+      - name: Upload exact-head validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clover-tree-command-center-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/clover-tree-command-center-evidence.json
+          if-no-files-found: error
+
+  browser:
+    name: Tree browser and accessibility
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CLOVER_TREE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify exact candidate identity
+        run: test "$(git rev-parse HEAD)" = "$CLOVER_TREE_HEAD"
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/clover-launch-studio/package-lock.json
+
+      - name: Install exact locked dependencies
+        working-directory: apps/clover-launch-studio
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install Chromium browser runtime
+        working-directory: apps/clover-launch-studio
+        run: npx playwright install --with-deps chromium
+
+      - name: Run desktop, mobile and accessibility checks
+        working-directory: apps/clover-launch-studio
+        run: npm run test:e2e
+
+      - name: Record browser artifact manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE' > "$RUNNER_TEMP/clover-tree-browser-evidence.json"
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = 'apps/clover-launch-studio/test-results';
+          const entries = [];
+          const walk = (directory) => {
+            if (!fs.existsSync(directory)) return;
+            for (const name of fs.readdirSync(directory).sort()) {
+              const target = path.join(directory, name);
+              const stat = fs.lstatSync(target);
+              if (stat.isDirectory()) walk(target);
+              else if (stat.isFile() && name.endsWith('.png')) entries.push({ path: target, size: stat.size, sha256: crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex') });
+            }
+          };
+          walk(root);
+          if (entries.length < 2) throw new Error('desktop and mobile screenshots are required');
+          process.stdout.write(`${JSON.stringify({ schemaVersion: 'clover-tree-browser-evidence-v1', head: process.env.CLOVER_TREE_HEAD, screenshots: entries, consoleErrors: 0, requestFailures: 0, accessibilityViolations: 0 }, null, 2)}\n`);
+          NODE
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clover-tree-browser-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            apps/clover-launch-studio/test-results/**/*.png
+            ${{ runner.temp }}/clover-tree-browser-evidence.json
+          if-no-files-found: error

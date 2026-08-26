@@ -31,7 +31,7 @@ export function prepareProposalOnlyHandoff(session: LaunchSession, proposedAt = 
     sessionVersion: session.version,
     lastEventHash: session.lastEventHash,
     proposedAt
-  };
+  } satisfies Omit<HandoffProposal, "proposalHash">;
   return { ...unsigned, proposalHash: sha256(canonicalJson(unsigned)) };
 }
 

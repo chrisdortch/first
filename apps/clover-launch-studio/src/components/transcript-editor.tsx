@@ -40,7 +40,7 @@ export function TranscriptEditor({ value, onChange, disabled = false }: Transcri
         <div className="metric"><span>Audio retained</span><code>false</code></div>
       </div>
       <p className="voice-note" id="voice-boundary">
-        You may use ChatGPT Voice outside this app, then review the exact resulting text here. Launch Studio has no microphone, native voice pipeline, or raw-audio retention.
+        Permissioned browser speech-to-text may produce editable text in the Action Center. Launch Studio has no native voice pipeline and never retains raw audio; review the exact text before any later gate.
       </p>
     </div>
   );

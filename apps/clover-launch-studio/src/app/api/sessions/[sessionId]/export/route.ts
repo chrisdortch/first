@@ -8,7 +8,7 @@ export async function GET(request: Request, context: Context) {
     const { sessionId } = await context.params;
     const service = await serviceFor(request, false);
     const archive = await service.export(sessionId);
-    return new Response(archive, {
+    return new Response(new Uint8Array(archive), {
       status: 200,
       headers: {
         "Cache-Control": "no-store",

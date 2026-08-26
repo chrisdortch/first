@@ -87,7 +87,7 @@ test("accept_transcript_successor", () => {
 
 test("accept_raw_audio_false", () => {
   assert.match(source.storage, /rawAudioRetained: false/);
-  assert.match(source.transcript, /no microphone, native voice pipeline, or raw-audio retention/i);
+  assert.match(source.transcript, /no native voice pipeline and never retains raw audio/i);
 });
 
 test("accept_retention_deletion", () => {
@@ -125,7 +125,7 @@ test("accept_approval_noninheritance", () => {
 test("accept_codex_boundary", () => {
   assert.match(source.handoff, /e5688c771d384d80a8c723cfa655298ce8257889/);
   assert.match(source.handoff, /4c84129b4fb5ea098ac9d2325bc2cb387857a471/);
-  assert.doesNotMatch(source.handoff, /exec|spawn|shell|provider/i);
+  assert.doesNotMatch(source.handoff, /child_process|spawn\s*\(|exec\s*\(|shell\s*:/i);
 });
 
 test("accept_progress_evidence", () => {

@@ -938,6 +938,84 @@ const expectedAction004AppPaths = Object.freeze([
   "apps/clover-launch-studio/test/launch-studio-browser.test.mjs"
 ]);
 
+const launchStudioCandidateIdentity = Object.freeze({
+  commit: "582427e403fe96ccfea85db365a210421e76e16e",
+  tree: "233c96e56d13fccf49d55b4f6af976c60e5c517b",
+  parent: "e5688c771d384d80a8c723cfa655298ce8257889"
+});
+
+const launchStudioIntegrationIdentity = Object.freeze({
+  commit: "9b2b9bddfcff6b8f452e9f234c14024befdb42df",
+  tree: "d15ffc32b5360e0f40c87d15c7054a3454a6d80b",
+  parents: Object.freeze([
+    "ec4ad8ca76dd5fd6da7db8107829a07c3650b7c6",
+    launchStudioCandidateIdentity.commit
+  ])
+});
+
+function gitText(args) {
+  const result = spawnSync("git", args, {
+    cwd: repositoryRoot,
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || `git ${args.join(" ")} failed`);
+  return result.stdout.trim();
+}
+
+function assertImportedLaunchStudioCandidate() {
+  assert.equal(
+    gitText(["rev-parse", `${launchStudioCandidateIdentity.commit}^{tree}`]),
+    launchStudioCandidateIdentity.tree
+  );
+  assert.deepEqual(
+    gitText(["show", "-s", "--format=%P", launchStudioCandidateIdentity.commit]).split(" "),
+    [launchStudioCandidateIdentity.parent]
+  );
+
+  const sourceEntries = gitText([
+    "ls-tree",
+    "-r",
+    "--full-tree",
+    launchStudioCandidateIdentity.commit,
+    "--",
+    "apps/clover-launch-studio"
+  ]).split("\n").filter(Boolean).map((line) => {
+    const match = /^(\d{6}) (\S+) [0-9a-f]+\t(.+)$/u.exec(line);
+    assert.ok(match, `malformed candidate tree entry: ${line}`);
+    return { mode: match[1], type: match[2], path: match[3] };
+  });
+  assert.deepEqual(sourceEntries.map(({ path }) => path).sort(), [...expectedAction004AppPaths].sort());
+  assert.equal(sourceEntries.every(({ mode, type }) => mode === "100644" && type === "blob"), true);
+
+  assert.equal(
+    gitText(["rev-parse", `${launchStudioIntegrationIdentity.commit}^{tree}`]),
+    launchStudioIntegrationIdentity.tree
+  );
+  assert.deepEqual(
+    gitText(["show", "-s", "--format=%P", launchStudioIntegrationIdentity.commit]).split(" "),
+    [...launchStudioIntegrationIdentity.parents]
+  );
+  assert.equal(spawnSync("git", [
+    "merge-base",
+    "--is-ancestor",
+    launchStudioCandidateIdentity.commit,
+    launchStudioIntegrationIdentity.commit
+  ], { cwd: repositoryRoot }).status, 0);
+
+  const currentEntries = gitText([
+    "ls-files",
+    "--stage",
+    "--",
+    ...expectedAction004AppPaths
+  ]).split("\n").filter(Boolean).map((line) => {
+    const match = /^(\d{6}) [0-9a-f]+ 0\t(.+)$/u.exec(line);
+    assert.ok(match, `malformed current tree entry: ${line}`);
+    return { mode: match[1], path: match[2] };
+  });
+  assert.deepEqual(currentEntries.map(({ path }) => path).sort(), [...expectedAction004AppPaths].sort());
+  assert.equal(currentEntries.every(({ mode }) => mode === "100644"), true);
+}
+
 const expectedAction004AcceptanceIds = Object.freeze([
   "accept_auth_anonymous_deny",
   "accept_auth_clerk_validation",
@@ -1131,7 +1209,7 @@ test("Action 004 persists one closed 14-path source-bound proposal and immutable
   assert.equal(handoffText.includes(absentActionId), false);
   assert.equal(handoffText.includes(absentEnvelopePrefix), false);
   assert.equal(index0002.entries.filter((entry) => entry.actionId === action004.actionId).length, 1);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
 });
 
 test("Action 004 separates verified main from the future branch and safely narrows one unsupported action", () => {
@@ -1899,7 +1977,7 @@ test("Action 005 index 0003 revokes Action 004, appends one proposal and preserv
     "portfolio/core/handoff/versions/0.1.0/approvals/action-005-launch-studio-phase-b-source-approval.json")), false);
   assert.equal(fs.existsSync(path.join(repositoryRoot,
     "portfolio/core/handoff/versions/0.1.0/receipts/action-005-launch-studio-phase-b-source-receipt.json")), false);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
 });
 
 test("Action 005 deterministic synthetic approval and consumption rehearsal is lifecycle-complete and fail-closed", (t) => {
@@ -2261,7 +2339,7 @@ test("Action 005 deterministic synthetic approval and consumption rehearsal is l
   assert.deepEqual(readJson(path.join(repositoryRoot, consumptionIndexPath)), index0005);
   assert.equal(index0005.entries[3].lifecycle.state, "revoked");
   assert.equal(index0005.entries[3].receiptId, null);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
   const localFutureBranch = spawnSync("git", [
     "show-ref", "--verify", "--quiet", `refs/heads/${action005WorkOrder.worktreeBranch}`
   ], { cwd: repositoryRoot });
@@ -2783,7 +2861,7 @@ test("Action 006 index 0004 revokes Action 005, appends one proposal and preserv
     "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0005.json")), true);
   assert.equal(fs.existsSync(path.join(repositoryRoot,
     "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0006.json")), true);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
 });
 
 test("Action 006 exact owner approval attestation and index 0005 record approval only", (t) => {
@@ -3012,7 +3090,7 @@ test("Action 006 exact owner approval attestation and index 0005 record approval
   assert.equal(fs.lstatSync(action006ApprovalPath).isSymbolicLink(), false);
   assert.equal(fs.existsSync(action006ReceiptPath), true);
   assert.equal(fs.existsSync(action006ConsumptionIndexPath), true);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
 });
 
 test("Action 006 persisted execution receipt and consumed index validate without published application source", () => {
@@ -3172,7 +3250,7 @@ test("Action 006 persisted execution receipt and consumed index validate without
     repositoryRoot,
     now: new Date(Date.parse(action006Receipt.completedAt) + 1).toISOString()
   }), (error) => error.code === "HANDOFF_REPLAY_DENIED");
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
 });
 
 test("Action 006 connector-scope review HOLD preserves physical success and advances only review state", () => {
@@ -3333,7 +3411,7 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
 
   const absentActionId = ["CLOVER", "2026", "08", "24", "007"].join("-");
   assert.equal(index0007.entries.some((entry) => entry.actionId === absentActionId), false);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
   assert.equal(fs.lstatSync(action006ReviewPath).isFile(), true);
   assert.equal(fs.lstatSync(action006ReviewPath).isSymbolicLink(), false);
   assert.equal(fs.lstatSync(action006ReviewIndexPath).isFile(), true);
@@ -3749,5 +3827,5 @@ test("Action 006 deterministic synthetic approval and consumption rehearsal is l
   assert.deepEqual(readJson(path.join(repositoryRoot, approvalIndexPath)), index0005);
   assert.equal(fs.existsSync(path.join(repositoryRoot, consumptionIndexPath)), true);
   assert.deepEqual(readJson(path.join(repositoryRoot, consumptionIndexPath)), index0006);
-  assert.equal(fs.existsSync(path.join(repositoryRoot, "apps/clover-launch-studio")), false);
+  assertImportedLaunchStudioCandidate();
 });
