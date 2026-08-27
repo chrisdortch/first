@@ -147,7 +147,7 @@ button { color: inherit; }
 .full-bleed-panel { padding: 0; overflow: hidden; }
 .full-bleed-panel > .section-heading { padding: 1.25rem 1.35rem; }
 .section-heading, .prototype-heading { display: flex; justify-content: space-between; align-items: start; gap: 1rem; margin-bottom: 1rem; }
-.section-heading h2, .prototype-heading h3 { margin: 0; font-size: clamp(1.15rem, 2vw, 1.65rem); letter-spacing: -.025em; }
+.section-heading h2, .prototype-heading :is(h2, h3) { margin: 0; font-size: clamp(1.15rem, 2vw, 1.65rem); letter-spacing: -.025em; }
 .section-heading p:not(.card-kicker) { max-width: 66ch; margin: .45rem 0 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
 .card-kicker { margin: 0 0 .35rem; color: var(--lime); font-size: .65rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
 .safety-label { flex: none; padding: .36rem .55rem; border: 1px solid rgba(112,230,177,.2); border-radius: 999px; color: var(--mint); background: rgba(112,230,177,.06); font-size: .63rem; }

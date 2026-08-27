@@ -1,13 +1,14 @@
 import AxeBuilder from "@axe-core/playwright";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { expect, test, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 const exactViews = [
   "Today", "Tree", "Master Plan", "Branches", "Roots and Source Coverage", "Captain's Log", "Fruit Ledger",
   "Collaboration and JV Center", "Action Center", "System Health", "Launch Studio session"
-];
+] as const;
 const exactSyntheticOwnerText = "Create a new synthetic SongAndStage collaboration opportunity with no private data.";
+const expectedAxeScansPerViewport = 30;
 const runtimeFindings = new WeakMap<Page, string[]>();
 const fixtureCommit = "a".repeat(40);
 const fixtureTree = "b".repeat(40);
@@ -104,6 +105,52 @@ async function resetLiveTruthRoutes(page: Page, options: { attestationStatus?: n
 
 function screenshotPath(testInfo: TestInfo, filename: string) {
   return process.env.CLOVER_SCREENSHOT_DIR ? path.join(process.env.CLOVER_SCREENSHOT_DIR, filename) : testInfo.outputPath(filename);
+}
+
+type AxeScanEvidence = {
+  view: (typeof exactViews)[number];
+  state: string;
+  viewport: { width: number; height: number };
+  violations: Awaited<ReturnType<InstanceType<typeof AxeBuilder>["analyze"]>>["violations"];
+  incomplete: Awaited<ReturnType<InstanceType<typeof AxeBuilder>["analyze"]>>["incomplete"];
+};
+
+async function activateView(page: Page, view: (typeof exactViews)[number]) {
+  const viewButton = page.getByRole("button", { name: view, exact: true });
+  await viewButton.click();
+  await expect(viewButton).toHaveAttribute("aria-current", "page");
+  await expect(page.getByRole("heading", { level: 1, name: view, exact: true })).toBeVisible();
+  return viewButton;
+}
+
+async function pressNamedButton(page: Page, name: string) {
+  const button = page.getByRole("button", { name, exact: true });
+  await button.focus();
+  await expect(button).toBeFocused();
+  await page.keyboard.press("Enter");
+}
+
+async function expectVisibleFocus(locator: Locator) {
+  await expect(locator).toBeFocused();
+  const focusStyle = await locator.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth };
+  });
+  expect(focusStyle.outlineStyle).not.toBe("none");
+  expect(Number.parseFloat(focusStyle.outlineWidth)).toBeGreaterThanOrEqual(3);
+}
+
+async function scanWithCompleteAxePayload(
+  page: Page,
+  scans: AxeScanEvidence[],
+  view: (typeof exactViews)[number],
+  state: string,
+  viewport: { width: number; height: number }
+) {
+  const result = await new AxeBuilder({ page }).analyze();
+  const evidence = { view, state, viewport, violations: result.violations, incomplete: result.incomplete };
+  scans.push(evidence);
+  expect(result.violations, JSON.stringify(evidence, null, 2)).toEqual([]);
 }
 
 async function expectNoHorizontalOverflow(page: Page, view: string) {
@@ -276,6 +323,120 @@ test("security and accessibility boundaries hold on the rendered command center"
   expect(headers["x-frame-options"]).toBe("DENY");
   const results = await new AxeBuilder({ page }).analyze();
   expect(results.violations).toEqual([]);
+});
+
+test("all views and material states close Axe findings with visible keyboard entry and exit", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  const viewport = testInfo.project.name.startsWith("mobile") ? { width: 390, height: 844 } : { width: 1440, height: 1000 };
+  const scans: AxeScanEvidence[] = [];
+  let branchOverflowEvidence: { clientWidth: number; scrollWidth: number; overflowing: boolean; keyboardEntryRequired: boolean } | null = null;
+  await page.setViewportSize(viewport);
+
+  for (const view of exactViews) {
+    await activateView(page, view);
+    await scanWithCompleteAxePayload(page, scans, view, "base-view", viewport);
+  }
+
+  await activateView(page, "Collaboration and JV Center");
+  await expect(page.getByRole("heading", { level: 2, name: "Collaboration & JV Center", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 2, name: "Personal Launch Pod", exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "collaboration-initial-draft", viewport);
+  await pressNamedButton(page, "Keep draft");
+  await expect(page.getByText("Draft retained in local preview state; no agreement exists.", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "collaboration-keep-draft", viewport);
+  await pressNamedButton(page, "Not now");
+  await expect(page.getByText("Synthetic opportunity paused; nothing was sent.", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "collaboration-not-now", viewport);
+  await pressNamedButton(page, "Decline");
+  await expect(page.getByText("Synthetic opportunity declined; nothing was signed or published.", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "collaboration-decline", viewport);
+
+  const projectDeltaButton = page.getByRole("button", { name: "Share synthetic Project Delta", exact: true });
+  await expect(projectDeltaButton).toBeDisabled();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "pod-initial-disabled", viewport);
+  await pressNamedButton(page, "Approve synthetic packet");
+  await expect(page.getByText("Synthetic participant approved locally; no account or Site was changed.", { exact: true })).toBeVisible();
+  await expect(projectDeltaButton).toBeEnabled();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "pod-approved", viewport);
+  await pressNamedButton(page, "Share synthetic Project Delta");
+  await expect(page.getByText("Synthetic Project Delta prepared locally; nothing was sent.", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "pod-project-delta", viewport);
+  await pressNamedButton(page, "Withdraw synthetic delta");
+  await expect(page.getByText("Synthetic participant approved locally; no account or Site was changed.", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "pod-delta-withdrawn", viewport);
+  await pressNamedButton(page, "Revoke synthetic approval");
+  await expect(page.getByText("Awaiting synthetic participant approval.", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "pod-approval-revoked", viewport);
+  await expect(page.getByRole("button", { name: "Share synthetic Project Delta", exact: true })).toBeDisabled();
+  await scanWithCompleteAxePayload(page, scans, "Collaboration and JV Center", "pod-disabled-after-revocation", viewport);
+
+  await activateView(page, "Action Center");
+  await expect(page.getByRole("heading", { level: 2, name: "Owner signal", exact: true })).toBeVisible();
+  await page.getByLabel("Exact editable text").fill(exactSyntheticOwnerText);
+  const actionDigest = page.locator(".owner-input-card .metric").filter({ hasText: "SHA-256" }).locator("code");
+  await expect(actionDigest).toHaveText(/^[a-f0-9]{64}$/u);
+  await scanWithCompleteAxePayload(page, scans, "Action Center", "action-exact-signal-64hex", viewport);
+
+  const recommendedPacket = page.locator(".recommended-packet details");
+  const packetSummary = recommendedPacket.locator("summary");
+  await packetSummary.focus();
+  await expect(packetSummary).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(recommendedPacket).toHaveAttribute("open", "");
+  const packetRegion = page.getByRole("region", { name: "CloverApps collaboration exact packet content", exact: true });
+  await packetSummary.focus();
+  await page.keyboard.press("Tab");
+  await expectVisibleFocus(packetRegion);
+  await page.keyboard.press("Tab");
+  await expect(packetRegion).not.toBeFocused();
+  await scanWithCompleteAxePayload(page, scans, "Action Center", "action-recommended-packet-expanded", viewport);
+
+  await pressNamedButton(page, "Save immutable successor");
+  await expect(page.getByText("Revision 1", { exact: true })).toBeVisible();
+  await scanWithCompleteAxePayload(page, scans, "Action Center", "action-successor-saved", viewport);
+  for (const [buttonName, decision] of [["Approve packet", "approved"], ["Amend", "amend"], ["Decline", "declined"], ["Not now", "not-now"]] as const) {
+    await pressNamedButton(page, buttonName);
+    await expect(page.getByText(new RegExp(`Decision: ${decision}`, "u"))).toBeVisible();
+    await scanWithCompleteAxePayload(page, scans, "Action Center", `action-decision-${decision}`, viewport);
+  }
+
+  const branchesButton = await activateView(page, "Branches");
+  const branchRegion = page.getByRole("region", { name: "Canonical public-sanitized branch table", exact: true });
+  const branchDimensions = await branchRegion.evaluate((node) => ({ clientWidth: node.clientWidth, scrollWidth: node.scrollWidth }));
+  const branchOverflows = branchDimensions.scrollWidth > branchDimensions.clientWidth;
+  branchOverflowEvidence = { ...branchDimensions, overflowing: branchOverflows, keyboardEntryRequired: branchOverflows };
+  if (branchOverflows) {
+    await expect(branchRegion).toHaveAttribute("tabindex", "0");
+    await branchesButton.focus();
+    let enteredBranchRegion = false;
+    for (let index = 0; index < exactViews.length + 4; index += 1) {
+      await page.keyboard.press("Tab");
+      if (await branchRegion.evaluate((node) => document.activeElement === node)) {
+        enteredBranchRegion = true;
+        break;
+      }
+    }
+    expect(enteredBranchRegion, "Overflowing Branch table region was not reachable from the view navigation by keyboard.").toBe(true);
+    await expectVisibleFocus(branchRegion);
+    await page.keyboard.press("Tab");
+    await expect(branchRegion).not.toBeFocused();
+  } else {
+    await expect(branchRegion).not.toHaveAttribute("tabindex");
+  }
+  await scanWithCompleteAxePayload(page, scans, "Branches", "branch-keyboard-entry-exit", viewport);
+
+  await activateView(page, "Launch Studio session");
+  await page.getByLabel("Reviewed instruction or transcript").fill(exactSyntheticOwnerText);
+  const launchDigest = page.locator("#transcript-integrity .metric").filter({ hasText: "SHA-256" }).locator("code");
+  await expect(launchDigest).toHaveText(/^[a-f0-9]{64}$/u);
+  await scanWithCompleteAxePayload(page, scans, "Launch Studio session", "launch-integrity-64hex", viewport);
+
+  expect(scans).toHaveLength(expectedAxeScansPerViewport);
+  expect(scans.flatMap(({ violations }) => violations)).toEqual([]);
+  await testInfo.attach(`clover-axe-closure-${testInfo.project.name}.json`, {
+    body: Buffer.from(`${JSON.stringify({ axeVersion: "4.13.0", project: testInfo.project.name, viewport, exactViews, expectedScanCount: expectedAxeScansPerViewport, actualScanCount: scans.length, branchOverflowEvidence, scans }, null, 2)}\n`),
+    contentType: "application/json"
+  });
 });
 
 test("mobile 390x844 preserves all views, full integrity digests and shrink boundaries", async ({ page }, testInfo) => {

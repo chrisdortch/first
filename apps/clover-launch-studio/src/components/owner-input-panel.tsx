@@ -80,7 +80,7 @@ export function OwnerInputPanel({ branches }: { branches: TreeBranch[] }) {
     <div className="owner-input-layout">
       <section className="owner-input-card" aria-labelledby="owner-input-title">
         <div className="prototype-heading">
-          <div><p className="card-kicker">Synthetic / local-session input</p><h3 id="owner-input-title">Owner signal</h3></div>
+          <div><p className="card-kicker">Synthetic / local-session input</p><h2 id="owner-input-title">Owner signal</h2></div>
           <span className="safety-label">No durable private storage</span>
         </div>
         <label htmlFor="tree-owner-input">Exact editable text</label>

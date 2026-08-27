@@ -35,7 +35,7 @@ export function ActionPacketPanel({ packets = MODEL_LAUNCH_PACKETS, compact = fa
             </dl>
             <details>
               <summary>Inspect exact packet</summary>
-              <pre>{serializeModelLaunchPacket(packet)}</pre>
+              <pre aria-label={`${packet.targetModelProduct} exact packet content`} role="region" tabIndex={0}>{serializeModelLaunchPacket(packet)}</pre>
             </details>
             <div className="button-pair">
               <button type="button" className="secondary-button" onClick={() => void copyPacket(packet)}>Copy exact packet</button>

@@ -24,7 +24,7 @@ export function CollaborationCenter() {
   return (
     <section className="prototype-card collaboration-card" aria-labelledby="collaboration-title">
       <div className="prototype-heading">
-        <div><p className="card-kicker">Read-only synthetic proposal</p><h3 id="collaboration-title">Collaboration & JV Center</h3></div>
+        <div><p className="card-kicker">Read-only synthetic proposal</p><h2 id="collaboration-title">Collaboration & JV Center</h2></div>
         <span className="safety-label">Signature required</span>
       </div>
       <dl className="agreement-grid">

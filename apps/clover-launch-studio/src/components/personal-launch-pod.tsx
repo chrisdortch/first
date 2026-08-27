@@ -19,7 +19,7 @@ export function PersonalLaunchPod() {
   return (
     <section className="prototype-card pod-card" aria-labelledby="pod-title">
       <div className="prototype-heading">
-        <div><p className="card-kicker">Synthetic prototype</p><h3 id="pod-title">Personal Launch Pod</h3></div>
+        <div><p className="card-kicker">Synthetic prototype</p><h2 id="pod-title">Personal Launch Pod</h2></div>
         <span className="safety-label">No real account connected</span>
       </div>
       <p>A separate participant sees only their authorized synthetic project and controls every outward Project Delta.</p>

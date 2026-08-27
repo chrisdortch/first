@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ActionPacketPanel } from "./action-packet-panel";
 import { CollaborationCenter } from "./collaboration-center";
 import { DecisionRail } from "./decision-rail";
@@ -146,8 +146,26 @@ function RecordCards({ records, empty = "No current canonical record." }: { reco
 }
 
 function BranchTable({ branches }: { branches: TreeBranch[] }) {
+  const regionRef = useRef<HTMLDivElement>(null);
+  const [isScrollable, setIsScrollable] = useState(false);
+
+  useEffect(() => {
+    const region = regionRef.current;
+    if (!region) return;
+    const updateScrollableState = () => {
+      const next = region.scrollWidth > region.clientWidth;
+      setIsScrollable((current) => current === next ? current : next);
+    };
+    updateScrollableState();
+    const observer = new ResizeObserver(updateScrollableState);
+    observer.observe(region);
+    const table = region.querySelector("table");
+    if (table) observer.observe(table);
+    return () => observer.disconnect();
+  }, [branches]);
+
   return (
-    <div className="branch-table-wrap">
+    <div ref={regionRef} className="branch-table-wrap" role="region" aria-label="Canonical public-sanitized branch table" tabIndex={isScrollable ? 0 : undefined}>
       <table className="branch-table">
         <caption>Canonical public-sanitized branch readback</caption>
         <thead><tr><th>Branch</th><th>Home</th><th>Health</th><th>Trajectory</th><th>Freshness</th><th>Next gate</th></tr></thead>
