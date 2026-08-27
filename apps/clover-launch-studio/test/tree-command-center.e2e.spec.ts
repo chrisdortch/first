@@ -62,7 +62,17 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
   const authority = { publicMetadataObserved: true, sourceMutationAuthorized: false, mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false };
   const readback = {
     schemaVersion: "clover-tree-live-readback-v0.2",
-    baseline: { baselineObservedAt: "2026-08-26T19:55:59.000Z", indexId: "tree-program:index:0001", indexHash: fixtureIndexHash, classification: "historical-source-bound-baseline", immutableRecords: { index: { indexId: "tree-program:index:0001", indexHash: fixtureIndexHash } } },
+    baseline: {
+      baselineObservedAt: "2026-08-26T19:55:59.000Z",
+      indexId: "tree-program:index:0001",
+      indexHash: fixtureIndexHash,
+      classification: "historical-source-bound-baseline",
+      immutableRecords: {
+        index: { indexId: "tree-program:index:0001", indexHash: fixtureIndexHash, publicSanitized: true, privateDataAccessed: false },
+        branches: Array.from({ length: 22 }, (_, index) => ({ recordId: `branch:${index + 1}` })),
+        relationships: Array.from({ length: 21 }, (_, index) => ({ recordId: `relationship:${index + 1}` }))
+      }
+    },
     observations: { github, deploymentSelf, clover: { sourceId: "clover-context-gateway", sourceIdentity: "external-owner-console", evidenceClass: "external-owner-console-required", status: "external-owner-console-required", freshness: "unknown", observedAt: null, errorCode: null, webRuntimeConnectorInvoked: false, statement: "no Clover connector was invoked by the web runtime" } }, reconciled: {}, requestObservedAt: "2026-08-26T21:00:01.000Z", authority
   };
   return { provenance: { schemaVersion: "clover-tree-provenance-readback-v0.2", provenance, authority }, attestation, readback };
@@ -172,7 +182,7 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
   }
   await page.getByRole("button", { name: "System Health", exact: true }).click();
   await expect(page.locator("[data-readiness=ready]")).toHaveCount(11);
-  await expect(page.getByText("verified", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-readiness=ready]").filter({ hasText: /^verified$/u })).toBeVisible();
   await expect(page.getByText("2026-08-26T21:00:00.000Z", { exact: true })).toBeVisible();
   await expect(page.getByText("2026-08-26T21:00:01.000Z", { exact: true })).toBeVisible();
 });
@@ -185,7 +195,7 @@ test("attestation unavailability or source substitution leaves the current Actio
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "HOLD" })).toBeVisible();
   await page.getByRole("button", { name: "System Health", exact: true }).click();
-  await expect(page.getByText("inconsistent", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-readiness=hold]").filter({ hasText: /^inconsistent$/u })).toBeVisible();
 });
 
 test("Tree and status views preserve held, candidate, unknown and provider-degraded truth", async ({ page }) => {
