@@ -190,7 +190,7 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
   }
   await page.getByRole("button", { name: "System Health", exact: true }).click();
   await expect(page.locator("[data-readiness=ready]")).toHaveCount(13);
-  await expect(page.locator("[data-readiness=ready]").filter({ hasText: /^verified$/u })).toBeVisible();
+  await expect(page.locator("[data-readiness=ready]").filter({ hasText: /^verified$/u })).toHaveCount(2);
   await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:00\.000Z$/u })).toBeVisible();
   await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:01\.000Z$/u })).toBeVisible();
 });
