@@ -1,10 +1,11 @@
 export type BuildProvenance = {
   documentType: "clover-tree-build-provenance";
-  schemaVersion: "0.2.0";
+  schemaVersion: "0.3.0";
   commit: string;
   tree: string;
   parent: string;
   stackABase: string;
+  runtimeDeploymentKey: string;
   cleanWorktree: true;
   changedPathCount: number;
   pathListSha256: string;
@@ -26,13 +27,14 @@ export type BuildProvenance = {
 
 export type DeploymentAttestation = {
   documentType: "clover-tree-deployment-attestation";
-  schemaVersion: "0.2.0";
+  schemaVersion: "0.3.0";
   buildInvocationId: string;
   source: {
     commit: string;
     tree: string;
     parent: string;
     stackABase: string;
+    runtimeDeploymentKey: string;
     changedPathCount: number;
     pathListSha256: string;
     sourceManifestSha256: string;
@@ -73,6 +75,7 @@ export type AttestationComparison = {
 
 const HEX_40 = /^[0-9a-f]{40}$/u;
 const HEX_64 = /^[0-9a-f]{64}$/u;
+const RUNTIME_DEPLOYMENT_KEY = /^clover-[0-9a-f]{24}$/u;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -120,7 +123,7 @@ function exactHex(record: Record<string, unknown>, key: string, expression: RegE
 
 export function parseBuildProvenance(value: unknown): BuildProvenance {
   if (!isRecord(value)) throw new Error("CLOVER_BUILD_PROVENANCE_REJECTED");
-  if (value.documentType !== "clover-tree-build-provenance" || value.schemaVersion !== "0.2.0") {
+  if (value.documentType !== "clover-tree-build-provenance" || value.schemaVersion !== "0.3.0") {
     throw new Error("CLOVER_BUILD_PROVENANCE_REJECTED");
   }
   for (const key of ["commit", "tree", "parent", "stackABase"]) exactHex(value, key, HEX_40);
@@ -131,6 +134,10 @@ export function parseBuildProvenance(value: unknown): BuildProvenance {
   exactBoolean(value, "publicSanitized", true);
   exactBoolean(value, "privateDataAccessed", false);
   exactBoolean(value, "consequentialAuthorityGranted", false);
+  const runtimeDeploymentKey = exactString(value, "runtimeDeploymentKey");
+  if (!RUNTIME_DEPLOYMENT_KEY.test(runtimeDeploymentKey) || runtimeDeploymentKey !== `clover-${exactString(value, "commit").slice(0, 24)}`) {
+    throw new Error("CLOVER_RUNTIME_DEPLOYMENT_KEY_REJECTED");
+  }
   if (exactInteger(value, "changedPathCount") === 0) throw new Error("CLOVER_BUILD_PROVENANCE_REJECTED");
   if (value.buildMode !== "vercel-prebuilt-preview" || value.buildCommand !== "npm run build" || value.buildOutputCommand !== "vercel build --yes") {
     throw new Error("CLOVER_BUILD_PROVENANCE_REJECTED");
@@ -153,7 +160,7 @@ export function readBuildProvenance(encoded = process.env.CLOVER_BUILD_PROVENANC
 }
 
 export function parseDeploymentAttestation(value: unknown): DeploymentAttestation {
-  if (!isRecord(value) || value.documentType !== "clover-tree-deployment-attestation" || value.schemaVersion !== "0.2.0") {
+  if (!isRecord(value) || value.documentType !== "clover-tree-deployment-attestation" || value.schemaVersion !== "0.3.0") {
     throw new Error("CLOVER_DEPLOYMENT_ATTESTATION_REJECTED");
   }
   if (!isRecord(value.source) || !isRecord(value.output) || !Array.isArray(value.normalization)) {
@@ -162,6 +169,10 @@ export function parseDeploymentAttestation(value: unknown): DeploymentAttestatio
   exactHex(value, "attestationHash", HEX_64);
   if (!/^clover-build:[0-9a-f]{64}$/u.test(exactString(value, "buildInvocationId"))) throw new Error("CLOVER_DEPLOYMENT_ATTESTATION_REJECTED");
   for (const key of ["commit", "tree", "parent", "stackABase"]) exactHex(value.source, key, HEX_40);
+  const runtimeDeploymentKey = exactString(value.source, "runtimeDeploymentKey");
+  if (!RUNTIME_DEPLOYMENT_KEY.test(runtimeDeploymentKey) || runtimeDeploymentKey !== `clover-${exactString(value.source, "commit").slice(0, 24)}`) {
+    throw new Error("CLOVER_DEPLOYMENT_ATTESTATION_REJECTED");
+  }
   for (const key of ["pathListSha256", "sourceManifestSha256", "packageLockSha256", "treeProgramIndexHash"]) exactHex(value.source, key, HEX_64);
   for (const key of ["manifestRootSha256"]) exactHex(value.output, key, HEX_64);
   for (const key of ["changedPathCount"]) exactInteger(value.source, key);
@@ -201,6 +212,7 @@ export async function compareDeploymentAttestation(build: BuildProvenance, candi
     ["source-tree", attestation.source.tree, build.tree],
     ["source-parent", attestation.source.parent, build.parent],
     ["stack-a-base", attestation.source.stackABase, build.stackABase],
+    ["runtime-deployment-key", attestation.source.runtimeDeploymentKey, build.runtimeDeploymentKey],
     ["changed-path-count", attestation.source.changedPathCount, build.changedPathCount],
     ["path-list", attestation.source.pathListSha256, build.pathListSha256],
     ["source-manifest", attestation.source.sourceManifestSha256, build.sourceManifestSha256],

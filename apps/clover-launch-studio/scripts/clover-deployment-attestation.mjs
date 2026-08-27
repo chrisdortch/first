@@ -21,6 +21,15 @@ export const PACKAGE_PATH = "apps/clover-launch-studio/package.json";
 export const ATTESTATION_OUTPUT_PATH = "static/__clover/deployment-attestation.json";
 const RUNTIME_ROOT = "/var/task";
 
+export function deriveRuntimeDeploymentKey(commit) {
+  assertHex(commit, 40, "source commit");
+  const deploymentKey = `clover-${commit.slice(0, 24)}`;
+  if (deploymentKey.length > 32 || !/^[A-Za-z0-9-]+$/u.test(deploymentKey) || deploymentKey.startsWith("dpl_")) {
+    throw new Error("CLOVER_RUNTIME_DEPLOYMENT_KEY_REJECTED");
+  }
+  return deploymentKey;
+}
+
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
 }
@@ -90,6 +99,7 @@ export function deriveSourceProvenance({ repositoryRoot, stackABase = STACK_A_BA
     tree,
     parent,
     stackABase,
+    runtimeDeploymentKey: deriveRuntimeDeploymentKey(commit),
     cleanWorktree: true,
     changedPathCount: paths.length,
     pathListSha256: sha256(pathList),
@@ -112,7 +122,7 @@ export function deriveSourceProvenance({ repositoryRoot, stackABase = STACK_A_BA
   }
   return Object.freeze({
     documentType: "clover-tree-build-provenance",
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     ...source,
     buildInvocationId: `clover-build:${sha256(`${canonicalJson(source)}\n`)}`,
     publicSanitized: true,
@@ -360,13 +370,14 @@ export function createDeploymentAttestation({ outputRoot, repositoryRoot, eviden
   const outputManifest = buildOutputManifest(root);
   const body = {
     documentType: "clover-tree-deployment-attestation",
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     buildInvocationId: provenance.buildInvocationId,
     source: {
       commit: provenance.commit,
       tree: provenance.tree,
       parent: provenance.parent,
       stackABase: provenance.stackABase,
+      runtimeDeploymentKey: provenance.runtimeDeploymentKey,
       changedPathCount: provenance.changedPathCount,
       pathListSha256: provenance.pathListSha256,
       sourceManifestSha256: provenance.sourceManifestSha256,

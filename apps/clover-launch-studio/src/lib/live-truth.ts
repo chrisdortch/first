@@ -5,6 +5,7 @@ export const GITHUB_ORIGIN = "https://api.github.com";
 export const GITHUB_REPOSITORY = "chrisdortch/first";
 export const EXPECTED_MAIN_COMMIT = "7d067d79bbff872846d6673b5f852518ba00fa7e";
 export const EXPECTED_STACK_A_HEAD = "ec4ad8ca76dd5fd6da7db8107829a07c3650b7c6";
+export const EXPECTED_VERCEL_PROJECT_ID = "prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ";
 export const STACK_A_BRANCH = "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826";
 export const STACK_B_BRANCH = "feature/clover-tree-command-center-launch-studio-v0.1-20260826";
 export const MAX_GITHUB_RESPONSE_BYTES = 256 * 1024;
@@ -60,7 +61,7 @@ export type GitHubLiveObservation = {
 
 export type DeploymentSelfObservation = {
   sourceId: "vercel-deployment-self";
-  sourceIdentity: "vercel-system-environment";
+  sourceIdentity: "vercel-functions-get-env" | "vercel-system-environment";
   evidenceClass: "deployment-self-observation";
   status: "current" | "unavailable" | "contradictory";
   freshness: ObservationFreshness;
@@ -68,10 +69,27 @@ export type DeploymentSelfObservation = {
   errorCode: string | null;
   environment: "preview" | null;
   hostname: string | null;
+  runtimeHostname?: string | null;
+  requestHostname?: string | null;
   projectId: string | null;
-  deploymentId: string | null;
+  deploymentId: null;
+  runtimeDeploymentKey?: string | null;
   region: string | null;
+  regionStatus?: "current" | "unavailable";
+  skewProtectionState?: "enabled" | "disabled" | "unavailable" | "invalid";
   gitCommitSha: string | null;
+  sourceBindingMode?: "vercel-git-commit-sha-and-build-provenance" | "build-provenance-and-output-attestation";
+  observationMethod?: "vercel-functions-get-env-and-request-host" | "request-bound-runtime-host" | "unavailable";
+  externalProviderIdentity?: {
+    evidenceClass: "external-provider-verification";
+    verifiedByWebRuntime: false;
+    providerDeploymentId: null;
+    providerUrl: null;
+    target: null;
+    aliases: null;
+    providerSourceSha: null;
+    protectionState: null;
+  };
   failures: string[];
   environmentKeysRead: string[];
 };
@@ -94,6 +112,8 @@ export type TruthReadiness = {
   treePreviewRuntimeObserved: boolean;
   liveGithubOverlayStatus: ObservationFreshness;
   deploymentAttestationStatus: AttestationComparison["status"];
+  runtimeDeploymentIdentityStatus?: "verified" | "unavailable" | "invalid";
+  externalProviderVerificationRequired?: true;
   ownerConsoleGroundingRequired: true;
   privateOwnerAuthenticationConfigured: false;
   durablePrivateStorageConfigured: false;
@@ -154,7 +174,18 @@ type FixedFetch = (input: string, init?: FixedFetchInit) => Promise<Response>;
 type GithubProjectionKey = "repository" | "main" | "pull34" | "pull35" | "exactHeadChecks";
 
 const HEX_40 = /^[0-9a-f]{40}$/u;
-const ALLOWED_ENVIRONMENT_KEYS = Object.freeze(["VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_ID", "VERCEL_DEPLOYMENT_ID", "VERCEL_REGION", "VERCEL_GIT_COMMIT_SHA"]);
+const ALLOWED_ENVIRONMENT_KEYS = Object.freeze(["VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_ID", "VERCEL_DEPLOYMENT_ID", "VERCEL_REGION", "VERCEL_GIT_COMMIT_SHA", "VERCEL_SKEW_PROTECTION_ENABLED"]);
+const VERCEL_HOSTNAME = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+vercel\.app$/u;
+type RuntimeEnvironment = Readonly<Record<string, string | undefined>>;
+export type RuntimeEnvironmentReader = () => RuntimeEnvironment;
+export type RuntimeDeploymentKeyReader = () => string | null | undefined;
+
+export function projectVercelRuntimeEnvironment(systemEnvironment: RuntimeEnvironment, fallbackEnvironment: RuntimeEnvironment = {}): RuntimeEnvironment {
+  return Object.freeze(Object.fromEntries(ALLOWED_ENVIRONMENT_KEYS.map((key) => [
+    key,
+    key === "VERCEL_PROJECT_ID" ? systemEnvironment[key] ?? fallbackEnvironment[key] : systemEnvironment[key]
+  ])));
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -363,38 +394,118 @@ export async function observeGitHubTruth({ candidateCommit, fetchImpl = fetch as
   };
 }
 
-function readTrimmedEnvironment(env: NodeJS.ProcessEnv, key: string): string | null {
+function readTrimmedEnvironment(env: RuntimeEnvironment, key: string): string | null {
   const value = env[key]?.trim();
   return value ? value : null;
 }
 
-export function observeDeploymentSelf(env: NodeJS.ProcessEnv = process.env): DeploymentSelfObservation {
+function normalizedEnvironmentHostname(value: string | null): string | null {
+  if (!value || value.length > 253 || !VERCEL_HOSTNAME.test(value.toLowerCase())) return null;
+  return value.toLowerCase();
+}
+
+function normalizedRequestHostname(requestUrl: string | null): string | null {
+  if (!requestUrl || requestUrl.length > 2_048) return null;
+  try {
+    const candidate = new URL(requestUrl);
+    if (candidate.protocol !== "https:" || candidate.username || candidate.password || candidate.port || candidate.search || candidate.hash) return null;
+    const hostname = candidate.hostname.toLowerCase();
+    return VERCEL_HOSTNAME.test(hostname) ? hostname : null;
+  } catch {
+    return null;
+  }
+}
+
+function deploymentObservationStatus(failures: string[]): DeploymentSelfObservation["status"] {
+  if (failures.length === 0) return "current";
+  const unavailable = new Set(["deployment-environment-unavailable", "deployment-host-unavailable", "deployment-project-unavailable", "deployment-runtime-key-unavailable", "deployment-request-host-unavailable"]);
+  return failures.every((failure) => unavailable.has(failure)) ? "unavailable" : "contradictory";
+}
+
+export function observeDeploymentSelf({
+  build,
+  environmentReader = () => process.env,
+  runtimeDeploymentKeyReader = () => process.env.NEXT_DEPLOYMENT_ID,
+  requestUrl = null
+}: {
+  build: BuildProvenance;
+  environmentReader?: RuntimeEnvironmentReader;
+  runtimeDeploymentKeyReader?: RuntimeDeploymentKeyReader;
+  requestUrl?: string | null;
+}): DeploymentSelfObservation {
+  let env: RuntimeEnvironment = {};
+  const failures: string[] = [];
+  try {
+    const candidate = environmentReader();
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) env = candidate;
+    else failures.push("deployment-environment-reader-invalid");
+  } catch {
+    failures.push("deployment-environment-reader-unavailable");
+  }
   const environment = readTrimmedEnvironment(env, "VERCEL_ENV");
-  const hostname = readTrimmedEnvironment(env, "VERCEL_URL");
+  const environmentHostnameValue = readTrimmedEnvironment(env, "VERCEL_URL");
+  const environmentHostname = normalizedEnvironmentHostname(environmentHostnameValue);
+  const requestHostname = normalizedRequestHostname(requestUrl);
   const projectId = readTrimmedEnvironment(env, "VERCEL_PROJECT_ID");
-  const deploymentId = readTrimmedEnvironment(env, "VERCEL_DEPLOYMENT_ID");
+  readTrimmedEnvironment(env, "VERCEL_DEPLOYMENT_ID");
   const region = readTrimmedEnvironment(env, "VERCEL_REGION");
   const gitCommitSha = readTrimmedEnvironment(env, "VERCEL_GIT_COMMIT_SHA");
-  const failures: string[] = [];
-  if (environment !== "preview") failures.push("deployment-not-preview");
-  if (!hostname || !/^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.vercel\.app$/u.test(hostname)) failures.push("deployment-host-unavailable");
-  if (!projectId || !/^prj_[A-Za-z0-9]+$/u.test(projectId)) failures.push("deployment-project-unavailable");
-  if (!deploymentId || !/^dpl_[A-Za-z0-9]+$/u.test(deploymentId)) failures.push("deployment-id-unavailable");
-  if (!gitCommitSha || !HEX_40.test(gitCommitSha)) failures.push("deployment-source-unavailable");
+  const skewProtection = readTrimmedEnvironment(env, "VERCEL_SKEW_PROTECTION_ENABLED");
+  let runtimeDeploymentKey: string | null = null;
+  try {
+    const candidate = runtimeDeploymentKeyReader();
+    if (candidate !== null && candidate !== undefined && typeof candidate !== "string") failures.push("deployment-runtime-key-reader-invalid");
+    else runtimeDeploymentKey = candidate?.trim() || null;
+  } catch {
+    failures.push("deployment-runtime-key-reader-unavailable");
+  }
+  if (!environment) failures.push("deployment-environment-unavailable");
+  else if (environment !== "preview") failures.push("deployment-not-preview");
+  if (environmentHostnameValue && !environmentHostname) failures.push("deployment-host-invalid");
+  if (!requestUrl) failures.push("deployment-request-host-unavailable");
+  else if (!requestHostname) failures.push("deployment-request-host-invalid");
+  if (!environmentHostname && !requestHostname) failures.push("deployment-host-unavailable");
+  if (environmentHostname && requestHostname && environmentHostname !== requestHostname) failures.push("deployment-request-host-substitution");
+  if (!projectId) failures.push("deployment-project-unavailable");
+  else if (projectId !== EXPECTED_VERCEL_PROJECT_ID) failures.push("deployment-project-identity");
+  if (!runtimeDeploymentKey) failures.push("deployment-runtime-key-unavailable");
+  else if (runtimeDeploymentKey !== build.runtimeDeploymentKey || !/^clover-[0-9a-f]{24}$/u.test(runtimeDeploymentKey)) failures.push("deployment-runtime-key-identity");
+  if (gitCommitSha && (!HEX_40.test(gitCommitSha) || gitCommitSha !== build.commit)) failures.push("deployment-source-identity");
+  if (region && !/^[a-z0-9]{3,16}$/u.test(region)) failures.push("deployment-region-invalid");
+  if (skewProtection !== null && skewProtection !== "0" && skewProtection !== "1") failures.push("deployment-skew-protection-invalid");
+  const hostname = environmentHostname ?? requestHostname;
+  const status = deploymentObservationStatus(failures);
   return {
     sourceId: "vercel-deployment-self",
-    sourceIdentity: "vercel-system-environment",
+    sourceIdentity: "vercel-functions-get-env",
     evidenceClass: "deployment-self-observation",
-    status: failures.length === 0 ? "current" : "unavailable",
-    freshness: failures.length === 0 ? "unknown" : "unavailable",
+    status,
+    freshness: status === "current" ? "current" : "unavailable",
     observedAt: null,
     errorCode: failures[0] ?? null,
     environment: environment === "preview" ? "preview" : null,
     hostname,
+    runtimeHostname: hostname,
+    requestHostname,
     projectId,
-    deploymentId,
+    deploymentId: null,
+    runtimeDeploymentKey,
     region,
+    regionStatus: region && /^[a-z0-9]{3,16}$/u.test(region) ? "current" : "unavailable",
+    skewProtectionState: skewProtection === "1" ? "enabled" : skewProtection === "0" ? "disabled" : skewProtection === null ? "unavailable" : "invalid",
     gitCommitSha,
+    sourceBindingMode: gitCommitSha ? "vercel-git-commit-sha-and-build-provenance" : "build-provenance-and-output-attestation",
+    observationMethod: environmentHostname ? "vercel-functions-get-env-and-request-host" : requestHostname ? "request-bound-runtime-host" : "unavailable",
+    externalProviderIdentity: {
+      evidenceClass: "external-provider-verification",
+      verifiedByWebRuntime: false,
+      providerDeploymentId: null,
+      providerUrl: null,
+      target: null,
+      aliases: null,
+      providerSourceSha: null,
+      protectionState: null
+    },
     failures,
     environmentKeysRead: [...ALLOWED_ENVIRONMENT_KEYS]
   };
@@ -423,10 +534,8 @@ function githubContradictions(github: GitHubLiveObservation, build: BuildProvena
 }
 
 function deploymentContradictions(deployment: DeploymentSelfObservation, build: BuildProvenance): string[] {
-  const contradictions: string[] = [];
-  if (deployment.status !== "current") contradictions.push("deployment-self-unavailable");
-  if (deployment.gitCommitSha !== build.commit) contradictions.push("deployment-source-identity");
-  return contradictions;
+  if (deployment.status === "current" && deployment.runtimeDeploymentKey === build.runtimeDeploymentKey) return [];
+  return deployment.failures.length ? deployment.failures : ["deployment-self-unavailable"];
 }
 
 export function computeTruthReadiness({ github, deployment, attestation }: { github: GitHubLiveObservation; deployment: DeploymentSelfObservation; attestation: AttestationComparison }, _build: BuildProvenance): TruthReadiness {
@@ -434,8 +543,10 @@ export function computeTruthReadiness({ github, deployment, attestation }: { git
     applicationSourceValidated: _build.cleanWorktree,
     treeProgramBaselineLoaded: true,
     treePreviewRuntimeObserved: deployment.status === "current",
+    runtimeDeploymentIdentityStatus: deployment.status === "current" && deployment.runtimeDeploymentKey === _build.runtimeDeploymentKey ? "verified" : deployment.status === "contradictory" ? "invalid" : "unavailable",
     liveGithubOverlayStatus: github.status === "current" ? "current" : "unavailable",
     deploymentAttestationStatus: attestation.status,
+    externalProviderVerificationRequired: true,
     ownerConsoleGroundingRequired: true,
     privateOwnerAuthenticationConfigured: false,
     durablePrivateStorageConfigured: false,
@@ -446,7 +557,7 @@ export function computeTruthReadiness({ github, deployment, attestation }: { git
 }
 
 function readinessAllowsAcceptance(readiness: TruthReadiness, contradictions: string[]): boolean {
-  return readiness.applicationSourceValidated && readiness.treeProgramBaselineLoaded && readiness.treePreviewRuntimeObserved && readiness.liveGithubOverlayStatus === "current" && readiness.deploymentAttestationStatus === "verified" && contradictions.length === 0;
+  return readiness.applicationSourceValidated && readiness.treeProgramBaselineLoaded && readiness.treePreviewRuntimeObserved && readiness.runtimeDeploymentIdentityStatus === "verified" && readiness.liveGithubOverlayStatus === "current" && readiness.deploymentAttestationStatus === "verified" && readiness.externalProviderVerificationRequired === true && contradictions.length === 0;
 }
 
 export function currentActionCard({ readiness, github, deployment, contradictions }: { readiness: TruthReadiness; github: GitHubLiveObservation; deployment: DeploymentSelfObservation; contradictions: string[] }): CurrentActionCard {

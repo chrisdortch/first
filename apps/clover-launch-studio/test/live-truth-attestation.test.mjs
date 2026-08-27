@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { getEnv } from "@vercel/functions";
 import {
   EXPECTED_MAIN_COMMIT,
   EXPECTED_STACK_A_HEAD,
@@ -24,6 +25,7 @@ import {
   computeTruthReadiness,
   observeDeploymentSelf,
   observeGitHubTruth,
+  projectVercelRuntimeEnvironment,
   reconcileTreeTruth
 } from "../src/lib/live-truth.ts";
 import {
@@ -41,14 +43,17 @@ const hex64 = (character) => character.repeat(64);
 const candidateCommit = hex40("a");
 const candidateTree = hex40("b");
 const candidateParent = hex40("c");
+const runtimeDeploymentKey = `clover-${candidateCommit.slice(0, 24)}`;
+const runtimeRequestUrl = "https://clover-tree-command-center-abc.vercel.app/api/tree";
 
 const build = parseBuildProvenance({
   documentType: "clover-tree-build-provenance",
-  schemaVersion: "0.2.0",
+  schemaVersion: "0.3.0",
   commit: candidateCommit,
   tree: candidateTree,
   parent: candidateParent,
   stackABase: EXPECTED_STACK_A_HEAD,
+  runtimeDeploymentKey,
   cleanWorktree: true,
   changedPathCount: 17,
   pathListSha256: hex64("1"),
@@ -128,20 +133,31 @@ function previewEnvironment(overrides = {}) {
     VERCEL_DEPLOYMENT_ID: "dpl_Abc123",
     VERCEL_REGION: "iad1",
     VERCEL_GIT_COMMIT_SHA: candidateCommit,
+    VERCEL_SKEW_PROTECTION_ENABLED: "1",
     ...overrides
   };
+}
+
+function deploymentObservation(environment = previewEnvironment(), requestUrl = runtimeRequestUrl, nextDeploymentId = runtimeDeploymentKey) {
+  return observeDeploymentSelf({
+    build,
+    environmentReader: () => projectVercelRuntimeEnvironment(getEnv(environment), environment),
+    runtimeDeploymentKeyReader: () => nextDeploymentId,
+    requestUrl
+  });
 }
 
 function sealedAttestation(overrides = {}) {
   const body = {
     documentType: "clover-tree-deployment-attestation",
-    schemaVersion: "0.2.0",
+    schemaVersion: "0.3.0",
     buildInvocationId: build.buildInvocationId,
     source: {
       commit: build.commit,
       tree: build.tree,
       parent: build.parent,
       stackABase: build.stackABase,
+      runtimeDeploymentKey: build.runtimeDeploymentKey,
       changedPathCount: build.changedPathCount,
       pathListSha256: build.pathListSha256,
       sourceManifestSha256: build.sourceManifestSha256,
@@ -195,7 +211,7 @@ test("request time never upgrades missing GitHub source freshness", async () => 
   assert.equal(observation.status, "partial");
   assert.equal(observation.freshness, "unavailable");
   assert.equal(observation.observedAt, null);
-  const deployment = observeDeploymentSelf(previewEnvironment());
+  const deployment = deploymentObservation();
   const reconciled = reconcileTreeTruth({ baseline, build, github: observation, deployment, attestation: NO_ATTESTATION_COMPARISON });
   assert.equal(reconciled.readiness.liveGithubOverlayStatus, "unavailable");
   assert.equal(reconciled.currentActionCard.action, "HOLD");
@@ -258,7 +274,7 @@ test("PR head and base drift remain visible and block the current Action Card", 
   const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
   assert.equal(github.status, "current");
   assert.equal(github.pull35?.baseSha, hex40("e"));
-  const deployment = observeDeploymentSelf(previewEnvironment());
+  const deployment = deploymentObservation();
   const attestation = await compareDeploymentAttestation(build, sealedAttestation());
   const reconciled = reconcileTreeTruth({ baseline, build, github, deployment, attestation });
   assert.equal(reconciled.pull35.value?.baseSha, hex40("e"));
@@ -267,24 +283,92 @@ test("PR head and base drift remain visible and block the current Action Card", 
   assert.equal(reconciled.currentActionCard.reason, "source-refresh-required");
 });
 
-test("deployment self reads only the allowlist and never supplies source time", () => {
+test("deployment self uses an injected getEnv-compatible reader, reads only the allowlist and never supplies source time", () => {
   const environment = previewEnvironment({ CLOVER_PRIVATE_VALUE: "not-read" });
-  const observation = observeDeploymentSelf(environment);
+  const observation = deploymentObservation(environment);
   assert.equal(observation.status, "current");
   assert.equal(observation.observedAt, null);
-  assert.equal(observation.freshness, "unknown");
+  assert.equal(observation.freshness, "current");
   assert.equal(observation.evidenceClass, "deployment-self-observation");
+  assert.equal(observation.sourceIdentity, "vercel-functions-get-env");
+  assert.equal(observation.runtimeDeploymentKey, runtimeDeploymentKey);
+  assert.equal(observation.deploymentId, null);
+  assert.equal(observation.externalProviderIdentity.providerDeploymentId, null);
+  assert.equal(observation.externalProviderIdentity.verifiedByWebRuntime, false);
+  assert.equal(JSON.stringify(observation).includes("dpl_Abc123"), false);
   assert.equal(observation.gitCommitSha, candidateCommit);
   assert.equal(observation.environmentKeysRead.includes("CLOVER_PRIVATE_VALUE"), false);
-  const missing = observeDeploymentSelf({});
+  assert.equal(observation.environmentKeysRead.includes("VERCEL_AUTOMATION_BYPASS_SECRET"), false);
+  assert.equal(JSON.stringify(observation).includes("VERCEL_AUTOMATION_BYPASS_SECRET"), false);
+  const missing = deploymentObservation({});
   assert.equal(missing.status, "unavailable");
-  assert.equal(missing.failures.includes("deployment-source-unavailable"), true);
+  assert.equal(missing.failures.includes("deployment-source-identity"), false);
+});
+
+test("prebuilt runtime identity accepts only the exact source-bound preview contract", async (t) => {
+  await t.test("missing CLI Git SHA uses sealed build and output-attestation binding", () => {
+    const observation = deploymentObservation(previewEnvironment({ VERCEL_GIT_COMMIT_SHA: undefined }));
+    assert.equal(observation.status, "current");
+    assert.equal(observation.gitCommitSha, null);
+    assert.equal(observation.sourceBindingMode, "build-provenance-and-output-attestation");
+    assert.equal(observation.failures.includes("deployment-source-identity"), false);
+  });
+  await t.test("present exact Git SHA stays source-bound", () => {
+    const observation = deploymentObservation();
+    assert.equal(observation.status, "current");
+    assert.equal(observation.sourceBindingMode, "vercel-git-commit-sha-and-build-provenance");
+  });
+  await t.test("present mismatched Git SHA fails closed", () => {
+    const observation = deploymentObservation(previewEnvironment({ VERCEL_GIT_COMMIT_SHA: hex40("f") }));
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.failures.includes("deployment-source-identity"), true);
+  });
+  await t.test("wrong project, non-preview environment and missing or provider-style runtime key fail closed", () => {
+    const cases = [
+      [previewEnvironment({ VERCEL_PROJECT_ID: "prj_substituted" }), "deployment-project-identity", runtimeDeploymentKey],
+      [previewEnvironment({ VERCEL_ENV: "production" }), "deployment-not-preview", runtimeDeploymentKey],
+      [previewEnvironment(), "deployment-runtime-key-unavailable", null],
+      [previewEnvironment(), "deployment-runtime-key-identity", "dpl_externalProviderIdentity"]
+    ];
+    for (const [environment, failure, nextDeploymentId] of cases) {
+      const observation = deploymentObservation(environment, runtimeRequestUrl, nextDeploymentId);
+      assert.notEqual(observation.status, "current", failure);
+      assert.equal(observation.failures.includes(failure), true, failure);
+      assert.equal(observation.externalProviderIdentity.providerDeploymentId, null);
+    }
+  });
+  await t.test("validated request host is a truthful fallback when VERCEL_URL is absent", () => {
+    const observation = deploymentObservation(previewEnvironment({ VERCEL_URL: undefined }));
+    assert.equal(observation.status, "current");
+    assert.equal(observation.runtimeHostname, "clover-tree-command-center-abc.vercel.app");
+    assert.equal(observation.requestHostname, observation.runtimeHostname);
+    assert.equal(observation.observationMethod, "request-bound-runtime-host");
+  });
+  await t.test("host substitution, non-HTTPS, credentials and ports fail closed", () => {
+    const cases = [
+      [previewEnvironment(), "https://substituted.vercel.app/api/tree", "deployment-request-host-substitution"],
+      [previewEnvironment({ VERCEL_URL: undefined }), "http://clover-tree-command-center-abc.vercel.app/api/tree", "deployment-request-host-invalid"],
+      [previewEnvironment({ VERCEL_URL: undefined }), "https://owner:secret@clover-tree-command-center-abc.vercel.app/api/tree", "deployment-request-host-invalid"],
+      [previewEnvironment({ VERCEL_URL: undefined }), "https://clover-tree-command-center-abc.vercel.app:444/api/tree", "deployment-request-host-invalid"]
+    ];
+    for (const [environment, requestUrl, failure] of cases) {
+      const observation = deploymentObservation(environment, requestUrl);
+      assert.equal(observation.status, "contradictory");
+      assert.equal(observation.failures.includes(failure), true, requestUrl);
+    }
+  });
+  await t.test("missing optional region remains current and is labeled unavailable", () => {
+    const observation = deploymentObservation(previewEnvironment({ VERCEL_REGION: undefined }));
+    assert.equal(observation.status, "current");
+    assert.equal(observation.region, null);
+    assert.equal(observation.regionStatus, "unavailable");
+  });
 });
 
 test("current Action Card is HOLD until GitHub, deployment self and attestation all agree", async () => {
   const fixture = githubFetch();
   const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
-  const deployment = observeDeploymentSelf(previewEnvironment());
+  const deployment = deploymentObservation();
   const unavailable = computeTruthReadiness({ github, deployment, attestation: NO_ATTESTATION_COMPARISON }, build);
   assert.equal(unavailable.deploymentAttestationStatus, "unavailable");
   assert.equal(reconcileTreeTruth({ baseline, build, github, deployment, attestation: NO_ATTESTATION_COMPARISON }).currentActionCard.action, "HOLD");
@@ -296,8 +380,10 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
     applicationSourceValidated: true,
     treeProgramBaselineLoaded: true,
     treePreviewRuntimeObserved: true,
+    runtimeDeploymentIdentityStatus: "verified",
     liveGithubOverlayStatus: "current",
     deploymentAttestationStatus: "verified",
+    externalProviderVerificationRequired: true,
     ownerConsoleGroundingRequired: true,
     privateOwnerAuthenticationConfigured: false,
     durablePrivateStorageConfigured: false,
@@ -324,11 +410,17 @@ test("deployment attestation rejects every exact source identity substitution", 
     ["treeProgramIndexHash", hex64("c"), "tree-program-index-hash"]
   ];
   for (const [field, replacement, expectedDifference] of substitutions) {
-    const candidate = sealedAttestation({ source: { ...original.source, [field]: replacement } });
+    const source = { ...original.source, [field]: replacement };
+    if (field === "commit") source.runtimeDeploymentKey = `clover-${replacement.slice(0, 24)}`;
+    const candidate = sealedAttestation({ source });
     const comparison = await compareDeploymentAttestation(build, candidate);
     assert.equal(comparison.status, "inconsistent", field);
     assert.equal(comparison.differences.includes(expectedDifference), true, field);
   }
+  const substitutedDeploymentKey = sealedAttestation({ source: { ...original.source, runtimeDeploymentKey: `clover-${hex40("e").slice(0, 24)}` } });
+  const deploymentKeyComparison = await compareDeploymentAttestation(build, substitutedDeploymentKey);
+  assert.equal(deploymentKeyComparison.status, "invalid");
+  assert.deepEqual(deploymentKeyComparison.differences, ["attestation-structure-invalid"]);
 });
 
 function initializeSourceRepository(root) {
@@ -358,6 +450,8 @@ test("source provenance derives from an exact clean Git source and rejects dirty
     assert.equal(provenance.changedPathCount, 1);
     assert.equal(provenance.pathListSha256, sha256("candidate.txt\n"));
     assert.equal(provenance.commit, execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim());
+    assert.equal(provenance.runtimeDeploymentKey, `clover-${provenance.commit.slice(0, 24)}`);
+    assert.match(provenance.runtimeDeploymentKey, /^clover-[0-9a-f]{24}$/u);
     writeFileSync(path.join(root, "candidate.txt"), "dirty\n");
     assert.throws(() => deriveSourceProvenance({ repositoryRoot: root, stackABase }), /CLOVER_DIRTY_SOURCE_REJECTED/u);
   } finally {
@@ -386,6 +480,7 @@ test("generated preview output normalization, manifest, attestation and archive 
     writeRawBuildOutput(output, checkoutRoot);
     const first = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build });
     assert.equal(first.attestation.source.commit, candidateCommit);
+    assert.equal(first.attestation.source.runtimeDeploymentKey, runtimeDeploymentKey);
     assert.equal(first.attestation.publicSanitized, true);
     assert.equal(first.attestation.normalization.length, 3);
     assert.equal(readFileSync(path.join(output, "builds.json"), "utf8").includes(checkoutRoot), false);

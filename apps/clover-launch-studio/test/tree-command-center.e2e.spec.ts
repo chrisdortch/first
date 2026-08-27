@@ -14,6 +14,7 @@ const fixtureTree = "b".repeat(40);
 const fixtureParent = "c".repeat(40);
 const fixtureStackA = "ec4ad8ca76dd5fd6da7db8107829a07c3650b7c6";
 const fixtureIndexHash = "897b7967069f9ec699fcef76175dcdee8a91513b43b3cbf046f840760c7d34d0";
+const fixtureRuntimeDeploymentKey = `clover-${fixtureCommit.slice(0, 24)}`;
 
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalValue);
@@ -27,17 +28,18 @@ function canonicalJson(value: unknown) {
 
 function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
   const provenance = {
-    documentType: "clover-tree-build-provenance", schemaVersion: "0.2.0", commit: fixtureCommit, tree: fixtureTree, parent: fixtureParent,
-    stackABase: fixtureStackA, cleanWorktree: true, changedPathCount: 17, pathListSha256: "1".repeat(64), sourceManifestSha256: "2".repeat(64),
+    documentType: "clover-tree-build-provenance", schemaVersion: "0.3.0", commit: fixtureCommit, tree: fixtureTree, parent: fixtureParent,
+    stackABase: fixtureStackA, runtimeDeploymentKey: fixtureRuntimeDeploymentKey, cleanWorktree: true, changedPathCount: 17, pathListSha256: "1".repeat(64), sourceManifestSha256: "2".repeat(64),
     packageLockSha256: "3".repeat(64), treeProgramIndexId: "tree-program:index:0001", treeProgramIndexHash: fixtureIndexHash,
     treeProgramIndexRawSha256: "5".repeat(64), nodeVersion: "v24.16.0", nextVersion: "16.3.3", buildMode: "vercel-prebuilt-preview",
     buildCommand: "npm run build", buildOutputCommand: "vercel build --yes", buildInvocationId: `clover-build:${"6".repeat(64)}`,
     publicSanitized: true, privateDataAccessed: false, consequentialAuthorityGranted: false
   };
   const attestationBody = {
-    documentType: "clover-tree-deployment-attestation", schemaVersion: "0.2.0", buildInvocationId: provenance.buildInvocationId,
+    documentType: "clover-tree-deployment-attestation", schemaVersion: "0.3.0", buildInvocationId: provenance.buildInvocationId,
     source: {
       commit: attestationSourceCommit, tree: provenance.tree, parent: provenance.parent, stackABase: provenance.stackABase,
+      runtimeDeploymentKey: `clover-${attestationSourceCommit.slice(0, 24)}`,
       changedPathCount: provenance.changedPathCount, pathListSha256: provenance.pathListSha256, sourceManifestSha256: provenance.sourceManifestSha256,
       packageLockSha256: provenance.packageLockSha256, treeProgramIndexId: provenance.treeProgramIndexId, treeProgramIndexHash: provenance.treeProgramIndexHash,
       nodeVersion: provenance.nodeVersion, nextVersion: provenance.nextVersion, buildMode: provenance.buildMode
@@ -55,9 +57,12 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
     exactHeadChecks: { sha: fixtureCommit, state: "success", requiredNames: ["Clover required main gate (Node 22)", "Clover required main gate (Node 24)", "Tree Command Center (Node 22)", "Tree Command Center (Node 24)", "Tree browser and accessibility"], checks: [] }
   };
   const deploymentSelf = {
-    sourceId: "vercel-deployment-self", sourceIdentity: "vercel-system-environment", evidenceClass: "deployment-self-observation", status: "current", freshness: "unknown", observedAt: null, errorCode: null, environment: "preview",
-    hostname: "clover-tree-command-center-abc.vercel.app", projectId: "prj_fixture", deploymentId: "dpl_fixture", region: "iad1",
-    gitCommitSha: fixtureCommit, failures: [], environmentKeysRead: ["VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_ID", "VERCEL_DEPLOYMENT_ID", "VERCEL_REGION", "VERCEL_GIT_COMMIT_SHA"]
+    sourceId: "vercel-deployment-self", sourceIdentity: "vercel-functions-get-env", evidenceClass: "deployment-self-observation", status: "current", freshness: "current", observedAt: null, errorCode: null, environment: "preview",
+    hostname: "clover-tree-command-center-abc.vercel.app", runtimeHostname: "clover-tree-command-center-abc.vercel.app", requestHostname: "clover-tree-command-center-abc.vercel.app",
+    projectId: "prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ", deploymentId: null, runtimeDeploymentKey: fixtureRuntimeDeploymentKey, region: "iad1", regionStatus: "current", skewProtectionState: "enabled",
+    gitCommitSha: fixtureCommit, sourceBindingMode: "vercel-git-commit-sha-and-build-provenance", observationMethod: "vercel-functions-get-env-and-request-host",
+    externalProviderIdentity: { evidenceClass: "external-provider-verification", verifiedByWebRuntime: false, providerDeploymentId: null, providerUrl: null, target: null, aliases: null, providerSourceSha: null, protectionState: null },
+    failures: [], environmentKeysRead: ["VERCEL_ENV", "VERCEL_URL", "VERCEL_PROJECT_ID", "VERCEL_DEPLOYMENT_ID", "VERCEL_REGION", "VERCEL_GIT_COMMIT_SHA", "VERCEL_SKEW_PROTECTION_ENABLED"]
   };
   const authority = { publicMetadataObserved: true, sourceMutationAuthorized: false, mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false };
   const readback = {
@@ -184,7 +189,7 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
     expect(headers["x-vercel-protection-bypass"]).toBeUndefined();
   }
   await page.getByRole("button", { name: "System Health", exact: true }).click();
-  await expect(page.locator("[data-readiness=ready]")).toHaveCount(11);
+  await expect(page.locator("[data-readiness=ready]")).toHaveCount(13);
   await expect(page.locator("[data-readiness=ready]").filter({ hasText: /^verified$/u })).toBeVisible();
   await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:00\.000Z$/u })).toBeVisible();
   await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:01\.000Z$/u })).toBeVisible();

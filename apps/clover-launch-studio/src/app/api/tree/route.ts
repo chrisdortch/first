@@ -1,17 +1,22 @@
 import { NextResponse } from "next/server";
-import { CLOVER_EXTERNAL_OBSERVATION, NO_ATTESTATION_COMPARISON, READ_ONLY_AUTHORITY, baselineObservationTime, observeDeploymentSelf, observeGitHubTruth, reconcileTreeTruth } from "@/lib/live-truth";
+import { getEnv } from "@vercel/functions";
+import { CLOVER_EXTERNAL_OBSERVATION, NO_ATTESTATION_COMPARISON, READ_ONLY_AUTHORITY, baselineObservationTime, observeDeploymentSelf, observeGitHubTruth, projectVercelRuntimeEnvironment, reconcileTreeTruth } from "@/lib/live-truth";
 import { readBuildProvenance } from "@/lib/provenance";
 import { getTreeProgramSnapshot } from "@/lib/tree-program";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
   const requestObservedAt = new Date().toISOString();
   const immutableRecords = getTreeProgramSnapshot();
   const build = readBuildProvenance();
   const github = await observeGitHubTruth({ candidateCommit: build.commit });
-  const deploymentSelf = observeDeploymentSelf();
+  const deploymentSelf = observeDeploymentSelf({
+    build,
+    environmentReader: () => projectVercelRuntimeEnvironment(getEnv(), process.env),
+    requestUrl: request.url
+  });
   const reconciled = reconcileTreeTruth({
     baseline: immutableRecords,
     build,
