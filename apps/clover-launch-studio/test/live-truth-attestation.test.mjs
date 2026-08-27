@@ -30,6 +30,7 @@ import {
 } from "../src/lib/live-truth.ts";
 import {
   ATTESTATION_OUTPUT_PATH,
+  STACK_A_BASE,
   buildOutputManifest,
   canonicalJson,
   createDeploymentAttestation,
@@ -45,6 +46,8 @@ const candidateTree = hex40("b");
 const candidateParent = hex40("c");
 const runtimeDeploymentKey = `clover-${candidateCommit.slice(0, 24)}`;
 const runtimeRequestUrl = "https://clover-tree-command-center-abc.vercel.app/api/tree";
+const amendedStackAHead = "f7b9b7fe3d6d95365e145930f4576b3e97a799b9";
+const amendedStackAPathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
 
 const build = parseBuildProvenance({
   documentType: "clover-tree-build-provenance",
@@ -398,6 +401,25 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
   const rejected = await compareDeploymentAttestation(build, substituted);
   assert.equal(rejected.status, "inconsistent");
   assert.equal(rejected.differences.includes("build-invocation"), true);
+});
+
+test("live reconciliation and source provenance bind the amended Stack A head", async () => {
+  assert.equal(EXPECTED_STACK_A_HEAD, amendedStackAHead);
+  assert.equal(STACK_A_BASE, amendedStackAHead);
+
+  const fixture = githubFetch();
+  const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+  const deployment = deploymentObservation();
+  const comparison = await compareDeploymentAttestation(build, sealedAttestation());
+  const reconciled = reconcileTreeTruth({ baseline, build, github, deployment, attestation: comparison });
+  assert.equal(reconciled.contradictions.value.includes("stack-a-pull-request"), false);
+  assert.equal(reconciled.contradictions.value.includes("stack-b-pull-request"), false);
+
+  const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
+  const provenance = deriveSourceProvenance({ repositoryRoot });
+  assert.equal(provenance.stackABase, amendedStackAHead);
+  assert.equal(provenance.changedPathCount, 72);
+  assert.equal(provenance.pathListSha256, amendedStackAPathListSha256);
 });
 
 test("deployment attestation rejects every exact source identity substitution", async () => {

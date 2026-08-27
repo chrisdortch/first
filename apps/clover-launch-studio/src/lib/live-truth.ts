@@ -4,7 +4,7 @@ import type { TreeProgramSnapshot } from "./tree-program";
 export const GITHUB_ORIGIN = "https://api.github.com";
 export const GITHUB_REPOSITORY = "chrisdortch/first";
 export const EXPECTED_MAIN_COMMIT = "7d067d79bbff872846d6673b5f852518ba00fa7e";
-export const EXPECTED_STACK_A_HEAD = "ec4ad8ca76dd5fd6da7db8107829a07c3650b7c6";
+export const EXPECTED_STACK_A_HEAD = "f7b9b7fe3d6d95365e145930f4576b3e97a799b9";
 export const EXPECTED_VERCEL_PROJECT_ID = "prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ";
 export const STACK_A_BRANCH = "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826";
 export const STACK_B_BRANCH = "feature/clover-tree-command-center-launch-studio-v0.1-20260826";

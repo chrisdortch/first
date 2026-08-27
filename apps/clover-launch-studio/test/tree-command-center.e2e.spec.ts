@@ -12,7 +12,7 @@ const runtimeFindings = new WeakMap<Page, string[]>();
 const fixtureCommit = "a".repeat(40);
 const fixtureTree = "b".repeat(40);
 const fixtureParent = "c".repeat(40);
-const fixtureStackA = "ec4ad8ca76dd5fd6da7db8107829a07c3650b7c6";
+const fixtureStackA = "f7b9b7fe3d6d95365e145930f4576b3e97a799b9";
 const fixtureIndexHash = "897b7967069f9ec699fcef76175dcdee8a91513b43b3cbf046f840760c7d34d0";
 const fixtureRuntimeDeploymentKey = `clover-${fixtureCommit.slice(0, 24)}`;
 
