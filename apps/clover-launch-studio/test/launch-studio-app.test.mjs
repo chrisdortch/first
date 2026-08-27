@@ -168,8 +168,8 @@ test("accept_privacy_authority", () => {
 
 test("accept_stage_one_no_provider", () => {
   assert.doesNotMatch(source.package, /@clerk|@neondatabase|@vercel\/blob/);
-  assert.match(source.config, /providerProvisioned: false/);
-  assert.match(source.config, /previewCreated: false/);
+  for (const field of ["privateOwnerAuthenticationConfigured", "durablePrivateStorageConfigured", "realParticipantRuntimeConfigured", "realProviderExecutionConfigured", "productionAuthorized"]) assert.match(source.config, new RegExp(`${field}: false`));
+  assert.doesNotMatch(source.config, /previewCreated: false/);
 });
 
 test("accept_source_rollback", () => {

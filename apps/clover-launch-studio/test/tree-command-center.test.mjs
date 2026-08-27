@@ -16,7 +16,10 @@ const source = {
   pod: readApp("src/components/personal-launch-pod.tsx"),
   collaboration: readApp("src/components/collaboration-center.tsx"),
   tree: readApp("src/lib/tree-program.ts"),
-  route: readApp("src/app/api/tree/route.ts")
+  live: readApp("src/lib/live-truth.ts"),
+  provenance: readApp("src/lib/provenance.ts"),
+  route: readApp("src/app/api/tree/route.ts"),
+  provenanceRoute: readApp("src/app/api/provenance/route.ts")
 };
 
 test("Tree Command Center exposes every exact owner view", () => {
@@ -40,7 +43,32 @@ test("UI derives canonical state from the complete Tree Program catalog", () => 
   assert.equal(index.publicSanitized, true);
   assert.equal(index.privateDataAccessed, false);
   assert.match(source.route, /Cache-Control.*no-store/su);
-  assert.match(source.route, /durablePrivateStorageClaimed: false/);
+  for (const field of ["baseline", "observations", "reconciled", "requestObservedAt", "authority"]) assert.match(source.route, new RegExp(field));
+  assert.match(source.provenanceRoute, /Cache-Control.*no-store/su);
+  assert.match(source.command, /\/__clover\/deployment-attestation\.json/);
+  assert.match(source.command, /compareDeploymentAttestation/);
+});
+
+test("live truth uses fixed public readbacks and never promotes request time to source time", () => {
+  for (const endpoint of ["branches/main", "pulls/34", "pulls/35", "commits/${candidateCommit}/check-runs?per_page=100"]) assert.match(source.live, new RegExp(endpoint.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
+  assert.match(source.live, /credentials: "omit"/);
+  assert.match(source.live, /revalidate: GITHUB_REVALIDATE_SECONDS/);
+  assert.doesNotMatch(source.live, /Authorization|GITHUB_TOKEN|process\.env\.GITHUB/iu);
+  assert.match(source.live, /observedAt: null/);
+  assert.match(source.route, /const requestObservedAt = new Date\(\)\.toISOString\(\)/);
+  assert.doesNotMatch(source.live, /observedAt:\s*new Date/);
+  assert.match(source.live, /ACCEPT SOURCE-GROUNDED TREE PREVIEW/);
+  assert.match(source.command, /currentActionCard/);
+  assert.match(source.route, /CLOVER_EXTERNAL_OBSERVATION/);
+  assert.match(source.route, /historical-source-bound-baseline/);
+  assert.match(source.command, /immutable baseline \/ observed/);
+});
+
+test("provenance and attestation fail closed without widening authority", () => {
+  for (const binding of ["buildInvocationId", "sourceManifestSha256", "pathListSha256", "packageLockSha256", "treeProgramIndexHash", "attestation-self-hash"]) assert.match(source.provenance, new RegExp(binding));
+  for (const field of ["mergeAuthorized", "productionAuthorized", "privateDataAuthorized", "purchaseAuthorized"]) assert.match(source.command, new RegExp(`${field} !== false`));
+  assert.match(source.command, /credentials: "same-origin"/);
+  assert.doesNotMatch(source.command, /x-vercel-protection-bypass|authorization/iu);
 });
 
 test("owner intake is editable, hash-visible, classified and append-only in local state", () => {

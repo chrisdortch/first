@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "attest:source": "node scripts/clover-deployment-attestation.mjs source --repository-root ../..",
+    "attest:output": "node scripts/clover-deployment-attestation.mjs output --repository-root ../.. --output ../../.vercel/output --evidence ../../.vercel/clover-attestation-evidence",
     "lint": "eslint . --max-warnings=0",
     "start": "next start",
     "test": "node --test test/*.test.mjs",

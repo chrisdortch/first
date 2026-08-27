@@ -1,6 +1,8 @@
 import path from "node:path";
+import { deriveSourceProvenance } from "./scripts/clover-deployment-attestation.mjs";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
+const buildProvenance = deriveSourceProvenance({ repositoryRoot });
 
 const securityHeaders = [
   { key: "Content-Security-Policy", value: "default-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; img-src 'self' data:; media-src 'none'; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; upgrade-insecure-requests" },
@@ -14,6 +16,9 @@ const securityHeaders = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env: {
+    CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(buildProvenance)
+  },
   outputFileTracingRoot: repositoryRoot,
   reactStrictMode: true,
   poweredByHeader: false,

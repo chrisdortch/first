@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActionPacketPanel } from "./action-packet-panel";
 import { CollaborationCenter } from "./collaboration-center";
 import { DecisionRail } from "./decision-rail";
@@ -10,6 +10,8 @@ import { PreviewPane } from "./preview-pane";
 import { ProgressTimeline } from "./progress-timeline";
 import { TranscriptEditor } from "./transcript-editor";
 import { TreeMap } from "./tree-map";
+import { baselineObservationTime, reconcileTreeTruth, type CurrentActionCard, type DeploymentSelfObservation, type GitHubLiveObservation, type TruthReadiness } from "@/lib/live-truth";
+import { compareDeploymentAttestation, parseBuildProvenance, type AttestationComparison } from "@/lib/provenance";
 import type { TreeBranch, TreeProgramSnapshot, TreeRecord, TreeStatus } from "@/lib/tree-program";
 
 const views = [
@@ -26,6 +28,99 @@ const views = [
   "Launch Studio session"
 ] as const;
 type View = (typeof views)[number];
+
+const heldReadiness: TruthReadiness = {
+  applicationSourceValidated: true,
+  treeProgramBaselineLoaded: true,
+  treePreviewRuntimeObserved: false,
+  liveGithubOverlayStatus: "unavailable",
+  deploymentAttestationStatus: "unavailable",
+  ownerConsoleGroundingRequired: true,
+  privateOwnerAuthenticationConfigured: false,
+  durablePrivateStorageConfigured: false,
+  realParticipantRuntimeConfigured: false,
+  realProviderExecutionConfigured: false,
+  productionAuthorized: false
+};
+
+const unavailableDeployment: DeploymentSelfObservation = {
+  sourceId: "vercel-deployment-self",
+  sourceIdentity: "vercel-system-environment",
+  evidenceClass: "deployment-self-observation",
+  status: "unavailable",
+  freshness: "unavailable",
+  observedAt: null,
+  errorCode: "deployment-self-unavailable",
+  environment: null,
+  hostname: null,
+  projectId: null,
+  deploymentId: null,
+  region: null,
+  gitCommitSha: null,
+  failures: ["deployment-self-unavailable"],
+  environmentKeysRead: []
+};
+
+const heldAction: CurrentActionCard = {
+  action: "HOLD",
+  status: "hold",
+  reason: "source-refresh-required",
+  source: "runtime-live-truth-reconciliation",
+  observedAt: null,
+  bindings: { protectedMain: null, pull34: null, pull35: null, deployment: unavailableDeployment, sourceFreshness: "unavailable", githubObservedAt: null, deploymentObservedAt: null, contradictions: ["live-readback-loading"] },
+  requiredOwnerDecision: "HOLD",
+  authority: { mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false },
+  rollback: "retain-draft-prs-and-delete-target-null-preview-in-separate-authorized-gate"
+};
+
+type LiveTruthState = {
+  phase: "loading" | "observed" | "unavailable";
+  action: CurrentActionCard;
+  readiness: TruthReadiness;
+  github: GitHubLiveObservation | null;
+  deployment: DeploymentSelfObservation | null;
+  attestation: AttestationComparison | null;
+  requestObservedAt: string | null;
+  contradictions: string[];
+  error: string | null;
+};
+
+const initialLiveTruth: LiveTruthState = {
+  phase: "loading",
+  action: heldAction,
+  readiness: heldReadiness,
+  github: null,
+  deployment: null,
+  attestation: null,
+  requestObservedAt: null,
+  contradictions: ["live-readback-loading"],
+  error: null
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function asLiveReadback(value: unknown, snapshot: TreeProgramSnapshot) {
+  if (!isRecord(value) || !isRecord(value.baseline) || !isRecord(value.observations) || !isRecord(value.reconciled) || !isRecord(value.authority)) {
+    throw new Error("live-readback-structure");
+  }
+  if (value.baseline.indexId !== snapshot.index.indexId || value.baseline.indexHash !== snapshot.index.indexHash || value.baseline.classification !== "historical-source-bound-baseline" || !isRecord(value.baseline.immutableRecords)) {
+    throw new Error("live-readback-baseline-substitution");
+  }
+  if (value.authority.mergeAuthorized !== false || value.authority.productionAuthorized !== false || value.authority.privateDataAuthorized !== false || value.authority.purchaseAuthorized !== false) {
+    throw new Error("live-readback-authority-widening");
+  }
+  if (!isRecord(value.observations.github) || !isRecord(value.observations.deploymentSelf) || !isRecord(value.observations.clover) || typeof value.requestObservedAt !== "string") {
+    throw new Error("live-readback-observation-structure");
+  }
+  if (value.observations.clover.status !== "external-owner-console-required" || value.observations.clover.webRuntimeConnectorInvoked !== false) throw new Error("clover-observation-substitution");
+  return {
+    github: value.observations.github as GitHubLiveObservation,
+    deployment: value.observations.deploymentSelf as DeploymentSelfObservation,
+    requestObservedAt: value.requestObservedAt
+  };
+}
 
 const statusLabel = (status: TreeStatus) => status.replace("provider-degraded", "provider degraded");
 function StatusBadge({ status }: { status: TreeStatus }) {
@@ -94,9 +189,57 @@ function LaunchSessionView() {
 
 export function TreeCommandCenter({ snapshot }: { snapshot: TreeProgramSnapshot }) {
   const [activeView, setActiveView] = useState<View>("Today");
+  const [liveTruth, setLiveTruth] = useState<LiveTruthState>(initialLiveTruth);
   const heldBranches = useMemo(() => snapshot.branches.filter(({ currentHealth }) => currentHealth === "hold" || currentHealth === "blocked"), [snapshot.branches]);
   const advancingBranches = useMemo(() => snapshot.branches.filter(({ trajectory }) => trajectory === "advancing"), [snapshot.branches]);
-  const currentAction = snapshot.actionCards[0];
+  const immutableBaselineObservedAt = baselineObservationTime(snapshot);
+  const immutableBaselineLabel = `immutable baseline / observed ${immutableBaselineObservedAt.replace(".000Z", "Z")}`;
+
+  useEffect(() => {
+    let active = true;
+    async function loadLiveTruth() {
+      try {
+        const requestOptions = { cache: "no-store" as const, credentials: "same-origin" as const, headers: { Accept: "application/json" } };
+        const [treeResponse, provenanceResponse] = await Promise.all([
+          fetch("/api/tree", requestOptions),
+          fetch("/api/provenance", requestOptions)
+        ]);
+        if (!treeResponse.ok || !provenanceResponse.ok) throw new Error("live-readback-unavailable");
+        const readback = asLiveReadback(await treeResponse.json(), snapshot);
+        const provenancePayload: unknown = await provenanceResponse.json();
+        if (!isRecord(provenancePayload) || !isRecord(provenancePayload.provenance) || !isRecord(provenancePayload.authority)) throw new Error("provenance-readback-structure");
+        if (provenancePayload.authority.mergeAuthorized !== false || provenancePayload.authority.productionAuthorized !== false || provenancePayload.authority.privateDataAuthorized !== false || provenancePayload.authority.purchaseAuthorized !== false) throw new Error("provenance-authority-widening");
+        const build = parseBuildProvenance(provenancePayload.provenance);
+
+        let attestationCandidate: unknown = null;
+        try {
+          const attestationResponse = await fetch("/__clover/deployment-attestation.json", requestOptions);
+          if (attestationResponse.ok) attestationCandidate = await attestationResponse.json();
+        } catch {
+          attestationCandidate = null;
+        }
+        const attestation = await compareDeploymentAttestation(build, attestationCandidate);
+        const reconciliation = reconcileTreeTruth({ baseline: snapshot, build, github: readback.github, deployment: readback.deployment, attestation });
+        if (active) {
+          setLiveTruth({
+            phase: "observed",
+            action: reconciliation.currentActionCard,
+            readiness: reconciliation.readiness,
+            github: readback.github,
+            deployment: readback.deployment,
+            attestation,
+            requestObservedAt: readback.requestObservedAt,
+            contradictions: reconciliation.contradictions.value,
+            error: null
+          });
+        }
+      } catch (error) {
+        if (active) setLiveTruth({ ...initialLiveTruth, phase: "unavailable", error: error instanceof Error ? error.message : "live-readback-unavailable" });
+      }
+    }
+    void loadLiveTruth();
+    return () => { active = false; };
+  }, [snapshot]);
 
   let content;
   if (activeView === "Today") {
@@ -104,15 +247,16 @@ export function TreeCommandCenter({ snapshot }: { snapshot: TreeProgramSnapshot 
       <div className="dashboard-grid">
         <section className="command-panel hero-panel">
           <p className="card-kicker">Today · one owner decision</p>
-          <h2>{currentAction?.title}</h2><p>{currentAction?.summary}</p>
+          <h2>{liveTruth.action.action}</h2><p>{liveTruth.action.reason}</p>
           <div className="hero-actions"><button type="button" onClick={() => setActiveView("Action Center")}>Open Action Center</button><button className="secondary-button" type="button" onClick={() => setActiveView("Tree")}>See the whole Tree</button></div>
-          <p className="authority-note">Preview acceptance is the only proposed next decision. Merge and production remain separate.</p>
+          <p className="authority-note">This current Action Card grants no merge, production, private-data, messaging, payment, purchase or spending authority.</p>
+          <dl className="observation-grid today-observations"><div><dt>Immutable baseline</dt><dd>{immutableBaselineLabel}</dd></div><div><dt>Current-source time</dt><dd>{liveTruth.github?.observedAt ?? "unavailable"}</dd></div><div><dt>Request time</dt><dd>{liveTruth.requestObservedAt ?? "unavailable"}</dd></div><div><dt>Source freshness</dt><dd>{liveTruth.github?.freshness ?? "unavailable"}</dd></div><div><dt>Contradictions</dt><dd>{liveTruth.contradictions.length ? liveTruth.contradictions.join(", ") : "none"}</dd></div><div><dt>Owner Console / Clover</dt><dd>external refresh required</dd></div></dl>
         </section>
         <section className="command-panel pulse-panel">
           <div className="section-heading"><div><p className="card-kicker">Tree pulse</p><h2>Source-bound, not scored</h2></div></div>
           <div className="pulse-grid"><div><strong>{snapshot.branches.length}</strong><span>branches represented</span></div><div><strong>{advancingBranches.length}</strong><span>advancing</span></div><div><strong>{heldBranches.length}</strong><span>held / blocked</span></div><div><strong>{snapshot.relationships.length}</strong><span>typed relationships</span></div></div>
         </section>
-        <section className="command-panel span-two"><div className="section-heading"><div><p className="card-kicker">Current milestones</p><h2>What is true now</h2></div></div><RecordCards records={snapshot.milestones} /></section>
+        <section className="command-panel span-two"><div className="section-heading"><div><p className="card-kicker">{immutableBaselineLabel}</p><h2>Dated historical milestone evidence</h2></div></div><RecordCards records={snapshot.milestones} /></section>
       </div>
     );
   } else if (activeView === "Tree") {
@@ -133,7 +277,7 @@ export function TreeCommandCenter({ snapshot }: { snapshot: TreeProgramSnapshot 
   } else if (activeView === "Action Center") {
     content = <div className="action-center"><OwnerInputPanel branches={snapshot.branches} /><section className="command-panel"><div className="section-heading"><div><p className="card-kicker">All supported targets</p><h2>Launch packets, never hidden authority</h2></div></div><ActionPacketPanel /></section></div>;
   } else if (activeView === "System Health") {
-    content = <div className="dashboard-grid"><section className="command-panel"><div className="section-heading"><div><p className="card-kicker">Canonical status</p><h2>Source truth</h2></div></div><RecordCards records={snapshot.status} /></section><section className="command-panel span-two"><div className="section-heading"><div><p className="card-kicker">Provider evidence</p><h2>Degraded is not failed</h2></div></div><RecordCards records={snapshot.providerStatus} /></section></div>;
+    content = <div className="dashboard-grid"><section className="command-panel span-two live-truth-panel"><div className="section-heading"><div><p className="card-kicker">Reconciled current status</p><h2>Readiness stays multidimensional</h2><p>Request time is displayed separately and never upgrades source freshness.</p></div><StatusBadge status={liveTruth.action.status === "available" ? "current" : "hold"} /></div><div className="readiness-grid">{Object.entries(liveTruth.readiness).map(([key, value]) => { const ready = value === true || value === "current" || value === "verified" || (value === false && ["privateOwnerAuthenticationConfigured", "durablePrivateStorageConfigured", "realParticipantRuntimeConfigured", "realProviderExecutionConfigured", "productionAuthorized"].includes(key)); return <div key={key}><span>{key.replace(/([A-Z])/gu, " $1")}</span><strong data-readiness={ready ? "ready" : "hold"}>{String(value)}</strong></div>; })}</div><dl className="observation-grid"><div><dt>Immutable baseline</dt><dd>{immutableBaselineLabel}</dd></div><div><dt>GitHub source time</dt><dd>{liveTruth.github?.observedAt ?? "unavailable"}</dd></div><div><dt>Source freshness</dt><dd>{liveTruth.github?.freshness ?? "unavailable"}</dd></div><div><dt>Deployment self</dt><dd>{liveTruth.deployment?.status ?? "unavailable"} / {liveTruth.deployment?.freshness ?? "unavailable"}</dd></div><div><dt>Output attestation</dt><dd>{liveTruth.attestation?.status ?? "unavailable"}</dd></div><div><dt>Request observed</dt><dd>{liveTruth.requestObservedAt ?? "unavailable"}</dd></div><div><dt>Contradictions</dt><dd>{liveTruth.contradictions.length ? liveTruth.contradictions.join(", ") : "none"}</dd></div><div><dt>Owner Console / Clover</dt><dd>external-owner-console-required · no Clover connector was invoked by the web runtime</dd></div><div><dt>Readback phase</dt><dd>{liveTruth.phase}{liveTruth.error ? ` · ${liveTruth.error}` : ""}</dd></div></dl></section><section className="command-panel"><div className="section-heading"><div><p className="card-kicker">{immutableBaselineLabel}</p><h2>Historical canonical status</h2></div></div><RecordCards records={snapshot.status} /></section><section className="command-panel span-two"><div className="section-heading"><div><p className="card-kicker">Provider evidence</p><h2>Degraded is not failed</h2></div></div><RecordCards records={snapshot.providerStatus} /></section></div>;
   } else {
     content = <LaunchSessionView />;
   }
@@ -150,8 +294,9 @@ export function TreeCommandCenter({ snapshot }: { snapshot: TreeProgramSnapshot 
           <div><p className="eyebrow">Owner command center · preview-only candidate</p><h1>{activeView}</h1></div>
           <div className="source-readback" aria-label="Source readback">
             <div><span>Canonical source</span><strong>{snapshot.index.indexId}</strong></div>
-            <div><span>Observed</span><strong>{snapshot.index.observedAt}</strong></div>
-            <div><span>Freshness</span><strong>source-qualified</strong></div>
+            <div><span>Immutable baseline</span><strong>{immutableBaselineLabel}</strong></div>
+            <div><span>GitHub observed</span><strong>{liveTruth.github?.observedAt ?? "unavailable"}</strong></div>
+            <div><span>Deployment self</span><strong>{liveTruth.deployment?.status ?? "unavailable"}</strong></div>
           </div>
         </header>
         <div className="command-content">{content}</div>

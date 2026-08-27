@@ -62,6 +62,12 @@ jobs:
         working-directory: apps/clover-launch-studio
         run: npm audit --audit-level=high
 
+      - name: Record clean exact-source build provenance
+        working-directory: apps/clover-launch-studio
+        run: |
+          npm run --silent attest:source > "$RUNNER_TEMP/clover-tree-source-provenance.json"
+          node -e 'const fs=require("node:fs");const p=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/clover-tree-source-provenance.json","utf8"));if(p.commit!==process.env.CLOVER_TREE_HEAD||p.cleanWorktree!==true||p.privateDataAccessed!==false||p.consequentialAuthorityGranted!==false)throw new Error("source provenance mismatch")'
+
       - name: Validate Tree Program
         run: node --test portfolio/core/test/tree-program.test.mjs
 
@@ -120,7 +126,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: clover-tree-command-center-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
-          path: ${{ runner.temp }}/clover-tree-command-center-evidence.json
+          path: |
+            ${{ runner.temp }}/clover-tree-command-center-evidence.json
+            ${{ runner.temp }}/clover-tree-source-provenance.json
           if-no-files-found: error
 
   browser:
@@ -156,6 +164,12 @@ jobs:
         working-directory: apps/clover-launch-studio
         run: npx playwright install --with-deps chromium
 
+      - name: Verify clean source provenance before browser build
+        working-directory: apps/clover-launch-studio
+        run: |
+          npm run --silent attest:source > "$RUNNER_TEMP/clover-tree-browser-source-provenance.json"
+          node -e 'const fs=require("node:fs");const p=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/clover-tree-browser-source-provenance.json","utf8"));if(p.commit!==process.env.CLOVER_TREE_HEAD||p.cleanWorktree!==true)throw new Error("browser source provenance mismatch")'
+
       - name: Run desktop, mobile and accessibility checks
         working-directory: apps/clover-launch-studio
         run: npm run test:e2e
@@ -180,7 +194,7 @@ jobs:
             }
           };
           walk(root);
-          if (entries.length < 2) throw new Error('desktop and mobile screenshots are required');
+          if (entries.length < 4) throw new Error('desktop Today, mobile Today, Action Center and Launch Studio screenshots are required');
           process.stdout.write(`${JSON.stringify({ schemaVersion: 'clover-tree-browser-evidence-v1', head: process.env.CLOVER_TREE_HEAD, screenshots: entries, consoleErrors: 0, requestFailures: 0, accessibilityViolations: 0 }, null, 2)}\n`);
           NODE
 
@@ -192,4 +206,5 @@ jobs:
           path: |
             apps/clover-launch-studio/test-results/**/*.png
             ${{ runner.temp }}/clover-tree-browser-evidence.json
+            ${{ runner.temp }}/clover-tree-browser-source-provenance.json
           if-no-files-found: error

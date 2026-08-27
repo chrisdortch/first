@@ -11,10 +11,17 @@
 
 # Local deployment and build output
 **/.vercel/
+**/.next/
 **/dist/
 **/coverage/
+**/playwright-report/
+**/test-results/
 **/.clover-evidence/
 **/.clover-data-evidence/
+**/next-env.d.ts
+**/tsconfig.tsbuildinfo
+/apps/clover-launch-studio/AGENTS.md
+/apps/clover-launch-studio/CLAUDE.md
 
 # Local logs and operating-system metadata
 *.log

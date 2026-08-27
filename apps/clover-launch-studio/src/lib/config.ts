@@ -72,15 +72,24 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   };
 }
 
-export function publicReadiness() {
+export function publicReadiness(dimensions: {
+  applicationSourceValidated: true;
+  treeProgramBaselineLoaded: true;
+  treePreviewRuntimeObserved: boolean;
+  liveGithubOverlayStatus: "current" | "stale" | "unavailable" | "unknown";
+  deploymentAttestationStatus: "verified" | "unavailable" | "invalid" | "inconsistent";
+  ownerConsoleGroundingRequired: true;
+  privateOwnerAuthenticationConfigured: false;
+  durablePrivateStorageConfigured: false;
+  realParticipantRuntimeConfigured: false;
+  realProviderExecutionConfigured: false;
+  productionAuthorized: false;
+}) {
   return {
     service: PROJECT_ID,
-    version: "0.1.0",
-    readiness: "unconfigured",
-    sourceOnly: true,
-    validated: false,
-    providerProvisioned: false,
-    previewCreated: false,
-    productionAuthorized: false
+    version: "0.2.0",
+    ...dimensions,
+    privateDataAccessed: false,
+    consequentialAuthorityGranted: false
   } as const;
 }
