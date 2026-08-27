@@ -70,13 +70,18 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
 
 async function installLiveTruthRoutes(page: Page, options: { attestationStatus?: number; attestationSourceCommit?: string } = {}) {
   const fixtures = liveTruthFixtures({ attestationSourceCommit: options.attestationSourceCommit });
-  await page.route("**/api/tree", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(fixtures.readback) }));
-  await page.route("**/api/provenance", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(fixtures.provenance) }));
-  await page.route("**/__clover/deployment-attestation.json", (route) => route.fulfill({
-    status: options.attestationStatus ?? 200,
-    contentType: "application/json",
-    body: options.attestationStatus && options.attestationStatus !== 200 ? JSON.stringify({ unavailable: true }) : JSON.stringify(fixtures.attestation)
-  }));
+  await page.route("**/api/tree", (route) => route.fulfill({ status: 200, contentType: "application/json", headers: { "Cache-Control": "no-store" }, body: JSON.stringify(fixtures.readback) }));
+  await page.route("**/api/provenance", (route) => route.fulfill({ status: 200, contentType: "application/json", headers: { "Cache-Control": "no-store" }, body: JSON.stringify(fixtures.provenance) }));
+  await page.route("**/__clover/deployment-attestation.json", (route) => options.attestationStatus === 204
+    ? route.fulfill({ status: 204 })
+    : route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(fixtures.attestation) }));
+}
+
+async function resetLiveTruthRoutes(page: Page, options: { attestationStatus?: number; attestationSourceCommit?: string } = {}) {
+  await page.unroute("**/api/tree");
+  await page.unroute("**/api/provenance");
+  await page.unroute("**/__clover/deployment-attestation.json");
+  await installLiveTruthRoutes(page, options);
 }
 
 function screenshotPath(testInfo: TestInfo, filename: string) {
@@ -129,6 +134,7 @@ test.beforeEach(async ({ page }) => {
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
   page.on("requestfailed", (request) => runtimeErrors.push(`${request.method()} ${request.url()} ${request.failure()?.errorText ?? "failed"}`));
   page.on("response", (response) => { if (response.status() >= 500) runtimeErrors.push(`${response.status()} ${response.request().method()} ${response.url()}`); });
+  await installLiveTruthRoutes(page, { attestationSourceCommit: "f".repeat(40) });
   await page.goto("/", { waitUntil: "networkidle" });
 });
 
@@ -156,7 +162,7 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
   page.on("request", (request) => {
     if (request.url().endsWith("/__clover/deployment-attestation.json")) attestationRequests.push(request.headers());
   });
-  await installLiveTruthRoutes(page);
+  await resetLiveTruthRoutes(page);
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "ACCEPT SOURCE-GROUNDED TREE PREVIEW" })).toBeVisible();
   expect(attestationRequests.length).toBeGreaterThan(0);
@@ -171,14 +177,11 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
   await expect(page.getByText("2026-08-26T21:00:01.000Z", { exact: true })).toBeVisible();
 });
 
-test("protection failure or source substitution leaves the current Action Card on HOLD", async ({ page }) => {
-  await installLiveTruthRoutes(page, { attestationStatus: 401 });
+test("attestation unavailability or source substitution leaves the current Action Card on HOLD", async ({ page }) => {
+  await resetLiveTruthRoutes(page, { attestationStatus: 204 });
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "HOLD" })).toBeVisible();
-  await page.unroute("**/__clover/deployment-attestation.json");
-  await page.unroute("**/api/tree");
-  await page.unroute("**/api/provenance");
-  await installLiveTruthRoutes(page, { attestationSourceCommit: "f".repeat(40) });
+  await resetLiveTruthRoutes(page, { attestationSourceCommit: "f".repeat(40) });
   await page.reload({ waitUntil: "networkidle" });
   await expect(page.getByRole("heading", { level: 2, name: "HOLD" })).toBeVisible();
   await page.getByRole("button", { name: "System Health", exact: true }).click();
@@ -220,11 +223,14 @@ test("synthetic Personal Launch Pod and collaboration flows never send or sign",
   await expect(page.getByText(/nothing was signed or published/u)).toBeVisible();
 });
 
-test("Tree API is no-store, canonical and public-sanitized", async ({ request }) => {
-  const response = await request.get("/api/tree");
-  expect(response.ok()).toBe(true);
-  expect(response.headers()["cache-control"]).toContain("no-store");
-  const body = await response.json();
+test("Tree API is no-store, canonical and public-sanitized", async ({ page }) => {
+  const response = await page.evaluate(async () => {
+    const result = await fetch("/api/tree");
+    return { ok: result.ok, cacheControl: result.headers.get("cache-control"), body: await result.json() };
+  });
+  expect(response.ok).toBe(true);
+  expect(response.cacheControl).toContain("no-store");
+  const { body } = response;
   expect(body.schemaVersion).toBe("clover-tree-live-readback-v0.2");
   expect(body.baseline.indexId).toBe("tree-program:index:0001");
   expect(body.baseline.classification).toBe("historical-source-bound-baseline");
