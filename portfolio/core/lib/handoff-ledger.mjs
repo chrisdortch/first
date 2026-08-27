@@ -1179,12 +1179,44 @@ export function validateProspectiveConsumptionTransition(previous, current, opti
       "HANDOFF_INDEX_TRANSITION_INVALID");
   }
   const entry = consumed[0];
-  const envelope = options.envelopes.find((candidate) => candidate.envelopeId === entry.envelopeId);
-  const receipt = options.receipts.find((candidate) => candidate.receiptId === entry.receiptId);
-  if (!envelope || !receipt || receipt.envelopeId !== envelope.envelopeId ||
-      receipt.envelopeHash !== envelope.envelopeHash || receipt.actionId !== entry.actionId) {
-    fail("Prospective consumption lacks the exact envelope and receipt binding",
+  const envelopeCandidates = options.envelopes.filter((candidate) =>
+    candidate?.envelopeId === entry.envelopeId || candidate?.actionId === entry.actionId);
+  const receiptCandidates = options.receipts.filter((candidate) =>
+    candidate?.receiptId === entry.receiptId || candidate?.actionId === entry.actionId ||
+    candidate?.envelopeId === entry.envelopeId);
+  if (envelopeCandidates.length !== 1 || receiptCandidates.length !== 1) {
+    fail("Prospective consumption requires one unique indexed envelope and receipt",
       "HANDOFF_INDEX_INCONSISTENT");
+  }
+  const [envelope] = envelopeCandidates;
+  const [receipt] = receiptCandidates;
+
+  validateSchema("actionEnvelope", envelope, "prospective consumption envelope");
+  assertSanitizedHandoffDocument(envelope, "prospective consumption envelope");
+  assertSelfHash(envelope, "clover-handoff-action-envelope", "envelopeHash",
+    "prospective consumption envelope");
+  assertChronology(envelope.createdAt, envelope.expiresAt,
+    "prospective consumption envelope createdAt", "prospective consumption envelope expiresAt");
+  assertActionScope(envelope);
+  assertEnvelopeIssuance(envelope);
+  if (envelope.envelopeId !== entry.envelopeId || envelope.actionId !== entry.actionId ||
+      envelope.envelopeHash !== entry.envelopeHash) {
+    fail("Prospective consumption envelope was substituted for the indexed envelope",
+      "HANDOFF_ENVELOPE_SUBSTITUTION");
+  }
+
+  validateSchema("executionReceipt", receipt, "prospective consumption receipt");
+  assertSanitizedHandoffDocument(receipt, "prospective consumption receipt");
+  assertSelfHash(receipt, "clover-handoff-execution-receipt", "receiptHash",
+    "prospective consumption receipt");
+  assertNestedRecordHashes(receipt);
+  assertChronology(receipt.startedAt, receipt.completedAt,
+    "prospective consumption receipt startedAt", "prospective consumption receipt completedAt");
+  if (receipt.receiptId !== entry.receiptId || receipt.receiptHash !== entry.receiptHash ||
+      receipt.actionId !== entry.actionId || receipt.envelopeId !== entry.envelopeId ||
+      receipt.envelopeHash !== entry.envelopeHash) {
+    fail("Prospective consumption receipt was substituted for the indexed receipt",
+      "HANDOFF_RECEIPT_SUBSTITUTION");
   }
   const connectorScope = assertReceiptEvidenceScope(receipt, envelope);
   return { ...transition, connectorScope };

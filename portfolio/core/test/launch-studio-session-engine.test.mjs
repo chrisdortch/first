@@ -43,7 +43,7 @@ function participantRole(overrides = {}) {
   return { ...unsigned, recordHash: sha256Canonical(unsigned) };
 }
 
-test("the append-only dependency-pin successor contains exactly 48 authorized paths", () => {
+test("the append-only dependency-pin successor contains exactly 49 authorized paths", () => {
   function walk(directory) {
     return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
       const absolute = path.join(directory, entry.name);
@@ -51,7 +51,7 @@ test("the append-only dependency-pin successor contains exactly 48 authorized pa
     });
   }
   const paths = [...walk(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio")), "portfolio/core/test/launch-studio-session-engine.test.mjs"].sort();
-  assert.equal(paths.length, 48);
+  assert.equal(paths.length, 49);
   assert.ok(paths.every((entry) => entry.startsWith("portfolio/core/launch-studio/") || entry === "portfolio/core/test/launch-studio-session-engine.test.mjs"));
   assert.equal(SCHEMA_FILES.length, 29);
 });
@@ -652,12 +652,14 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
     }
     const stablePath = path.join(integrityRoot, "portfolio/core/launch-studio/index.json");
     const genesisPath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
-    const immutablePath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+    const predecessorPath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+    const immutablePath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json");
     fs.mkdirSync(path.dirname(stablePath), { recursive: true });
     fs.mkdirSync(path.dirname(immutablePath), { recursive: true });
     fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/index.json"), stablePath);
     fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json"), genesisPath);
-    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json"), immutablePath);
+    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json"), predecessorPath);
+    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json"), immutablePath);
     const verificationOptions = { repositoryRoot: integrityRoot, stableIndexPath: stablePath, immutableIndexPath: immutablePath };
     assert.equal(verifyStableIndex(verificationOptions).valid, true);
     const validatorPath = path.join(integrityRoot, "portfolio/core/lib/validators.mjs");
@@ -677,11 +679,14 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
 test("dependency-pin rollover preserves genesis and rejects rollback, removal, substitution, duplication, and mixed modes", () => {
   const genesisPath = path.join(REPOSITORY_ROOT,
     "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
-  const successorPath = path.join(REPOSITORY_ROOT,
+  const firstSuccessorPath = path.join(REPOSITORY_ROOT,
     "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+  const latestSuccessorPath = path.join(REPOSITORY_ROOT,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json");
   const stablePath = path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/index.json");
   const genesis = readCanonicalJson(genesisPath);
-  const successor = readCanonicalJson(successorPath);
+  const firstSuccessor = readCanonicalJson(firstSuccessorPath);
+  const latestSuccessor = readCanonicalJson(latestSuccessorPath);
   const sealIndex = (value) => {
     const copy = clone(value);
     delete copy.indexHash;
@@ -693,13 +698,35 @@ test("dependency-pin rollover preserves genesis and rejects rollback, removal, s
     "c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a");
   assert.equal(genesis.indexHash,
     "97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89");
-  assert.equal(fs.readFileSync(stablePath).equals(fs.readFileSync(successorPath)), true);
-  assert.equal(successor.previousIndexHash, genesis.indexHash);
-  assert.equal(successor.successorMode, "dependency-pin-rollover");
-  assert.deepEqual(successor.entries, genesis.entries);
-  assert.equal(verifyStableIndex(INDEX_VERIFY_OPTIONS).valid, true);
+  assert.equal(sha256Bytes(fs.readFileSync(firstSuccessorPath)),
+    "44d17cdb17fb3d96366f13880f109d6a65534e21aabc812a054bf7ab9ea0383f");
+  assert.equal(firstSuccessor.indexHash,
+    "f890fc80f851a7dbf4693c482fe84b47d406b0fed40b846c841b8588a8862a04");
+  assert.equal(fs.readFileSync(stablePath).equals(fs.readFileSync(firstSuccessorPath)), false);
+  assert.equal(fs.readFileSync(stablePath).equals(fs.readFileSync(latestSuccessorPath)), true);
+  assert.equal(firstSuccessor.previousIndexHash, genesis.indexHash);
+  assert.equal(latestSuccessor.previousIndexHash, firstSuccessor.indexHash);
+  assert.equal(latestSuccessor.previousIndexPath,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+  assert.equal(firstSuccessor.successorMode, "dependency-pin-rollover");
+  assert.equal(latestSuccessor.successorMode, "dependency-pin-rollover");
+  assert.deepEqual(firstSuccessor.entries, genesis.entries);
+  assert.deepEqual(latestSuccessor.entries, firstSuccessor.entries);
+  assert.equal(latestSuccessor.indexHash,
+    "71e96c08c1cca497b8929a3c265817fa20a533833d7dca57e79e3f7ef99f4102");
+  const stableVerification = verifyStableIndex(INDEX_VERIFY_OPTIONS);
+  assert.equal(stableVerification.valid, true);
+  assert.equal(stableVerification.latestIndexPath, latestSuccessorPath);
+  assert.equal(stableVerification.fileSha256,
+    "9cb9ec902ddea6fbb6f0d410667a3cfbd8fbff4d6e789d4844d6956e25357960");
+  const changedDependencies = latestSuccessor.engine.coreDependencies.filter((entry, offset) =>
+    entry.sha256 !== firstSuccessor.engine.coreDependencies[offset].sha256);
+  assert.deepEqual(changedDependencies, [{
+    path: "portfolio/core/lib/handoff-ledger.mjs",
+    sha256: "41709cfecfcab62cf393d7490e0e41729ca748d7c6cae739594e7816d4f789a9"
+  }]);
 
-  const mixed = clone(successor);
+  const mixed = clone(latestSuccessor);
   mixed.successorMode = "session-append";
   assert.throws(() => verifyLaunchIndexDocument(sealIndex(mixed), INDEX_VERIFY_OPTIONS), /mixed session and dependency-pin changes/);
 
@@ -708,30 +735,30 @@ test("dependency-pin rollover preserves genesis and rejects rollback, removal, s
     (copy) => { copy.engine.coreDependencies[1] = clone(copy.engine.coreDependencies[0]); },
     (copy) => { copy.engine.coreDependencies[0].path = "portfolio/core/lib/substituted.mjs"; }
   ]) {
-    const invalid = clone(successor);
+    const invalid = clone(latestSuccessor);
     mutate(invalid);
     assert.throws(() => verifyLaunchIndexDocument(sealIndex(invalid), INDEX_VERIFY_OPTIONS),
       /too few|unique|removed|duplicated|substituted|cardinality|path order/iu);
   }
 
-  const rollback = clone(successor);
-  rollback.indexId = "launch_studio_index_0003";
-  rollback.createdAt = "2026-08-26T19:31:54.000Z";
+  const rollback = clone(latestSuccessor);
+  rollback.indexId = "launch_studio_index_0004";
+  rollback.createdAt = "2026-08-27T15:21:56.000Z";
   rollback.previousIndexPath =
-    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json";
-  rollback.previousIndexHash = successor.indexHash;
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json";
+  rollback.previousIndexHash = latestSuccessor.indexHash;
   rollback.engine.coreDependencies.find(({ path: dependencyPath }) =>
     dependencyPath.endsWith("/handoff-ledger.mjs")).sha256 =
-      genesis.engine.coreDependencies.find(({ path: dependencyPath }) =>
+      firstSuccessor.engine.coreDependencies.find(({ path: dependencyPath }) =>
         dependencyPath.endsWith("/handoff-ledger.mjs")).sha256;
   assert.throws(() => verifyLaunchIndexDocument(sealIndex(rollback), INDEX_VERIFY_OPTIONS),
     /dependency pin rollback/);
 
-  const traversal = clone(successor);
+  const traversal = clone(latestSuccessor);
   traversal.indexSchema.path = "../launch-session-index.schema.json";
   assert.throws(() => verifyLaunchIndexDocument(sealIndex(traversal), INDEX_VERIFY_OPTIONS),
     /schema path substitution|unsafe|escape/);
-  assert.throws(() => verifyLaunchIndexDocument({ ...successor, indexHash: "0".repeat(64) }, INDEX_VERIFY_OPTIONS),
+  assert.throws(() => verifyLaunchIndexDocument({ ...latestSuccessor, indexHash: "0".repeat(64) }, INDEX_VERIFY_OPTIONS),
     /index hash mismatch/);
 });
 
