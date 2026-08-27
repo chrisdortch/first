@@ -73,7 +73,10 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
         relationships: Array.from({ length: 21 }, (_, index) => ({ recordId: `relationship:${index + 1}` }))
       }
     },
-    observations: { github, deploymentSelf, clover: { sourceId: "clover-context-gateway", sourceIdentity: "external-owner-console", evidenceClass: "external-owner-console-required", status: "external-owner-console-required", freshness: "unknown", observedAt: null, errorCode: null, webRuntimeConnectorInvoked: false, statement: "no Clover connector was invoked by the web runtime" } }, reconciled: {}, requestObservedAt: "2026-08-26T21:00:01.000Z", authority
+    observations: { github, deploymentSelf, clover: { sourceId: "clover-context-gateway", sourceIdentity: "external-owner-console", evidenceClass: "external-owner-console-required", status: "external-owner-console-required", freshness: "unknown", observedAt: null, errorCode: null, webRuntimeConnectorInvoked: false, statement: "no Clover connector was invoked by the web runtime" } },
+    reconciled: { currentActionCard: { action: "HOLD" } },
+    requestObservedAt: "2026-08-26T21:00:01.000Z",
+    authority
   };
   return { provenance: { schemaVersion: "clover-tree-provenance-readback-v0.2", provenance, authority }, attestation, readback };
 }
@@ -183,8 +186,8 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
   await page.getByRole("button", { name: "System Health", exact: true }).click();
   await expect(page.locator("[data-readiness=ready]")).toHaveCount(11);
   await expect(page.locator("[data-readiness=ready]").filter({ hasText: /^verified$/u })).toBeVisible();
-  await expect(page.getByText("2026-08-26T21:00:00.000Z", { exact: true })).toBeVisible();
-  await expect(page.getByText("2026-08-26T21:00:01.000Z", { exact: true })).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:00\.000Z$/u })).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:01\.000Z$/u })).toBeVisible();
 });
 
 test("attestation unavailability or source substitution leaves the current Action Card on HOLD", async ({ page }) => {
