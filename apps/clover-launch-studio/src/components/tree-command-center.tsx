@@ -303,14 +303,14 @@ export function TreeCommandCenter({ snapshot }: { snapshot: TreeProgramSnapshot 
   return (
     <div className="tree-command-center">
       <aside className="command-sidebar">
-        <div className="tree-mark" aria-label="Clover Tree"><span className="tree-mark-leaf">⌁</span><div><strong>Clover</strong><span>Tree Command Center</span></div></div>
+        <div className="tree-mark"><span className="tree-mark-leaf" aria-hidden="true">⌁</span><div><strong>Clover</strong><span>Tree Command Center</span></div></div>
         <nav aria-label="Command Center views"><ul>{views.map((view) => <li key={view}><button type="button" aria-current={activeView === view ? "page" : undefined} onClick={() => setActiveView(view)}><span aria-hidden="true">{String(views.indexOf(view) + 1).padStart(2, "0")}</span>{view}</button></li>)}</ul></nav>
         <div className="sidebar-boundary"><span className="status-dot" />Preview 0.1<p>Public-sanitized synthetic data. Target null. No production authority.</p></div>
       </aside>
       <main className="command-main" id="main-content">
         <header className="command-header">
           <div><p className="eyebrow">Owner command center · preview-only candidate</p><h1>{activeView}</h1></div>
-          <div className="source-readback" aria-label="Source readback">
+          <div className="source-readback" role="group" aria-label="Source readback">
             <div><span>Canonical source</span><strong>{snapshot.index.indexId}</strong></div>
             <div><span>Immutable baseline</span><strong>{immutableBaselineLabel}</strong></div>
             <div><span>GitHub observed</span><strong>{liveTruth.github?.observedAt ?? "unavailable"}</strong></div>

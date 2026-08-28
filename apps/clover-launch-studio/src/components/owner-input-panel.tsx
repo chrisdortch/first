@@ -114,7 +114,7 @@ export function OwnerInputPanel({ branches }: { branches: TreeBranch[] }) {
           <div><dt>Predicted fruit</dt><dd>{analysis.predictedFruit}</dd></div>
           <div><dt>Recommended option</dt><dd>{analysis.recommendedOption}</dd></div>
         </dl>
-        <div className="decision-buttons" aria-label="Synthetic owner decision">
+        <div className="decision-buttons" role="group" aria-label="Synthetic owner decision">
           <button type="button" onClick={() => setDecision("approved")}>Approve packet</button>
           <button type="button" onClick={() => setDecision("amend")}>Amend</button>
           <button type="button" onClick={() => setDecision("declined")}>Decline</button>

@@ -17,7 +17,7 @@ const familyLabels: Record<TreeBranch["family"], string> = {
 
 export function TreeMap({ branches, relationships }: TreeMapProps) {
   return (
-    <div className="tree-map" aria-label="Clover Tree program graph">
+    <div className="tree-map" role="group" aria-label="Clover Tree program graph">
       <div className="tree-map-grid">
         {familyOrder.map((family) => {
           const matches = branches.filter((branch) => branch.family === family);

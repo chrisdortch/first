@@ -174,28 +174,324 @@ jobs:
         working-directory: apps/clover-launch-studio
         run: npm run test:e2e
 
-      - name: Record browser artifact manifest
+      - name: Validate and record complete browser evidence
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE' > "$RUNNER_TEMP/clover-tree-browser-evidence.json"
+          node <<'NODE'
           const crypto = require('node:crypto');
           const fs = require('node:fs');
           const path = require('node:path');
+          const zlib = require('node:zlib');
           const root = 'apps/clover-launch-studio/test-results';
-          const entries = [];
+          const evidenceRoot = path.join(root, 'clover-tree-accessibility');
+          const exactProjects = {
+            'desktop-chromium': { width: 1440, height: 1000, screenshots: ['clover-tree-command-center-desktop-today.png'] },
+            'mobile-chromium': { width: 390, height: 844, screenshots: ['clover-tree-command-center-mobile-action-center.png', 'clover-tree-command-center-mobile-launch-studio.png', 'clover-tree-command-center-mobile-today.png'] }
+          };
+          const exactViews = ['Today', 'Tree', 'Master Plan', 'Branches', 'Roots and Source Coverage', "Captain's Log", 'Fruit Ledger', 'Collaboration and JV Center', 'Action Center', 'System Health', 'Launch Studio session'];
+          const exactStateKeys = [
+            ...exactViews.map((view) => `${view}|base-view`),
+            'Collaboration and JV Center|collaboration-initial-draft', 'Collaboration and JV Center|collaboration-keep-draft',
+            'Collaboration and JV Center|collaboration-not-now', 'Collaboration and JV Center|collaboration-decline',
+            'Collaboration and JV Center|pod-initial-disabled', 'Collaboration and JV Center|pod-approved',
+            'Collaboration and JV Center|pod-project-delta', 'Collaboration and JV Center|pod-delta-withdrawn',
+            'Collaboration and JV Center|pod-approval-revoked', 'Collaboration and JV Center|pod-disabled-after-revocation',
+            'Action Center|action-exact-signal-64hex', 'Action Center|action-recommended-packet-expanded',
+            'Action Center|action-successor-saved', 'Action Center|action-decision-approved', 'Action Center|action-decision-amend',
+            'Action Center|action-decision-declined', 'Action Center|action-decision-not-now',
+            'Branches|branch-keyboard-entry-exit', 'Launch Studio session|launch-integrity-64hex'
+          ];
+          const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+          const canonicalValue = (value) => Array.isArray(value)
+            ? value.map(canonicalValue)
+            : value && typeof value === 'object'
+              ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalValue(value[key])]))
+              : value;
+          const canonicalJson = (value) => JSON.stringify(canonicalValue(value));
+          const exactJson = (left, right, label) => { if (canonicalJson(left) !== canonicalJson(right)) throw new Error(`${label} mismatch`); };
+          const requireCondition = (condition, label) => { if (!condition) throw new Error(label); };
+          const safeRelative = (target) => {
+            const relative = target.split(path.sep).join('/');
+            if (path.isAbsolute(relative) || /(?:^|\/)\.\.(?:\/|$)|\0|\r|\n/u.test(relative)) throw new Error(`unsafe artifact path: ${target}`);
+            return relative;
+          };
+          const readRegular = (target) => {
+            const stat = fs.lstatSync(target);
+            if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`browser evidence path is not one regular file: ${target}`);
+            return { bytes: fs.readFileSync(target), size: stat.size };
+          };
+          const gate04 = {
+            reportRawSha256: 'ab1b388bf516df0a9eea14909a614d10e163b02cb5c993f1e2427cf95f3cc4f6',
+            occurrenceCount: 6804,
+            occurrenceSha256: '9b1626ba8b20df8df33abd040d75f0f53aba4d56fecd4ba1a0ab82da66ddcf37',
+            selectorHtmlPairCount: 924,
+            selectorHtmlPairSha256: '247619cde873ce89c3f900c526757f59a3dd1be42106953365f61c79f65a5f36',
+            selectorCount: 795,
+            selectorSha256: '8320871cd0f0fb928d698bc3a1f28942487dd821bb3778fddb76f52f570466a8',
+            gzipSha256: '3811234f2a0e5e4dcca3a22fe68c7ea325161354acc42236799f2f98703796aa'
+          };
+          const gate04Project = {
+            'desktop-chromium': { occurrences: 3664, occurrenceSha256: '089afe551f39c82ef29a28500037e653662388c22d3908b723e4b28d75c6c34e', selectorHtmlPairs: 924, selectorHtmlPairSha256: gate04.selectorHtmlPairSha256, selectors: 795, selectorSha256: gate04.selectorSha256 },
+            'mobile-chromium': { occurrences: 3140, occurrenceSha256: '5f3ccf9fe9c02bcdfd0c99135a1ad65049b504dbc3e3c956d3e3a23528ab652e', selectorHtmlPairs: 853, selectorHtmlPairSha256: '9db95ea95ab737676734d28dc9ebefcb775d31a5c333658ae5f05224ef28a802', selectors: 724, selectorSha256: '0d5ad6068a7f9c5ee05c348d23636913dd7278c19d439d2b3b24bc7f9756b10c' }
+          };
+          const sortedCanonical = (values) => [...values].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)));
+          const inventoryDigests = (occurrences) => {
+            const sortedOccurrences = sortedCanonical(occurrences);
+            const pairs = sortedCanonical([...new Map(sortedOccurrences.map(({ selector, html }) => [canonicalJson({ selector, html }), { selector, html }])).values()]);
+            const selectors = [...new Set(sortedOccurrences.map(({ selector }) => selector))].sort();
+            return {
+              occurrences: sortedOccurrences.length,
+              occurrenceSha256: sha256(`${canonicalJson(sortedOccurrences)}\n`),
+              selectorHtmlPairs: pairs.length,
+              selectorHtmlPairSha256: sha256(`${canonicalJson(pairs)}\n`),
+              selectors: selectors.length,
+              selectorSha256: sha256(`${canonicalJson(selectors)}\n`)
+            };
+          };
+          const colorMessage = (node) => {
+            const check = [...node.any, ...node.all, ...node.none].find(({ id }) => id === 'color-contrast') || node.any[0] || node.all[0] || node.none[0];
+            const data = check?.data && typeof check.data === 'object' ? check.data : {};
+            return {
+              messageKey: typeof data.messageKey === 'string' ? data.messageKey : null,
+              ratio: typeof data.contrastRatio === 'number' ? data.contrastRatio : Number.NaN,
+              threshold: typeof data.expectedContrastRatio === 'string' ? Number.parseFloat(data.expectedContrastRatio) : Number.NaN,
+              foreground: typeof data.fgColor === 'string' ? data.fgColor : null,
+              background: typeof data.bgColor === 'string' ? data.bgColor : null
+            };
+          };
+          const bucketSummary = (scans, bucket) => {
+            const rules = scans.flatMap((scan) => scan[bucket]);
+            return { ruleRecords: rules.length, nodes: rules.reduce((total, rule) => total + rule.nodes.length, 0) };
+          };
+          const currentColorOccurrences = (document, project) => document.scans.flatMap((scan) => ['passes', 'incomplete'].flatMap((bucket) => scan[bucket]
+            .filter(({ id }) => id === 'color-contrast')
+            .flatMap((rule) => rule.nodes.map((node) => {
+              requireCondition(node.target.length === 1 && typeof node.target[0] === 'string', `${project} unsupported current color target`);
+              return { occurrence: { project, view: scan.view, state: scan.state, selector: node.target[0], html: node.html }, sourceBucket: bucket };
+            }))));
+          const reconstructPriorClosure = (document, project) => {
+            const binding = document.priorClosure?.binding;
+            requireCondition(binding?.reportRawSha256 === gate04.reportRawSha256, `${project} Gate 0.4 report binding mismatch`);
+            exactJson(binding.attachments, [
+              { project: 'desktop-chromium', sha256: '0ba237f7284564475063811677645f788650aab83a18142f244ee3760cc7b432', scans: 30 },
+              { project: 'mobile-chromium', sha256: '0d0ffad60dc467b9ba909601bed0032524433b6309c87ebaa4a2cb07ecbe5bab', scans: 30 }
+            ], `${project} Gate 0.4 attachment bindings`);
+            const compressed = Buffer.from(binding.fullInventory?.gzipBase64 || '', 'base64');
+            requireCondition(sha256(compressed) === gate04.gzipSha256 && binding.fullInventory?.gzipSha256 === gate04.gzipSha256, `${project} Gate 0.4 gzip binding mismatch`);
+            const canonicalBytes = zlib.gunzipSync(compressed).toString('utf8');
+            const fullPrior = JSON.parse(canonicalBytes);
+            requireCondition(`${canonicalJson(fullPrior)}\n` === canonicalBytes, `${project} Gate 0.4 inventory is not canonical`);
+            const fullDigests = inventoryDigests(fullPrior);
+            exactJson(fullDigests, { occurrences: gate04.occurrenceCount, occurrenceSha256: gate04.occurrenceSha256, selectorHtmlPairs: gate04.selectorHtmlPairCount, selectorHtmlPairSha256: gate04.selectorHtmlPairSha256, selectors: gate04.selectorCount, selectorSha256: gate04.selectorSha256 }, `${project} Gate 0.4 full inventory`);
+            exactJson(binding.fullInventory, { ...fullDigests, gzipSha256: gate04.gzipSha256, gzipBase64: binding.fullInventory.gzipBase64 }, `${project} Gate 0.4 stored full inventory`);
+            const prior = fullPrior.filter((occurrence) => occurrence.project === project);
+            exactJson(inventoryDigests(prior), gate04Project[project], `${project} Gate 0.4 project baseline`);
+            const current = currentColorOccurrences(document, project);
+            const currentByKey = new Map();
+            current.forEach(({ occurrence }, index) => {
+              const key = canonicalJson(occurrence);
+              currentByKey.set(key, [...(currentByKey.get(key) || []), index]);
+            });
+            const used = new Set();
+            const matched = [];
+            const substitutions = [];
+            for (const occurrence of prior) {
+              const leaf = occurrence.selector === '.tree-mark-leaf' && occurrence.html === '<span class="tree-mark-leaf">⌁</span>';
+              const currentHtml = leaf ? '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>' : occurrence.html;
+              const key = canonicalJson({ ...occurrence, html: currentHtml });
+              const candidates = (currentByKey.get(key) || []).filter((index) => !used.has(index));
+              requireCondition(candidates.length === 1, `${project} Gate 0.4 current occurrence closure mismatch: ${key}`);
+              used.add(candidates[0]);
+              matched.push(occurrence);
+              if (leaf) substitutions.push({ ...occurrence, currentHtml, substitution: 'tree-mark-leaf-aria-hidden' });
+            }
+            const extras = current.filter((_, index) => !used.has(index));
+            requireCondition(extras.every(({ sourceBucket }) => sourceBucket === 'passes'), `${project} unmatched current incomplete target`);
+            const sortedSubstitutions = sortedCanonical(substitutions);
+            const sortedExtras = sortedCanonical(extras);
+            return {
+              binding: {
+                reportRawSha256: gate04.reportRawSha256,
+                attachments: binding.attachments,
+                fullInventory: { ...fullDigests, gzipSha256: gate04.gzipSha256, gzipBase64: binding.fullInventory.gzipBase64 }
+              },
+              projectBaseline: gate04Project[project],
+              matchedOccurrences: matched.length,
+              normalizedClosure: inventoryDigests(matched),
+              substitutions: { count: sortedSubstitutions.length, canonicalSha256: sha256(`${canonicalJson(sortedSubstitutions)}\n`), exactKind: 'tree-mark-leaf-aria-hidden' },
+              currentColorOccurrences: current.length,
+              additionalPreviouslyPassing: { count: sortedExtras.length, canonicalSha256: sha256(`${canonicalJson(sortedExtras)}\n`), allSourceBucketPasses: true },
+              missing: [],
+              closureStatus: 'exact-prior-occurrences-closed'
+            };
+          };
+
+          requireCondition(fs.existsSync(evidenceRoot) && fs.lstatSync(evidenceRoot).isDirectory() && !fs.lstatSync(evidenceRoot).isSymbolicLink(), 'accessibility evidence directory missing or unsafe');
+          const exactEvidenceNames = ['desktop-chromium.json', 'mobile-chromium.json'];
+          exactJson(fs.readdirSync(evidenceRoot).sort(), exactEvidenceNames, 'accessibility evidence inventory');
+          const documents = [];
+          for (const name of exactEvidenceNames) {
+            const target = path.join(evidenceRoot, name);
+            const { bytes } = readRegular(target);
+            const document = JSON.parse(bytes.toString('utf8'));
+            const project = name.replace(/\.json$/u, '');
+            const expected = exactProjects[project];
+            requireCondition(document.schemaVersion === 'clover-tree-accessibility-evidence-v1', `${project} schema mismatch`);
+            requireCondition(document.source?.repository === 'chrisdortch/first' && document.source?.head === process.env.CLOVER_TREE_HEAD, `${project} source mismatch`);
+            requireCondition(document.project === project, `${project} project mismatch`);
+            exactJson(document.viewport, { width: expected.width, height: expected.height }, `${project} viewport`);
+            exactJson(document.exactViews, exactViews, `${project} exact views`);
+            requireCondition(document.expectedScanCount === 30 && document.actualScanCount === 30 && document.scans?.length === 30, `${project} scan count mismatch`);
+            exactJson(document.exactStateKeys, exactStateKeys, `${project} expected state keys`);
+            exactJson(document.stateKeys, exactStateKeys, `${project} actual state keys`);
+            requireCondition(new Set(document.stateKeys).size === 30, `${project} duplicate state key`);
+            requireCondition(document.axeVersion === '4.13.0' && document.scans.every((scan) => scan.axeVersion === '4.13.0'), `${project} Axe version mismatch`);
+            const reconstructedAdjudications = [];
+            for (const scan of document.scans) {
+              for (const bucket of ['passes', 'violations', 'incomplete', 'inapplicable']) requireCondition(Array.isArray(scan[bucket]), `${project} ${scan.view}|${scan.state} missing Axe ${bucket} bucket`);
+              requireCondition(scan.violations.length === 0, `${project} ${scan.view}|${scan.state} has Axe violations`);
+              requireCondition(scan.incomplete.every((rule) => rule.id === 'color-contrast'), `${project} ${scan.view}|${scan.state} has a non-contrast incomplete`);
+              const rawIncompleteNodes = scan.incomplete.flatMap((rule) => rule.nodes.map((node) => ({ ruleId: rule.id, target: node.target, html: node.html, messageKey: colorMessage(node).messageKey })));
+              requireCondition(scan.adjudications.length === rawIncompleteNodes.length, `${project} ${scan.view}|${scan.state} adjudication coverage mismatch`);
+              scan.adjudications.forEach((entry, index) => {
+                const raw = rawIncompleteNodes[index];
+                exactJson({ ruleId: entry.ruleId, target: entry.target, html: entry.html, messageKey: entry.messageKey }, raw, `${project} ${scan.view}|${scan.state} adjudication node ${index}`);
+                requireCondition(entry.targetMatch?.count === 1 && entry.targetMatch?.exact === true && entry.targetMatch?.outerHTML === entry.html, `${project} ${scan.view}|${scan.state} target substitution or ambiguous match`);
+                requireCondition(entry.ruleId === 'color-contrast' && entry.passes === true && entry.unresolvedReason === null, `${project} ${scan.view}|${scan.state} failed or unresolved adjudication`);
+                if (entry.exemption === null) {
+                  requireCondition(entry.classification === 'measured-contrast' && Number.isFinite(entry.ratio) && Number.isFinite(entry.threshold) && entry.ratio >= entry.threshold, `${project} ${scan.view}|${scan.state} invalid measured contrast adjudication`);
+                } else {
+                  const exactDecoration = (entry.classification === 'decorative-tree-mark-leaf'
+                    && entry.exemption.kind === 'decorative-tree-mark-leaf'
+                    && entry.exemption.predicate === 'tree-mark-leaf-glyph')
+                    || (entry.classification === 'decorative-navigation-ordinal'
+                      && entry.exemption.kind === 'decorative-navigation-ordinal'
+                      && entry.exemption.predicate === 'sidebar-navigation-ordinal');
+                  requireCondition(exactDecoration && entry.exemption.noMeaningfulOrInteractiveDescendants === true, `${project} ${scan.view}|${scan.state} unrecognized decorative exemption`);
+                }
+                reconstructedAdjudications.push({ view: scan.view, state: scan.state, ...entry });
+              });
+            }
+            exactJson(document.adjudications, reconstructedAdjudications, `${project} aggregate adjudications`);
+            const reconstructedClasses = Object.fromEntries([...new Set(reconstructedAdjudications.map(({ classification }) => classification))].sort().map((classification) => [classification, reconstructedAdjudications.filter((entry) => entry.classification === classification).length]));
+            exactJson(document.adjudicationClasses, reconstructedClasses, `${project} adjudication classes`);
+            const reconstructedExemptions = reconstructedAdjudications.filter(({ exemption }) => exemption !== null).map(({ view, state, ruleId, target, html, messageKey, targetMatch, exemption }) => ({ view, state, ruleId, target, html, messageKey, targetMatch, exemption }));
+            exactJson(document.exemptions, reconstructedExemptions, `${project} exemptions`);
+            const passedRatios = document.scans.flatMap((scan) => scan.passes.filter(({ id }) => id === 'color-contrast').flatMap((rule) => rule.nodes.map((node) => {
+              const data = colorMessage(node);
+              return { sourceBucket: 'passes', view: scan.view, state: scan.state, target: node.target, html: node.html, foreground: data.foreground, background: data.background, ratio: data.ratio, threshold: data.threshold, passes: Number.isFinite(data.ratio) && Number.isFinite(data.threshold) && data.ratio >= data.threshold };
+            })));
+            const adjudicatedRatios = reconstructedAdjudications.filter(({ classification }) => classification === 'measured-contrast').map(({ view, state, ruleId, target, html, messageKey, foreground, background, ratio, threshold, passes }) => ({ sourceBucket: 'incomplete-adjudication', view, state, ruleId, target, html, messageKey, foreground, background, ratio, threshold, passes }));
+            const reconstructedRatios = [...passedRatios, ...adjudicatedRatios];
+            exactJson(document.ratios, reconstructedRatios, `${project} contrast ratios`);
+            requireCondition(reconstructedRatios.every((entry) => Number.isFinite(entry.ratio) && Number.isFinite(entry.threshold) && entry.ratio >= entry.threshold && entry.passes === true), `${project} has a failing contrast ratio`);
+            requireCondition(Array.isArray(document.unresolved) && document.unresolved.length === 0, `${project} unresolved accessibility evidence`);
+            const reconstructedSummary = {
+              scans: document.scans.length,
+              passes: bucketSummary(document.scans, 'passes'),
+              violations: bucketSummary(document.scans, 'violations'),
+              incomplete: bucketSummary(document.scans, 'incomplete'),
+              inapplicable: bucketSummary(document.scans, 'inapplicable'),
+              adjudications: reconstructedAdjudications.length,
+              closedContrastRatios: reconstructedRatios.length,
+              exemptions: reconstructedExemptions.length,
+              failingContrast: reconstructedRatios.filter(({ passes }) => !passes).length,
+              unresolved: 0,
+              accessibilityViolations: document.scans.flatMap(({ violations }) => violations).length,
+              consequentialAuthorityGranted: false
+            };
+            exactJson(document.summary, reconstructedSummary, `${project} accessibility summary`);
+            exactJson(document.priorClosure, reconstructPriorClosure(document, project), `${project} Gate 0.4 prior closure`);
+            exactJson(document.semantic, {
+              treeMark: { role: null, ariaLabel: null, leafAriaHidden: 'true' },
+              sourceReadback: { role: 'group', ariaLabel: 'Source readback' },
+              treeMap: { role: 'group', ariaLabel: 'Clover Tree program graph' },
+              decisionButtons: { role: 'group', ariaLabel: 'Synthetic owner decision' }
+            }, `${project} semantic correction`);
+            requireCondition(document.keyboard?.packetRegion?.expanded === true && document.keyboard?.packetRegion?.entered === true && document.keyboard?.packetRegion?.exited === true, `${project} packet keyboard evidence mismatch`);
+            requireCondition(document.keyboard?.branchRegion?.keyboardEntryRequired === document.keyboard?.branchRegion?.overflowing, `${project} Branch keyboard condition mismatch`);
+            requireCondition(Array.isArray(document.overflow) && document.overflow.length === 11, `${project} overflow inventory mismatch`);
+            for (const view of document.overflow) {
+              requireCondition(view.document.scrollWidth <= view.document.clientWidth && view.body.scrollWidth <= view.body.clientWidth && view.main.scrollWidth <= view.main.clientWidth, `${project} ${view.view} has document overflow`);
+              requireCondition(view.panels.every((panel) => panel.scrollWidth <= panel.clientWidth && panel.left >= -0.5 && panel.right <= view.viewportWidth + 0.5), `${project} ${view.view} has panel overflow`);
+            }
+            requireCondition(document.runtime?.consoleErrors === 0 && document.runtime?.pageErrors === 0 && document.runtime?.requestFailures === 0 && document.runtime?.http5xx === 0 && document.runtime?.findings?.length === 0, `${project} runtime evidence mismatch`);
+            requireCondition(document.privacy?.publicSanitized === true && document.privacy?.privateDataAccessed === false && document.privacy?.findings?.length === 0, `${project} privacy evidence mismatch`);
+            exactJson([...document.expectedScreenshots].sort(), expected.screenshots, `${project} screenshot contract`);
+            const withoutHash = { ...document };
+            delete withoutHash.canonicalSha256;
+            requireCondition(document.canonicalSha256 === sha256(`${canonicalJson(withoutHash)}\n`), `${project} canonical hash mismatch`);
+            documents.push({ project, target, bytes, document });
+          }
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.matchedOccurrences, 0) === gate04.occurrenceCount, 'combined Gate 0.4 occurrence closure count mismatch');
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.substitutions.count, 0) === 60, 'combined Gate 0.4 exact semantic substitution count mismatch');
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.additionalPreviouslyPassing.count, 0) === 50, 'combined Gate 0.4 previously-passing count mismatch');
+          requireCondition(documents.every(({ document }) => document.priorClosure.missing.length === 0 && document.priorClosure.closureStatus === 'exact-prior-occurrences-closed'), 'combined Gate 0.4 closure is not exact');
+          requireCondition(documents[0].document.priorClosure.binding.fullInventory.gzipBase64 === documents[1].document.priorClosure.binding.fullInventory.gzipBase64, 'Gate 0.4 inventory differs between projects');
+
+          const screenshotEntries = [];
           const walk = (directory) => {
             if (!fs.existsSync(directory)) return;
             for (const name of fs.readdirSync(directory).sort()) {
               const target = path.join(directory, name);
               const stat = fs.lstatSync(target);
+              if (stat.isSymbolicLink()) throw new Error(`browser artifact symlink rejected: ${target}`);
               if (stat.isDirectory()) walk(target);
-              else if (stat.isFile() && name.endsWith('.png')) entries.push({ path: target, size: stat.size, sha256: crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex') });
+              else if (stat.isFile() && name.endsWith('.png')) screenshotEntries.push({ path: safeRelative(target), size: stat.size, sha256: sha256(fs.readFileSync(target)) });
             }
           };
           walk(root);
-          if (entries.length < 4) throw new Error('desktop Today, mobile Today, Action Center and Launch Studio screenshots are required');
-          process.stdout.write(`${JSON.stringify({ schemaVersion: 'clover-tree-browser-evidence-v1', head: process.env.CLOVER_TREE_HEAD, screenshots: entries, consoleErrors: 0, requestFailures: 0, accessibilityViolations: 0 }, null, 2)}\n`);
+          const expectedScreenshotNames = Object.values(exactProjects).flatMap(({ screenshots }) => screenshots).sort();
+          exactJson(screenshotEntries.map(({ path: entryPath }) => path.basename(entryPath)).sort(), expectedScreenshotNames, 'browser screenshot inventory');
+          const summary = {
+            schemaVersion: 'clover-tree-browser-evidence-v2',
+            head: process.env.CLOVER_TREE_HEAD,
+            projects: documents.map(({ project, document }) => ({
+              project, canonicalSha256: document.canonicalSha256, scans: document.actualScanCount,
+              violations: document.summary.accessibilityViolations, unresolved: document.summary.unresolved,
+              gate04MatchedOccurrences: document.priorClosure.matchedOccurrences,
+              gate04Substitutions: document.priorClosure.substitutions,
+              gate04AdditionalPreviouslyPassing: document.priorClosure.additionalPreviouslyPassing
+            })),
+            screenshots: screenshotEntries,
+            totalScans: 60,
+            consoleErrors: 0,
+            pageErrors: 0,
+            requestFailures: 0,
+            http5xx: 0,
+            accessibilityViolations: 0,
+            unresolvedAccessibilityFindings: 0,
+            gate04PriorClosure: {
+              reportRawSha256: gate04.reportRawSha256,
+              occurrences: gate04.occurrenceCount,
+              occurrenceSha256: gate04.occurrenceSha256,
+              selectorHtmlPairs: gate04.selectorHtmlPairCount,
+              selectorHtmlPairSha256: gate04.selectorHtmlPairSha256,
+              selectors: gate04.selectorCount,
+              selectorSha256: gate04.selectorSha256,
+              status: 'exact-prior-occurrences-closed'
+            },
+            publicSanitized: true,
+            privateDataAccessed: false,
+            consequentialAuthorityGranted: false
+          };
+          const summaryPath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-evidence.json');
+          fs.writeFileSync(summaryPath, `${JSON.stringify(canonicalValue(summary), null, 2)}\n`, { mode: 0o644 });
+          const provenancePath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-source-provenance.json');
+          const manifestSources = [
+            ...documents.map(({ target }) => ({ label: safeRelative(target), target })),
+            ...screenshotEntries.map(({ path: entryPath }) => ({ label: entryPath, target: entryPath })),
+            { label: 'runner-temp/clover-tree-browser-evidence.json', target: summaryPath },
+            { label: 'runner-temp/clover-tree-browser-source-provenance.json', target: provenancePath }
+          ];
+          const manifestEntries = manifestSources.sort((left, right) => left.label < right.label ? -1 : left.label > right.label ? 1 : 0).map(({ label, target }) => {
+            const { bytes, size } = readRegular(target);
+            return { path: label, size, sha256: sha256(bytes) };
+          });
+          const manifestBody = { schemaVersion: 'clover-tree-browser-artifact-manifest-v1', head: process.env.CLOVER_TREE_HEAD, entries: manifestEntries };
+          const manifest = { ...manifestBody, canonicalSha256: sha256(`${canonicalJson(manifestBody)}\n`) };
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-artifact-manifest.json'), `${JSON.stringify(canonicalValue(manifest), null, 2)}\n`, { mode: 0o644 });
           NODE
 
       - name: Upload browser evidence
@@ -204,7 +500,9 @@ jobs:
         with:
           name: clover-tree-browser-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
+            apps/clover-launch-studio/test-results/clover-tree-accessibility/*.json
             apps/clover-launch-studio/test-results/**/*.png
+            ${{ runner.temp }}/clover-tree-browser-artifact-manifest.json
             ${{ runner.temp }}/clover-tree-browser-evidence.json
             ${{ runner.temp }}/clover-tree-browser-source-provenance.json
           if-no-files-found: error
