@@ -270,6 +270,48 @@ jobs:
               requireCondition(node.target.length === 1 && typeof node.target[0] === 'string', `${project} unsupported current color target`);
               return { occurrence: { project, view: scan.view, state: scan.state, selector: node.target[0], html: node.html }, sourceBucket: bucket };
             }))));
+          const exactDecorativeOccurrence = (occurrence, phase) => {
+            const treeHtml = phase === 'prior'
+              ? '<span class="tree-mark-leaf">⌁</span>'
+              : '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>';
+            if (occurrence.selector === '.tree-mark-leaf' && occurrence.html === treeHtml) return { kind: 'tree-mark-leaf', predicate: 'tree-mark-leaf-glyph', ordinal: null, accessibleName: null, currentHtml: '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>' };
+            const match = occurrence.html.match(/^<span aria-hidden="true">(\d{2})<\/span>$/u);
+            if (!match) return null;
+            const ordinalIndex = Number.parseInt(match[1], 10) - 1;
+            const accessibleName = exactViews[ordinalIndex];
+            if (!accessibleName) return null;
+            const inactiveSelector = `li:nth-child(${ordinalIndex + 1}) > button > span[aria-hidden="true"]`;
+            const activeSelector = 'button[aria-current="page"] > span[aria-hidden="true"]';
+            if (occurrence.selector !== inactiveSelector && !(occurrence.selector === activeSelector && occurrence.view === accessibleName)) return null;
+            return { kind: 'navigation-ordinal', predicate: 'sidebar-navigation-ordinal', ordinal: match[1], accessibleName, currentHtml: occurrence.html };
+          };
+          const validateDecorativeBindings = (scan, project) => {
+            const bindings = scan.decorativeBindings;
+            requireCondition(bindings?.sourceBucket === 'live-dom-decorative-binding' && Array.isArray(bindings.entries) && bindings.entries.length === 12, `${project} ${scan.view}|${scan.state} decorative binding inventory mismatch`);
+            const body = { sourceBucket: bindings.sourceBucket, entries: bindings.entries };
+            requireCondition(bindings.canonicalSha256 === sha256(`${canonicalJson(body)}\n`), `${project} ${scan.view}|${scan.state} decorative binding digest mismatch`);
+            const expected = [
+              {
+                kind: 'tree-mark-leaf', predicate: 'tree-mark-leaf-glyph', sourceBucket: 'live-dom-decorative-binding',
+                selector: '.tree-mark-leaf[aria-hidden="true"]', ordinal: null, accessibleName: null, matchCount: 1,
+                outerHTML: '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>', parentOuterHTML: null,
+                childElementCount: 0, interactiveDescendantCount: 0
+              },
+              ...exactViews.map((accessibleName, index) => {
+                const ordinal = String(index + 1).padStart(2, '0');
+                const current = scan.view === accessibleName ? ' aria-current="page"' : '';
+                return {
+                  kind: 'navigation-ordinal', predicate: 'sidebar-navigation-ordinal', sourceBucket: 'live-dom-decorative-binding',
+                  selector: '.command-sidebar nav button > span[aria-hidden="true"]', ordinal, accessibleName, matchCount: 1,
+                  outerHTML: `<span aria-hidden="true">${ordinal}</span>`,
+                  parentOuterHTML: `<button type="button"${current}><span aria-hidden="true">${ordinal}</span>${accessibleName}</button>`,
+                  childElementCount: 0, interactiveDescendantCount: 0
+                };
+              })
+            ];
+            exactJson(bindings.entries, expected, `${project} ${scan.view}|${scan.state} exact decorative bindings`);
+            return bindings;
+          };
           const reconstructPriorClosure = (document, project) => {
             const binding = document.priorClosure?.binding;
             requireCondition(binding?.reportRawSha256 === gate04.reportRawSha256, `${project} Gate 0.4 report binding mismatch`);
@@ -287,28 +329,59 @@ jobs:
             exactJson(binding.fullInventory, { ...fullDigests, gzipSha256: gate04.gzipSha256, gzipBase64: binding.fullInventory.gzipBase64 }, `${project} Gate 0.4 stored full inventory`);
             const prior = fullPrior.filter((occurrence) => occurrence.project === project);
             exactJson(inventoryDigests(prior), gate04Project[project], `${project} Gate 0.4 project baseline`);
+            const scansByKey = new Map();
+            for (const scan of document.scans) {
+              const key = `${scan.view}|${scan.state}`;
+              requireCondition(!scansByKey.has(key), `${project} duplicate scan while binding Gate 0.4 decorations: ${key}`);
+              validateDecorativeBindings(scan, project);
+              scansByKey.set(key, scan);
+            }
             const current = currentColorOccurrences(document, project);
+            const excludedAxeDecorative = current.flatMap((entry) => {
+              const decoration = exactDecorativeOccurrence(entry.occurrence, 'current');
+              return decoration ? [{ ...entry, bindingKind: decoration.kind, bindingPredicate: decoration.predicate }] : [];
+            });
+            const meaningfulCurrent = current.filter(({ occurrence }) => exactDecorativeOccurrence(occurrence, 'current') === null);
             const currentByKey = new Map();
-            current.forEach(({ occurrence }, index) => {
+            meaningfulCurrent.forEach(({ occurrence }, index) => {
               const key = canonicalJson(occurrence);
               currentByKey.set(key, [...(currentByKey.get(key) || []), index]);
             });
             const used = new Set();
             const matched = [];
             const substitutions = [];
+            const decorativePriorMatches = [];
             for (const occurrence of prior) {
-              const leaf = occurrence.selector === '.tree-mark-leaf' && occurrence.html === '<span class="tree-mark-leaf">⌁</span>';
-              const currentHtml = leaf ? '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>' : occurrence.html;
-              const key = canonicalJson({ ...occurrence, html: currentHtml });
+              const decoration = exactDecorativeOccurrence(occurrence, 'prior');
+              if (decoration) {
+                const scan = scansByKey.get(`${occurrence.view}|${occurrence.state}`);
+                requireCondition(scan, `${project} Gate 0.4 decorative binding scan missing: ${canonicalJson(occurrence)}`);
+                const candidates = scan.decorativeBindings.entries.filter((entry) => entry.kind === decoration.kind
+                  && entry.predicate === decoration.predicate
+                  && entry.ordinal === decoration.ordinal
+                  && entry.accessibleName === decoration.accessibleName
+                  && entry.sourceBucket === 'live-dom-decorative-binding'
+                  && entry.matchCount === 1
+                  && entry.outerHTML === decoration.currentHtml
+                  && entry.childElementCount === 0
+                  && entry.interactiveDescendantCount === 0);
+                requireCondition(candidates.length === 1, `${project} Gate 0.4 decorative binding mismatch: ${canonicalJson(occurrence)}`);
+                decorativePriorMatches.push({ occurrence, sourceBucket: 'live-dom-decorative-binding', bindingKind: decoration.kind, bindingPredicate: decoration.predicate, bindingCanonicalSha256: scan.decorativeBindings.canonicalSha256 });
+                matched.push(occurrence);
+                if (decoration.kind === 'tree-mark-leaf') substitutions.push({ ...occurrence, currentHtml: decoration.currentHtml, substitution: 'tree-mark-leaf-aria-hidden' });
+                continue;
+              }
+              const key = canonicalJson(occurrence);
               const candidates = (currentByKey.get(key) || []).filter((index) => !used.has(index));
               requireCondition(candidates.length === 1, `${project} Gate 0.4 current occurrence closure mismatch: ${key}`);
               used.add(candidates[0]);
               matched.push(occurrence);
-              if (leaf) substitutions.push({ ...occurrence, currentHtml, substitution: 'tree-mark-leaf-aria-hidden' });
             }
-            const extras = current.filter((_, index) => !used.has(index));
+            const extras = meaningfulCurrent.filter((_, index) => !used.has(index));
             requireCondition(extras.every(({ sourceBucket }) => sourceBucket === 'passes'), `${project} unmatched current incomplete target`);
             const sortedSubstitutions = sortedCanonical(substitutions);
+            const sortedDecorativePriorMatches = sortedCanonical(decorativePriorMatches);
+            const sortedExcludedAxeDecorative = sortedCanonical(excludedAxeDecorative);
             const sortedExtras = sortedCanonical(extras);
             return {
               binding: {
@@ -320,7 +393,21 @@ jobs:
               matchedOccurrences: matched.length,
               normalizedClosure: inventoryDigests(matched),
               substitutions: { count: sortedSubstitutions.length, canonicalSha256: sha256(`${canonicalJson(sortedSubstitutions)}\n`), exactKind: 'tree-mark-leaf-aria-hidden' },
+              decorativePriorOccurrences: {
+                count: sortedDecorativePriorMatches.length,
+                canonicalSha256: sha256(`${canonicalJson(sortedDecorativePriorMatches)}\n`),
+                sourceBucket: 'live-dom-decorative-binding',
+                treeMarkLeaf: sortedDecorativePriorMatches.filter(({ bindingKind }) => bindingKind === 'tree-mark-leaf').length,
+                navigationOrdinal: sortedDecorativePriorMatches.filter(({ bindingKind }) => bindingKind === 'navigation-ordinal').length
+              },
               currentColorOccurrences: current.length,
+              meaningfulColorOccurrences: meaningfulCurrent.length,
+              excludedAxeDecorative: {
+                count: sortedExcludedAxeDecorative.length,
+                canonicalSha256: sha256(`${canonicalJson(sortedExcludedAxeDecorative)}\n`),
+                passes: sortedExcludedAxeDecorative.filter(({ sourceBucket }) => sourceBucket === 'passes').length,
+                incomplete: sortedExcludedAxeDecorative.filter(({ sourceBucket }) => sourceBucket === 'incomplete').length
+              },
               additionalPreviouslyPassing: { count: sortedExtras.length, canonicalSha256: sha256(`${canonicalJson(sortedExtras)}\n`), allSourceBucketPasses: true },
               missing: [],
               closureStatus: 'exact-prior-occurrences-closed'
@@ -426,6 +513,10 @@ jobs:
           }
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.matchedOccurrences, 0) === gate04.occurrenceCount, 'combined Gate 0.4 occurrence closure count mismatch');
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.substitutions.count, 0) === 60, 'combined Gate 0.4 exact semantic substitution count mismatch');
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.decorativePriorOccurrences.count, 0) === 550, 'combined Gate 0.4 live-DOM decorative binding count mismatch');
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.decorativePriorOccurrences.treeMarkLeaf, 0) === 60, 'combined Gate 0.4 tree-leaf decorative binding count mismatch');
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.decorativePriorOccurrences.navigationOrdinal, 0) === 490, 'combined Gate 0.4 navigation-ordinal decorative binding count mismatch');
+          requireCondition(documents.every(({ document }) => document.priorClosure.decorativePriorOccurrences.sourceBucket === 'live-dom-decorative-binding'), 'combined Gate 0.4 decorative source bucket mismatch');
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.additionalPreviouslyPassing.count, 0) === 50, 'combined Gate 0.4 previously-passing count mismatch');
           requireCondition(documents.every(({ document }) => document.priorClosure.missing.length === 0 && document.priorClosure.closureStatus === 'exact-prior-occurrences-closed'), 'combined Gate 0.4 closure is not exact');
           requireCondition(documents[0].document.priorClosure.binding.fullInventory.gzipBase64 === documents[1].document.priorClosure.binding.fullInventory.gzipBase64, 'Gate 0.4 inventory differs between projects');
@@ -452,6 +543,8 @@ jobs:
               violations: document.summary.accessibilityViolations, unresolved: document.summary.unresolved,
               gate04MatchedOccurrences: document.priorClosure.matchedOccurrences,
               gate04Substitutions: document.priorClosure.substitutions,
+              gate04DecorativePriorOccurrences: document.priorClosure.decorativePriorOccurrences,
+              gate04ExcludedAxeDecorative: document.priorClosure.excludedAxeDecorative,
               gate04AdditionalPreviouslyPassing: document.priorClosure.additionalPreviouslyPassing
             })),
             screenshots: screenshotEntries,

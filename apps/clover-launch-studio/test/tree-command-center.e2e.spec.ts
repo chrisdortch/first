@@ -131,6 +131,7 @@ type AxeScanEvidence = {
   incomplete: AxeResults["incomplete"];
   inapplicable: AxeResults["inapplicable"];
   adjudications: ContrastAdjudication[];
+  decorativeBindings: DecorativeBindings;
 };
 
 type AxeResults = Awaited<ReturnType<InstanceType<typeof AxeBuilder>["analyze"]>>;
@@ -141,6 +142,24 @@ type Gate04Occurrence = {
   state: string;
   selector: string;
   html: string;
+};
+type DecorativeBindingEntry = {
+  kind: "tree-mark-leaf" | "navigation-ordinal";
+  predicate: "tree-mark-leaf-glyph" | "sidebar-navigation-ordinal";
+  sourceBucket: "live-dom-decorative-binding";
+  selector: string;
+  ordinal: string | null;
+  accessibleName: (typeof exactViews)[number] | null;
+  matchCount: 1;
+  outerHTML: string;
+  parentOuterHTML: string | null;
+  childElementCount: 0;
+  interactiveDescendantCount: 0;
+};
+type DecorativeBindings = {
+  sourceBucket: "live-dom-decorative-binding";
+  entries: DecorativeBindingEntry[];
+  canonicalSha256: string;
 };
 type ContrastAdjudication = {
   ruleId: string;
@@ -219,6 +238,47 @@ function sourceHead() {
 
 function sha256(bytes: string | Buffer) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function collectDecorativeBindings(page: Page): Promise<DecorativeBindings> {
+  const entries = await page.evaluate((views): DecorativeBindingEntry[] => {
+    const interactiveSelector = 'a[href], button, input, select, textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"]), [role]:not([role="presentation"]):not([role="none"])';
+    const leaves = document.querySelectorAll('.tree-mark-leaf[aria-hidden="true"]');
+    if (leaves.length !== 1 || !(leaves[0] instanceof HTMLElement)) throw new Error(`tree-mark-leaf-match-count:${leaves.length}`);
+    const leaf = leaves[0];
+    if (leaf.outerHTML !== '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>' || leaf.textContent?.trim() !== "⌁" || leaf.childElementCount !== 0 || leaf.querySelectorAll(interactiveSelector).length !== 0) throw new Error("tree-mark-leaf-predicate-mismatch");
+    const collected: DecorativeBindingEntry[] = [{
+      kind: "tree-mark-leaf", predicate: "tree-mark-leaf-glyph", sourceBucket: "live-dom-decorative-binding",
+      selector: '.tree-mark-leaf[aria-hidden="true"]', ordinal: null, accessibleName: null, matchCount: 1,
+      outerHTML: leaf.outerHTML, parentOuterHTML: null, childElementCount: 0, interactiveDescendantCount: 0
+    }];
+    const buttons = [...document.querySelectorAll(".command-sidebar nav button")];
+    if (buttons.length !== views.length || buttons.some((button) => !(button instanceof HTMLButtonElement))) throw new Error(`sidebar-button-match-count:${buttons.length}`);
+    for (const [index, accessibleName] of views.entries()) {
+      const ordinal = String(index + 1).padStart(2, "0");
+      const button = buttons[index] as HTMLButtonElement;
+      const markers = button.querySelectorAll(':scope > span[aria-hidden="true"]');
+      if (markers.length !== 1 || !(markers[0] instanceof HTMLElement)) throw new Error(`sidebar-ordinal-${ordinal}-match-count:${markers.length}`);
+      const marker = markers[0];
+      const nameClone = button.cloneNode(true) as HTMLButtonElement;
+      nameClone.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+      const accessibleTextAlternative = nameClone.textContent?.trim() ?? "";
+      if (accessibleTextAlternative !== accessibleName || button.hasAttribute("aria-label") || button.hasAttribute("aria-labelledby")) throw new Error(`sidebar-ordinal-${ordinal}-accessible-name-mismatch:${accessibleTextAlternative}`);
+      if (marker.outerHTML !== `<span aria-hidden="true">${ordinal}</span>` || marker.textContent?.trim() !== ordinal || marker.childElementCount !== 0 || marker.querySelectorAll(interactiveSelector).length !== 0) throw new Error(`sidebar-ordinal-${ordinal}-predicate-mismatch`);
+      const currentAttribute = button.getAttribute("aria-current");
+      if (currentAttribute !== null && currentAttribute !== "page") throw new Error(`sidebar-ordinal-${ordinal}-aria-current:${currentAttribute}`);
+      const expectedParent = `<button type="button"${currentAttribute === "page" ? ' aria-current="page"' : ""}><span aria-hidden="true">${ordinal}</span>${accessibleName}</button>`;
+      if (button.outerHTML !== expectedParent) throw new Error(`sidebar-ordinal-${ordinal}-parent-html-mismatch`);
+      collected.push({
+        kind: "navigation-ordinal", predicate: "sidebar-navigation-ordinal", sourceBucket: "live-dom-decorative-binding",
+        selector: '.command-sidebar nav button > span[aria-hidden="true"]', ordinal, accessibleName, matchCount: 1,
+        outerHTML: marker.outerHTML, parentOuterHTML: button.outerHTML, childElementCount: 0, interactiveDescendantCount: 0
+      });
+    }
+    return collected;
+  }, [...exactViews]);
+  const body = { sourceBucket: "live-dom-decorative-binding" as const, entries };
+  return { ...body, canonicalSha256: sha256(`${canonicalJson(body)}\n`) };
 }
 
 function ruleMessageData(node: AxeNode) {
@@ -412,12 +472,13 @@ async function scanWithCompleteAxePayload(
   state: string,
   viewport: { width: number; height: number }
 ) {
+  const decorativeBindings = await collectDecorativeBindings(page);
   const result = await new AxeBuilder({ page }).analyze();
   const adjudications: ContrastAdjudication[] = [];
   for (const rule of result.incomplete) {
     for (const node of rule.nodes) adjudications.push(await adjudicateIncompleteNode(page, rule.id, node));
   }
-  const evidence = { view, state, viewport, axeVersion: result.testEngine.version, passes: result.passes, violations: result.violations, incomplete: result.incomplete, inapplicable: result.inapplicable, adjudications };
+  const evidence = { view, state, viewport, axeVersion: result.testEngine.version, passes: result.passes, violations: result.violations, incomplete: result.incomplete, inapplicable: result.inapplicable, adjudications, decorativeBindings };
   scans.push(evidence);
   expect(result.violations, JSON.stringify(evidence, null, 2)).toEqual([]);
   expect(result.incomplete.filter(({ id }) => id !== "color-contrast"), JSON.stringify(evidence, null, 2)).toEqual([]);
@@ -475,6 +536,24 @@ function currentColorOccurrences(scans: AxeScanEvidence[], project: string) {
     }))));
 }
 
+function exactDecorativeOccurrence(occurrence: Gate04Occurrence, phase: "prior" | "current") {
+  const treeHtml = phase === "prior"
+    ? '<span class="tree-mark-leaf">⌁</span>'
+    : '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>';
+  if (occurrence.selector === ".tree-mark-leaf" && occurrence.html === treeHtml) {
+    return { kind: "tree-mark-leaf" as const, predicate: "tree-mark-leaf-glyph" as const, ordinal: null, accessibleName: null, currentHtml: '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>' };
+  }
+  const match = occurrence.html.match(/^<span aria-hidden="true">(\d{2})<\/span>$/u);
+  if (!match) return null;
+  const ordinalIndex = Number.parseInt(match[1]!, 10) - 1;
+  const accessibleName = exactViews[ordinalIndex];
+  if (!accessibleName) return null;
+  const inactiveSelector = `li:nth-child(${ordinalIndex + 1}) > button > span[aria-hidden="true"]`;
+  const activeSelector = 'button[aria-current="page"] > span[aria-hidden="true"]';
+  if (occurrence.selector !== inactiveSelector && !(occurrence.selector === activeSelector && occurrence.view === accessibleName)) return null;
+  return { kind: "navigation-ordinal" as const, predicate: "sidebar-navigation-ordinal" as const, ordinal: match[1]!, accessibleName, currentHtml: occurrence.html };
+}
+
 function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
   const fullPrior = gate04PriorInventory();
   const prior = fullPrior.filter((occurrence) => occurrence.project === project);
@@ -499,30 +578,68 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
   const expectedProject = projectExpectations[project];
   if (!expectedProject || canonicalJson(inventoryDigests(prior)) !== canonicalJson(expectedProject)) throw new Error(`Gate 0.4 ${project} baseline mismatch`);
 
+  const scansByKey = new Map<string, AxeScanEvidence>();
+  for (const scan of scans) {
+    const key = `${scan.view}|${scan.state}`;
+    if (scansByKey.has(key)) throw new Error(`Duplicate scan while binding Gate 0.4 decorations: ${key}`);
+    const bindingBody = { sourceBucket: scan.decorativeBindings.sourceBucket, entries: scan.decorativeBindings.entries };
+    if (scan.decorativeBindings.sourceBucket !== "live-dom-decorative-binding" || scan.decorativeBindings.entries.length !== 12 || scan.decorativeBindings.canonicalSha256 !== sha256(`${canonicalJson(bindingBody)}\n`)) throw new Error(`Invalid per-scan decorative binding: ${key}`);
+    scansByKey.set(key, scan);
+  }
   const current = currentColorOccurrences(scans, project);
+  const excludedAxeDecorative = current.flatMap((entry) => {
+    const decoration = exactDecorativeOccurrence(entry.occurrence, "current");
+    return decoration ? [{ ...entry, bindingKind: decoration.kind, bindingPredicate: decoration.predicate }] : [];
+  });
+  const meaningfulCurrent = current.filter(({ occurrence }) => exactDecorativeOccurrence(occurrence, "current") === null);
   const currentByKey = new Map<string, number[]>();
-  current.forEach(({ occurrence }, index) => {
+  meaningfulCurrent.forEach(({ occurrence }, index) => {
     const key = canonicalJson(occurrence);
     currentByKey.set(key, [...(currentByKey.get(key) ?? []), index]);
   });
   const used = new Set<number>();
   const normalizedMatched: Gate04Occurrence[] = [];
   const substitutions: Array<Gate04Occurrence & { currentHtml: string; substitution: "tree-mark-leaf-aria-hidden" }> = [];
+  const decorativePriorMatches: Array<{ occurrence: Gate04Occurrence; sourceBucket: "live-dom-decorative-binding"; bindingKind: "tree-mark-leaf" | "navigation-ordinal"; bindingPredicate: "tree-mark-leaf-glyph" | "sidebar-navigation-ordinal"; bindingCanonicalSha256: string }> = [];
   for (const occurrence of prior) {
-    const isTreeLeafCorrection = occurrence.selector === ".tree-mark-leaf" && occurrence.html === '<span class="tree-mark-leaf">⌁</span>';
-    const currentHtml = isTreeLeafCorrection ? '<span class="tree-mark-leaf" aria-hidden="true">⌁</span>' : occurrence.html;
-    const key = canonicalJson({ ...occurrence, html: currentHtml });
+    const decoration = exactDecorativeOccurrence(occurrence, "prior");
+    if (decoration) {
+      const scan = scansByKey.get(`${occurrence.view}|${occurrence.state}`);
+      if (!scan) throw new Error(`Gate 0.4 decorative binding scan missing: ${canonicalJson(occurrence)}`);
+      const candidates = scan.decorativeBindings.entries.filter((entry) => entry.kind === decoration.kind
+        && entry.predicate === decoration.predicate
+        && entry.ordinal === decoration.ordinal
+        && entry.accessibleName === decoration.accessibleName
+        && entry.sourceBucket === "live-dom-decorative-binding"
+        && entry.matchCount === 1
+        && entry.outerHTML === decoration.currentHtml
+        && entry.childElementCount === 0
+        && entry.interactiveDescendantCount === 0);
+      if (candidates.length !== 1) throw new Error(`Gate 0.4 decorative prior occurrence expected one exact live-DOM binding and found ${candidates.length}: ${canonicalJson(occurrence)}`);
+      decorativePriorMatches.push({
+        occurrence,
+        sourceBucket: "live-dom-decorative-binding",
+        bindingKind: decoration.kind,
+        bindingPredicate: decoration.predicate,
+        bindingCanonicalSha256: scan.decorativeBindings.canonicalSha256
+      });
+      normalizedMatched.push(occurrence);
+      if (decoration.kind === "tree-mark-leaf") substitutions.push({ ...occurrence, currentHtml: decoration.currentHtml, substitution: "tree-mark-leaf-aria-hidden" });
+      continue;
+    }
+    const key = canonicalJson(occurrence);
     const candidates = (currentByKey.get(key) ?? []).filter((index) => !used.has(index));
     if (candidates.length !== 1) throw new Error(`Gate 0.4 occurrence closure expected one current target and found ${candidates.length}: ${key}`);
     used.add(candidates[0]!);
     normalizedMatched.push(occurrence);
-    if (isTreeLeafCorrection) substitutions.push({ ...occurrence, currentHtml, substitution: "tree-mark-leaf-aria-hidden" });
   }
-  const extras = current.filter((_, index) => !used.has(index));
+  const extras = meaningfulCurrent.filter((_, index) => !used.has(index));
   if (extras.some(({ sourceBucket }) => sourceBucket !== "passes")) throw new Error("Gate 0.4 closure left an unmatched current incomplete target");
   const normalizedDigests = inventoryDigests(normalizedMatched);
   if (canonicalJson(normalizedDigests) !== canonicalJson(expectedProject)) throw new Error(`Gate 0.4 ${project} normalized closure mismatch`);
   const sortedSubstitutions = sortedCanonical(substitutions);
+  const sortedDecorativePriorMatches = sortedCanonical(decorativePriorMatches);
+  const sortedExcludedAxeDecorative = sortedCanonical(excludedAxeDecorative);
   const sortedExtras = sortedCanonical(extras);
   return {
     binding: {
@@ -545,7 +662,21 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
       canonicalSha256: sha256(`${canonicalJson(sortedSubstitutions)}\n`),
       exactKind: "tree-mark-leaf-aria-hidden"
     },
+    decorativePriorOccurrences: {
+      count: sortedDecorativePriorMatches.length,
+      canonicalSha256: sha256(`${canonicalJson(sortedDecorativePriorMatches)}\n`),
+      sourceBucket: "live-dom-decorative-binding",
+      treeMarkLeaf: sortedDecorativePriorMatches.filter(({ bindingKind }) => bindingKind === "tree-mark-leaf").length,
+      navigationOrdinal: sortedDecorativePriorMatches.filter(({ bindingKind }) => bindingKind === "navigation-ordinal").length
+    },
     currentColorOccurrences: current.length,
+    meaningfulColorOccurrences: meaningfulCurrent.length,
+    excludedAxeDecorative: {
+      count: sortedExcludedAxeDecorative.length,
+      canonicalSha256: sha256(`${canonicalJson(sortedExcludedAxeDecorative)}\n`),
+      passes: sortedExcludedAxeDecorative.filter(({ sourceBucket }) => sourceBucket === "passes").length,
+      incomplete: sortedExcludedAxeDecorative.filter(({ sourceBucket }) => sourceBucket === "incomplete").length
+    },
     additionalPreviouslyPassing: {
       count: sortedExtras.length,
       canonicalSha256: sha256(`${canonicalJson(sortedExtras)}\n`),
