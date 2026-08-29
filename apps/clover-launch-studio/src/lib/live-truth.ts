@@ -6,6 +6,8 @@ export const GITHUB_REPOSITORY = "chrisdortch/first";
 export const EXPECTED_MAIN_COMMIT = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
 export const EXPECTED_STACK_A_HEAD = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
 export const EXPECTED_STACK_A_BASE_COMMIT = "7d067d79bbff872846d6673b5f852518ba00fa7e";
+export const EXPECTED_STACK_B_CHANGED_PATH_COUNT = 72;
+export const EXPECTED_STACK_B_PATH_LIST_SHA256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
 export const EXPECTED_VERCEL_PROJECT_ID = "prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ";
 export const STACK_A_BRANCH = "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826";
 export const STACK_B_BRANCH = "feature/clover-tree-command-center-launch-studio-v0.1-20260826";
@@ -228,7 +230,9 @@ function parseBranch(value: unknown, defaultBranch: string): PublicGitHubMain {
 }
 
 function parsePull(value: unknown, expectedNumber: number): PublicGitHubPull {
-  if (!isRecord(value) || value.number !== expectedNumber || typeof value.draft !== "boolean" || (typeof value.mergeable !== "boolean" && value.mergeable !== null)) throw new Error(`GITHUB_MALFORMED_PR${expectedNumber}`);
+  if (!isRecord(value) || value.number !== expectedNumber || typeof value.draft !== "boolean" || typeof value.merged !== "boolean" || (typeof value.mergeable !== "boolean" && value.mergeable !== null)) throw new Error(`GITHUB_MALFORMED_PR${expectedNumber}`);
+  const mergedAt = value.merged_at === null ? null : exactTimestamp(value.merged_at, `PR${expectedNumber}:merged_at`);
+  if (value.merged !== (mergedAt !== null)) throw new Error(`GITHUB_MALFORMED_PR${expectedNumber}:merge-state`);
   const head = nested(value, "head", `PR${expectedNumber}`);
   const base = nested(value, "base", `PR${expectedNumber}`);
   const headRepository = nested(head, "repo", `PR${expectedNumber}`);
@@ -243,7 +247,7 @@ function parsePull(value: unknown, expectedNumber: number): PublicGitHubPull {
     number: expectedNumber,
     state: requiredString(value, "state", `PR${expectedNumber}`),
     draft: value.draft,
-    merged: value.merged === true || typeof value.merged_at === "string",
+    merged: value.merged,
     mergeable: value.mergeable,
     headSha,
     headRef: requiredString(head, "ref", `PR${expectedNumber}`),
@@ -530,6 +534,7 @@ function githubContradictions(github: GitHubLiveObservation, build: BuildProvena
   if (github.main?.sha !== EXPECTED_MAIN_COMMIT || github.main.protected !== true || github.main.defaultBranch !== "main") contradictions.push("protected-main-identity");
   if (github.pull34?.headSha !== EXPECTED_STACK_A_HEAD || github.pull34.headRef !== STACK_A_BRANCH || github.pull34.baseSha !== EXPECTED_STACK_A_BASE_COMMIT || github.pull34.baseRef !== "main" || github.pull34.headRepository !== GITHUB_REPOSITORY || github.pull34.baseRepository !== GITHUB_REPOSITORY || github.pull34.state !== "closed" || github.pull34.draft || !github.pull34.merged) contradictions.push("stack-a-pull-request");
   if (github.pull35?.headSha !== build.commit || github.pull35.headRef !== STACK_B_BRANCH || github.pull35.baseSha !== EXPECTED_MAIN_COMMIT || github.pull35.baseRef !== "main" || github.pull35.headRepository !== GITHUB_REPOSITORY || github.pull35.baseRepository !== GITHUB_REPOSITORY || github.pull35.state !== "open" || !github.pull35.draft || github.pull35.merged || !github.pull35.mergeable) contradictions.push("stack-b-pull-request");
+  if (build.stackABase !== EXPECTED_MAIN_COMMIT || build.changedPathCount !== EXPECTED_STACK_B_CHANGED_PATH_COUNT || build.pathListSha256 !== EXPECTED_STACK_B_PATH_LIST_SHA256) contradictions.push("stack-b-source-provenance");
   if (github.exactHeadChecks?.sha !== build.commit || github.exactHeadChecks.state !== "success") contradictions.push("exact-head-checks");
   return contradictions;
 }

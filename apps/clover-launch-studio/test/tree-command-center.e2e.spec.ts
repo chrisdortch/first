@@ -46,7 +46,7 @@ function canonicalJson(value: unknown) {
 function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
   const provenance = {
     documentType: "clover-tree-build-provenance", schemaVersion: "0.3.0", commit: fixtureCommit, tree: fixtureTree, parent: fixtureParent,
-    stackABase: fixtureMain, runtimeDeploymentKey: fixtureRuntimeDeploymentKey, cleanWorktree: true, changedPathCount: 17, pathListSha256: "1".repeat(64), sourceManifestSha256: "2".repeat(64),
+    stackABase: fixtureMain, runtimeDeploymentKey: fixtureRuntimeDeploymentKey, cleanWorktree: true, changedPathCount: 72, pathListSha256: "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8", sourceManifestSha256: "2".repeat(64),
     packageLockSha256: "3".repeat(64), treeProgramIndexId: "tree-program:index:0001", treeProgramIndexHash: fixtureIndexHash,
     treeProgramIndexRawSha256: "5".repeat(64), nodeVersion: "v24.16.0", nextVersion: "16.3.3", buildMode: "vercel-prebuilt-preview",
     buildCommand: "npm run build", buildOutputCommand: "vercel build --yes", buildInvocationId: `clover-build:${"6".repeat(64)}`,

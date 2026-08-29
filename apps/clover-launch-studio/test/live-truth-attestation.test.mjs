@@ -17,6 +17,8 @@ import {
   EXPECTED_MAIN_COMMIT,
   EXPECTED_STACK_A_BASE_COMMIT,
   EXPECTED_STACK_A_HEAD,
+  EXPECTED_STACK_B_CHANGED_PATH_COUNT,
+  EXPECTED_STACK_B_PATH_LIST_SHA256,
   GITHUB_ORIGIN,
   GITHUB_REPOSITORY,
   NO_ATTESTATION_COMPARISON,
@@ -60,8 +62,8 @@ const build = parseBuildProvenance({
   stackABase: EXPECTED_MAIN_COMMIT,
   runtimeDeploymentKey,
   cleanWorktree: true,
-  changedPathCount: 17,
-  pathListSha256: hex64("1"),
+  changedPathCount: EXPECTED_STACK_B_CHANGED_PATH_COUNT,
+  pathListSha256: EXPECTED_STACK_B_PATH_LIST_SHA256,
   sourceManifestSha256: hex64("2"),
   packageLockSha256: hex64("3"),
   treeProgramIndexId: "tree-program:index:0001",
@@ -152,26 +154,26 @@ function deploymentObservation(environment = previewEnvironment(), requestUrl = 
   });
 }
 
-function sealedAttestation(overrides = {}) {
+function sealedAttestation(overrides = {}, sourceBuild = build) {
   const body = {
     documentType: "clover-tree-deployment-attestation",
     schemaVersion: "0.3.0",
-    buildInvocationId: build.buildInvocationId,
+    buildInvocationId: sourceBuild.buildInvocationId,
     source: {
-      commit: build.commit,
-      tree: build.tree,
-      parent: build.parent,
-      stackABase: build.stackABase,
-      runtimeDeploymentKey: build.runtimeDeploymentKey,
-      changedPathCount: build.changedPathCount,
-      pathListSha256: build.pathListSha256,
-      sourceManifestSha256: build.sourceManifestSha256,
-      packageLockSha256: build.packageLockSha256,
-      treeProgramIndexId: build.treeProgramIndexId,
-      treeProgramIndexHash: build.treeProgramIndexHash,
-      nodeVersion: build.nodeVersion,
-      nextVersion: build.nextVersion,
-      buildMode: build.buildMode
+      commit: sourceBuild.commit,
+      tree: sourceBuild.tree,
+      parent: sourceBuild.parent,
+      stackABase: sourceBuild.stackABase,
+      runtimeDeploymentKey: sourceBuild.runtimeDeploymentKey,
+      changedPathCount: sourceBuild.changedPathCount,
+      pathListSha256: sourceBuild.pathListSha256,
+      sourceManifestSha256: sourceBuild.sourceManifestSha256,
+      packageLockSha256: sourceBuild.packageLockSha256,
+      treeProgramIndexId: sourceBuild.treeProgramIndexId,
+      treeProgramIndexHash: sourceBuild.treeProgramIndexHash,
+      nodeVersion: sourceBuild.nodeVersion,
+      nextVersion: sourceBuild.nextVersion,
+      buildMode: sourceBuild.buildMode
     },
     output: {
       manifestRootSha256: hex64("7"),
@@ -243,6 +245,22 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
     const result = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.match(result.failures[0], /GITHUB_MALFORMED_PR35/u);
   });
+  await t.test("malformed or incoherent merge evidence", async () => {
+    const substitutions = [
+      { merged: false, merged_at: "not-a-time" },
+      { merged: false, merged_at: "2026-08-29T16:24:08Z" },
+      { merged: true, merged_at: null }
+    ];
+    for (const substitution of substitutions) {
+      const fixture = githubFetch({
+        mutate: (value, endpoint) => endpoint.endsWith("/pulls/34") ? { ...value, ...substitution } : value
+      });
+      const result = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+      assert.equal(result.status, "partial");
+      assert.equal(result.pull34, null);
+      assert.equal(result.failures.some((failure) => /pull34:GITHUB_MALFORMED_PR34/u.test(failure)), true);
+    }
+  });
   await t.test("oversize", async () => {
     const response = new Response("{}", { status: 200, headers: { "content-length": String(300_000) } });
     const result = await observeGitHubTruth({ candidateCommit, fetchImpl: async () => response, retries: 0 });
@@ -308,6 +326,25 @@ test("merged Stack A identity and state drift remain visible and block acceptanc
       assert.equal(reconciled.contradictions.value.includes("stack-a-pull-request"), true);
       assert.equal(reconciled.currentActionCard.action, "HOLD");
     });
+  }
+});
+
+test("mutually resealed Stack B provenance substitutions remain non-acceptable", async () => {
+  const fixture = githubFetch();
+  const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+  const deployment = deploymentObservation();
+  const substitutions = [
+    { stackABase: EXPECTED_STACK_A_HEAD },
+    { changedPathCount: EXPECTED_STACK_B_CHANGED_PATH_COUNT + 1 },
+    { pathListSha256: hex64("9") }
+  ];
+  for (const substitution of substitutions) {
+    const substitutedBuild = parseBuildProvenance({ ...build, ...substitution });
+    const attestation = await compareDeploymentAttestation(substitutedBuild, sealedAttestation({}, substitutedBuild));
+    assert.equal(attestation.status, "verified");
+    const reconciled = reconcileTreeTruth({ baseline, build: substitutedBuild, github, deployment, attestation });
+    assert.equal(reconciled.contradictions.value.includes("stack-b-source-provenance"), true);
+    assert.equal(reconciled.currentActionCard.action, "HOLD");
   }
 });
 
