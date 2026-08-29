@@ -4,7 +4,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalize, sha256Bytes, sha256Canonical } from "../core/lib/canonical-json.mjs";
-import { validateHandoffLedger, validateIndexTransition } from "../core/lib/handoff-ledger.mjs";
+import {
+  validateHandoffLedger,
+  validateIndexTransition,
+  validateProspectiveConsumptionTransition,
+} from "../core/lib/handoff-ledger.mjs";
 import { validateJsonSchema } from "../core/lib/validators.mjs";
 import { computeSelfHash, scorePriorityTargets } from "./priority-engine.mjs";
 
@@ -20,6 +24,9 @@ const PATHS = Object.freeze({
   handoffRootIndex: "portfolio/core/handoff/index.json",
   handoffVersionIndex: "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0001.json",
 });
+
+export const CONNECTOR_SCOPE_ANCHOR_PATH = "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0007.json";
+export const CONNECTOR_SCOPE_ANCHOR_HASH = "b68af5df24f964eb6dabcd3f429a11bcd862de2a893d1ac74a6a74f7c78fc4ce";
 
 const PROTECTED_BYTES = Object.freeze({
   "portfolio/status/current.json": "d3ae732ac055b64904890c8d6085bdc4a22553381f3fb7d7af58ba301d701eea",
@@ -135,6 +142,67 @@ function exactDocument(documents, predicate, label) {
   const matches = documents.filter(predicate);
   invariant(matches.length === 1, `${label} must resolve exactly once`);
   return matches[0];
+}
+
+function exactIndexedProspectiveDocument(discovered, relativePath, documentType, idField, id, hashField, hash, repositoryRoot) {
+  invariant(typeof relativePath === "string" && !path.isAbsolute(relativePath) &&
+    !relativePath.split(/[\\/]/u).includes("..") &&
+    relativePath === relativePath.split(path.sep).join("/") &&
+    relativePath.startsWith("portfolio/core/handoff/versions/0.1.0/"),
+  `Indexed ${documentType} path is not a canonical immutable Handoff path: ${relativePath}`);
+  const root = path.resolve(repositoryRoot);
+  const resolved = path.resolve(root, relativePath);
+  invariant(resolved.startsWith(`${root}${path.sep}`), `Indexed ${documentType} path escapes the repository root: ${relativePath}`);
+  let cursor = root;
+  for (const segment of path.relative(root, resolved).split(path.sep).filter(Boolean)) {
+    cursor = path.join(cursor, segment);
+    invariant(fs.existsSync(cursor), `Indexed ${documentType} path is unavailable: ${relativePath}`);
+    invariant(!fs.lstatSync(cursor).isSymbolicLink(), `Indexed ${documentType} path contains a symbolic link: ${relativePath}`);
+  }
+  const document = exactDocument(discovered.documents, ({ path: documentPath }) => documentPath === relativePath,
+    `Indexed ${documentType} path ${relativePath}`);
+  invariant(document.data.documentType === documentType && document.data[idField] === id && document.data[hashField] === hash,
+    `Indexed ${documentType} path was substituted: ${relativePath}`);
+  return document.data;
+}
+
+export function assertPostAnchorProspectiveConsumptions(chain, discovered, options = {}) {
+  invariant(Array.isArray(chain), "Handoff index chain is unavailable for prospective connector-scope validation");
+  invariant(Array.isArray(discovered?.documents) && Array.isArray(discovered?.envelopes) && Array.isArray(discovered?.receipts),
+    "Handoff discovery is unavailable for prospective connector-scope validation");
+  const anchors = chain.filter(({ path: indexPath }) => indexPath === CONNECTOR_SCOPE_ANCHOR_PATH);
+  invariant(anchors.length === 1 && anchors[0].index.indexHash === CONNECTOR_SCOPE_ANCHOR_HASH,
+    "Connector-scope enforcement anchor index 0007 is missing or rewritten");
+  const anchorOffset = chain.indexOf(anchors[0]);
+  const successors = chain.slice(0, anchorOffset).reverse();
+  let previous = anchors[0].index;
+  let evaluatedConsumptions = 0;
+  const envelopes = discovered.envelopes.map(({ data }) => data);
+  const receipts = discovered.receipts.map(({ data }) => data);
+  const repositoryRoot = options.repositoryRoot || REPOSITORY_ROOT;
+  for (const successor of successors) {
+    const appendedConsumed = successor.index.entries.slice(previous.entries.length).filter((entry) =>
+      entry.status === "completed" || entry.lifecycle.state === "consumed" || entry.receiptId !== null);
+    if (appendedConsumed.length > 0) {
+      const error = new Error("Post-anchor Handoff successor appended an already-consumed entry");
+      error.code = "HANDOFF_INDEX_TRANSITION_INVALID";
+      throw error;
+    }
+    const consumed = successor.index.entries.filter((entry, offset) =>
+      previous.entries[offset]?.lifecycle.state === "available" && entry.lifecycle.state === "consumed");
+    if (consumed.length > 0) {
+      invariant(consumed.length === 1, "Post-anchor Handoff successor contains ambiguous consumption transitions");
+      const [entry] = consumed;
+      exactIndexedProspectiveDocument(discovered, entry.envelopePath, "clover-handoff-action-envelope",
+        "envelopeId", entry.envelopeId, "envelopeHash", entry.envelopeHash, repositoryRoot);
+      exactIndexedProspectiveDocument(discovered, entry.receiptPath, "clover-handoff-execution-receipt",
+        "receiptId", entry.receiptId, "receiptHash", entry.receiptHash, repositoryRoot);
+      validateProspectiveConsumptionTransition(previous, successor.index, { envelopes, receipts });
+      evaluatedConsumptions += 1;
+    }
+    previous = successor.index;
+  }
+  return { status: "passed", anchorIndexHash: CONNECTOR_SCOPE_ANCHOR_HASH, evaluatedConsumptions };
 }
 
 export function assertBranchCapsuleReachability(discovered, index) {
@@ -272,7 +340,8 @@ function verifyCurrentIndexChain(discovered) {
     currentPath = current.previousIndexPath;
     current = previous;
   }
-  return { rootResult, rootIndex, chain, capsuleReachability };
+  const prospectiveEvidenceScope = assertPostAnchorProspectiveConsumptions(chain, discovered);
+  return { rootResult, rootIndex, chain, capsuleReachability, prospectiveEvidenceScope };
 }
 
 export function assertTodayHandoffBinding(today, sessionIndex, chain) {

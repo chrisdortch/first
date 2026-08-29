@@ -247,22 +247,66 @@ const INDEX_SCHEMA_PATHS = Object.freeze({
   "0.2.0": "portfolio/core/launch-studio/versions/0.2.0/schemas/launch-session-index.schema.json"
 });
 
-function validateLaunchIndexSchema(index, repositoryRoot, liveDependencyVerification) {
-  const schemaPath = INDEX_SCHEMA_PATHS[index.schemaVersion];
-  if (!schemaPath) throw new Error(`Unsupported Launch Studio index schema version ${index.schemaVersion}`);
+function launchIndexSchemaBinding(index) {
   if (index.schemaVersion === "0.1.0") {
-    validateContract("launch-session-index.schema.json", index, "Launch Studio index");
-    return;
+    const matches = Array.isArray(index.schemas)
+      ? index.schemas.filter((entry) => entry?.path === INDEX_SCHEMA_PATHS["0.1.0"])
+      : [];
+    if (matches.length !== 1) {
+      throw new Error("Launch Studio 0.1.0 index lacks one exact recorded launch-session-index schema binding");
+    }
+    assertSha256(matches[0].sha256, "Launch Studio 0.1.0 index schema digest");
+    return { schemaVersion: index.schemaVersion, path: matches[0].path, sha256: matches[0].sha256 };
   }
-  if (index.indexSchema?.path !== schemaPath) throw new Error("Launch Studio index schema path substitution detected");
-  assertSha256(index.indexSchema.sha256, "Launch Studio index schema digest");
-  const absoluteSchemaPath = resolveRegularRepositoryFile(repositoryRoot, schemaPath, "Launch Studio index schema");
+  if (index.schemaVersion === "0.2.0") {
+    if (!index.indexSchema || typeof index.indexSchema !== "object" || Array.isArray(index.indexSchema) ||
+        typeof index.indexSchema.path !== "string") {
+      throw new Error("Launch Studio 0.2.0 index lacks an exact indexSchema path and digest binding");
+    }
+    if (index.indexSchema.path !== INDEX_SCHEMA_PATHS["0.2.0"]) {
+      throw new Error("Launch Studio 0.2.0 index schema path substitution detected");
+    }
+    assertSha256(index.indexSchema.sha256, "Launch Studio 0.2.0 index schema digest");
+    return { schemaVersion: index.schemaVersion, path: index.indexSchema.path, sha256: index.indexSchema.sha256 };
+  }
+  throw new Error(`Unsupported Launch Studio index schema version ${index.schemaVersion}`);
+}
+
+function verifyRecordedLaunchSchemas(index, repositoryRoot) {
+  const expectedSchemaPaths = new Set(
+    SCHEMA_FILES.map((name) => `portfolio/core/launch-studio/versions/0.1.0/schemas/${name}`));
+  if (!Array.isArray(index.schemas) || index.schemas.length !== expectedSchemaPaths.size ||
+      new Set(index.schemas.map((entry) => entry?.path)).size !== index.schemas.length) {
+    throw new Error("Launch Studio schema index cardinality is inconsistent");
+  }
+  for (const schemaEntry of index.schemas) {
+    if (!schemaEntry || !expectedSchemaPaths.delete(schemaEntry.path)) {
+      throw new Error(`Unexpected or substituted schema path ${schemaEntry?.path}`);
+    }
+    assertSha256(schemaEntry.sha256, `Launch Studio schema digest at ${schemaEntry.path}`);
+    const bytes = fs.readFileSync(
+      resolveRegularRepositoryFile(repositoryRoot, schemaEntry.path, "Launch Studio schema"));
+    if (sha256Bytes(bytes) !== schemaEntry.sha256) {
+      throw new Error(`Launch Studio schema digest mismatch at ${schemaEntry.path}`);
+    }
+  }
+  if (expectedSchemaPaths.size !== 0) throw new Error("Launch Studio index omits a schema");
+}
+
+function sameLaunchIndexSchemaBinding(left, right) {
+  return left.schemaVersion === right.schemaVersion && left.path === right.path && left.sha256 === right.sha256;
+}
+
+function validateLaunchIndexSchema(index, repositoryRoot) {
+  const binding = launchIndexSchemaBinding(index);
+  const absoluteSchemaPath = resolveRegularRepositoryFile(repositoryRoot, binding.path, "Launch Studio index schema");
   const schemaBytes = fs.readFileSync(absoluteSchemaPath);
-  if (liveDependencyVerification && sha256Bytes(schemaBytes) !== index.indexSchema.sha256) {
-    throw new Error("Launch Studio live index schema digest mismatch");
+  if (sha256Bytes(schemaBytes) !== binding.sha256) {
+    throw new Error(`Launch Studio index schema digest mismatch for exact recorded binding ${binding.path}`);
   }
   const schema = JSON.parse(schemaBytes);
   validateJsonSchema(schema, index, { schemaDirectory: path.dirname(absoluteSchemaPath), label: "Launch Studio index" });
+  return binding;
 }
 
 function dependencyCatalog(index) {
@@ -273,8 +317,21 @@ function cloneDependencyHistory(history = new Map()) {
   return new Map([...history].map(([key, values]) => [key, [...values]]));
 }
 
-function assertLaunchIndexSuccessor(previous, current, previousVerification) {
+function assertLaunchIndexSuccessor(previous, current, previousVerification, currentIndexSchemaBinding) {
   if (!current.successorMode) throw new Error("Launch Studio successor mode is required");
+  const previousIndexSchemaBinding = previousVerification.indexSchemaBinding;
+  const indexSchemaBindingChanged = !sameLaunchIndexSchemaBinding(
+    previousIndexSchemaBinding, currentIndexSchemaBinding);
+  if (previous.schemaVersion === current.schemaVersion && indexSchemaBindingChanged) {
+    throw new Error("Launch Studio same-version successor changed its index schema path or digest binding");
+  }
+  if (previous.schemaVersion !== current.schemaVersion && !indexSchemaBindingChanged) {
+    throw new Error("Launch Studio index schema version changed without a new path and digest binding");
+  }
+  if (indexSchemaBindingChanged && previousVerification.indexSchemaHistory.some((binding) =>
+    sameLaunchIndexSchemaBinding(binding, currentIndexSchemaBinding))) {
+    throw new Error("Launch Studio index schema binding rollback detected");
+  }
   const previousDependencies = dependencyCatalog(previous);
   const currentDependencies = dependencyCatalog(current);
   if (previousDependencies.length !== currentDependencies.length ||
@@ -288,11 +345,12 @@ function assertLaunchIndexSuccessor(previous, current, previousVerification) {
   const changedDependencies = currentDependencies.filter((entry, offset) =>
     entry.sha256 !== previousDependencies[offset].sha256);
   if (current.successorMode === "session-append") {
-    if (!entriesAppend || !dependenciesEqual || current.engine.runtimeVersion !== previous.engine.runtimeVersion) {
+    if (!entriesAppend || !dependenciesEqual || indexSchemaBindingChanged ||
+        current.engine.runtimeVersion !== previous.engine.runtimeVersion) {
       throw new Error("Launch Studio session-append successor mixed session and dependency-pin changes");
     }
   } else if (current.successorMode === "dependency-pin-rollover") {
-    if (!entriesEqual || changedDependencies.length === 0) {
+    if (!entriesEqual || (changedDependencies.length === 0 && !indexSchemaBindingChanged)) {
       throw new Error("Launch Studio dependency-pin-rollover successor must preserve sessions and change a dependency pin");
     }
     const history = previousVerification.dependencyHistory;
@@ -312,8 +370,9 @@ function assertLaunchIndexSuccessor(previous, current, previousVerification) {
   }
 }
 
-function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHashes, liveDependencyVerification }) {
-  validateLaunchIndexSchema(index, repositoryRoot, liveDependencyVerification);
+function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHashes, liveRuntimeDependencyVerification }) {
+  verifyRecordedLaunchSchemas(index, repositoryRoot);
+  const indexSchemaBinding = validateLaunchIndexSchema(index, repositoryRoot);
   const { indexHash, ...unsigned } = index;
   assertSha256(indexHash, "indexHash");
   if (sha256Canonical(unsigned) !== indexHash) throw new Error("Launch Studio index hash mismatch");
@@ -331,7 +390,7 @@ function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHas
     const runtimeEntry = index.engine.runtimeModules[offset];
     if (runtimeEntry.path !== runtimePath) throw new Error("Launch Studio runtime module path order/substitution detected");
     assertSha256(runtimeEntry.sha256, "Launch Studio runtime module digest");
-    if (liveDependencyVerification) {
+    if (liveRuntimeDependencyVerification) {
       const bytes = fs.readFileSync(resolveRegularRepositoryFile(repositoryRoot, runtimePath, "Launch Studio runtime module"));
       if (sha256Bytes(bytes) !== runtimeEntry.sha256) liveDependencyErrors.push("Launch Studio runtime module digest mismatch");
     }
@@ -342,7 +401,7 @@ function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHas
     const dependencyEntry = index.engine.coreDependencies[offset];
     if (dependencyEntry.path !== dependencyPath) throw new Error("Launch Studio transitive Core dependency path order/substitution detected");
     assertSha256(dependencyEntry.sha256, "Launch Studio transitive Core dependency digest");
-    if (liveDependencyVerification) {
+    if (liveRuntimeDependencyVerification) {
       const bytes = fs.readFileSync(resolveRegularRepositoryFile(repositoryRoot, dependencyPath, "Launch Studio transitive Core dependency"));
       if (sha256Bytes(bytes) !== dependencyEntry.sha256) liveDependencyErrors.push("Launch Studio transitive Core dependency digest mismatch");
     }
@@ -372,22 +431,10 @@ function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHas
     previousVerification = verifyLaunchIndexDocumentInternal(previous, {
       repositoryRoot,
       seenIndexHashes,
-      liveDependencyVerification: false
+      liveRuntimeDependencyVerification: false
     });
     previousIndex = previous;
   }
-  const catalog = validateSchemaCatalog();
-  const expectedSchemaPaths = new Set(SCHEMA_FILES.map((name) => `portfolio/core/launch-studio/versions/0.1.0/schemas/${name}`));
-  if (index.schemas.length !== expectedSchemaPaths.size || new Set(index.schemas.map((entry) => entry.path)).size !== index.schemas.length) throw new Error("Launch Studio schema index cardinality is inconsistent");
-  for (const schemaEntry of index.schemas) {
-    if (!expectedSchemaPaths.delete(schemaEntry.path)) throw new Error(`Unexpected or substituted schema path ${schemaEntry.path}`);
-    assertSha256(schemaEntry.sha256, `Launch Studio schema digest at ${schemaEntry.path}`);
-    if (liveDependencyVerification) {
-      const bytes = fs.readFileSync(resolveRegularRepositoryFile(repositoryRoot, schemaEntry.path, "Launch Studio schema"));
-      if (sha256Bytes(bytes) !== schemaEntry.sha256 || catalog.schemaDigests[path.basename(schemaEntry.path)] !== schemaEntry.sha256) throw new Error(`Launch Studio schema digest mismatch at ${schemaEntry.path}`);
-    }
-  }
-  if (expectedSchemaPaths.size !== 0) throw new Error("Launch Studio index omits a schema");
   const entrySessions = new Set();
   let firstReplayReceipt = null;
   let priorEntryRecordedAt = null;
@@ -440,7 +487,9 @@ function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHas
     const { receiptHash, ...receiptUnsigned } = replayReceipt;
     if (sha256Canonical(receiptUnsigned) !== receiptHash || replayReceipt.finalState !== "held" || replayReceipt.finalSessionHash !== sha256Canonical(finalSession) || replayReceipt.eventCount !== events.length || replayReceipt.eventStreamHash !== sha256Bytes(eventBytes) || replayReceipt.headEventHash !== previous.eventHash || replayReceipt.deterministic !== true || replayReceipt.consequentialAuthorityGranted !== false) throw new Error("Launch Studio replay receipt cross-binding failed");
   });
-  if (previousIndex !== null) assertLaunchIndexSuccessor(previousIndex, index, previousVerification);
+  if (previousIndex !== null) {
+    assertLaunchIndexSuccessor(previousIndex, index, previousVerification, indexSchemaBinding);
+  }
   if (liveDependencyErrors.length > 0) throw new Error(liveDependencyErrors[0]);
   if (index.syntheticSession.sessionId !== index.entries[0].sessionId || index.syntheticSession.finalState !== "held" || index.syntheticSession.replayReceiptPath !== index.entries[0].replayReceiptPath) throw new Error("Launch Studio index synthetic-session pointer substitution detected");
   const reportBytes = fs.readFileSync(resolveRegularRepositoryFile(repositoryRoot, index.syntheticSession.reportPath, "synthetic session report"));
@@ -452,15 +501,32 @@ function verifyLaunchIndexDocumentInternal(index, { repositoryRoot, seenIndexHas
     values.push(dependency.sha256);
     dependencyHistory.set(dependency.path, values);
   }
-  return { valid: true, indexHash, entryCount: index.entries.length, schemaCount: index.schemas.length, dependencyHistory };
+  const indexSchemaHistory = [
+    ...(previousVerification?.indexSchemaHistory || []),
+    { ...indexSchemaBinding }
+  ];
+  return {
+    valid: true,
+    indexHash,
+    entryCount: index.entries.length,
+    schemaCount: index.schemas.length,
+    dependencyHistory,
+    indexSchemaBinding,
+    indexSchemaHistory
+  };
 }
 
 export function verifyLaunchIndexDocument(index, options = {}) {
   assertExactIndexOptions(options, ["repositoryRoot"], "Launch Studio index verification");
-  const { dependencyHistory: _dependencyHistory, ...result } = verifyLaunchIndexDocumentInternal(index, {
+  const {
+    dependencyHistory: _dependencyHistory,
+    indexSchemaBinding: _indexSchemaBinding,
+    indexSchemaHistory: _indexSchemaHistory,
+    ...result
+  } = verifyLaunchIndexDocumentInternal(index, {
     repositoryRoot: options.repositoryRoot ?? REPOSITORY_ROOT,
     seenIndexHashes: new Set(),
-    liveDependencyVerification: true
+    liveRuntimeDependencyVerification: true
   });
   return result;
 }
@@ -510,10 +576,15 @@ export function verifyStableIndex(options = {}) {
   if (!stableBytes.equals(immutableBytes)) throw new Error("Stable Launch Studio index differs from the latest immutable snapshot");
   const index = JSON.parse(stableBytes);
   if (String(stableBytes) !== `${canonicalize(index)}\n`) throw new Error("Stable Launch Studio index is not canonical JSON");
-  const { dependencyHistory: _dependencyHistory, ...result } = verifyLaunchIndexDocumentInternal(index, {
+  const {
+    dependencyHistory: _dependencyHistory,
+    indexSchemaBinding: _indexSchemaBinding,
+    indexSchemaHistory: _indexSchemaHistory,
+    ...result
+  } = verifyLaunchIndexDocumentInternal(index, {
     repositoryRoot,
     seenIndexHashes: new Set(),
-    liveDependencyVerification: true
+    liveRuntimeDependencyVerification: true
   });
   return { ...result, latestIndexPath, fileSha256: sha256Bytes(stableBytes) };
 }
