@@ -9,6 +9,8 @@ import { sha256Bytes, sha256Canonical } from "../lib/canonical-json.mjs";
 import { sealHandoffDocument, validateIndexTransition } from "../lib/handoff-ledger.mjs";
 import {
   ACTION_002_HASH,
+  CONNECTOR_SCOPE_ANCHOR_HASH,
+  CONNECTOR_SCOPE_ANCHOR_PATH,
   HANDOFF_INDEX_DIRECTORY,
   HANDOFF_INDEX_PATH,
   HISTORICAL_RECEIPT_HASH,
@@ -230,6 +232,109 @@ function installLatestHandoffIndex(root, index, sequence) {
   );
 }
 
+const PROSPECTIVE_ENVELOPE_PATH = "portfolio/core/handoff/versions/0.1.0/prospective/action-008-envelope.json";
+const PROSPECTIVE_RECEIPT_PATH = "portfolio/core/handoff/versions/0.1.0/prospective/action-008-receipt.json";
+
+function createProspectiveConsumptionFixture(root, { outOfScope = false } = {}) {
+  const anchor = readJson(root, CONNECTOR_SCOPE_ANCHOR_PATH);
+  const originalEnvelope = readJson(ROOT,
+    "portfolio/core/handoff/versions/0.1.0/proposals/launch-studio-phase-b-0.2c/action-006-source-envelope.json");
+  const originalReceipt = readJson(ROOT,
+    "portfolio/core/handoff/versions/0.1.0/receipts/action-006-launch-studio-phase-b-source-receipt.json");
+  const actionId = "CLOVER-2026-08-27-008";
+  const envelopeId = "handoff-action:008:prospective-scope";
+  const receiptId = "handoff-receipt:008:prospective-scope";
+  const envelope = sealHandoffDocument({ ...structuredClone(originalEnvelope), actionId, envelopeId }, "envelopeHash");
+  const observations = outOfScope
+    ? structuredClone(originalReceipt.observations)
+    : originalReceipt.observations.filter(({ sourceId }) => sourceId !== "vercel");
+  const receipt = sealHandoffDocument({
+    ...structuredClone(originalReceipt),
+    actionId,
+    envelopeId,
+    envelopeHash: envelope.envelopeHash,
+    receiptId,
+    observations,
+  }, "receiptHash");
+
+  const available = structuredClone(anchor);
+  available.indexId = "handoff-index:prospective-action-008-available";
+  available.createdAt = "2026-08-27T12:00:00.000Z";
+  available.previousIndexPath = CONNECTOR_SCOPE_ANCHOR_PATH;
+  available.previousIndexHash = anchor.indexHash;
+  const ownerApproval = structuredClone(anchor.entries.at(-1).ownerApproval);
+  ownerApproval.approvedEnvelopeHash = envelope.envelopeHash;
+  available.entries.push({
+    sequence: anchor.entries.length + 1,
+    recordedAt: available.createdAt,
+    actionId,
+    branchCapsuleId: envelope.branchCapsuleId,
+    branchCapsuleHash: envelope.branchCapsuleHash,
+    envelopeId,
+    envelopePath: PROSPECTIVE_ENVELOPE_PATH,
+    envelopeHash: envelope.envelopeHash,
+    status: "pending",
+    lifecycle: {
+      state: "available",
+      singleUse: true,
+      consumedAt: null,
+      consumedByReceiptId: null,
+      revokedAt: null,
+      revocationEvidenceHash: null,
+    },
+    ownerApproval,
+    receiptId: null,
+    receiptPath: null,
+    receiptHash: null,
+    outcome: "pending",
+    review: { status: "pending", decisionId: null, decisionPath: null, decisionHash: null },
+  });
+  const sealedAvailable = sealHandoffDocument(available, "indexHash");
+
+  const consumed = structuredClone(sealedAvailable);
+  consumed.indexId = "handoff-index:prospective-action-008-consumed";
+  consumed.createdAt = "2026-08-27T12:01:00.000Z";
+  consumed.previousIndexPath = handoffSnapshotPath(8);
+  consumed.previousIndexHash = sealedAvailable.indexHash;
+  const entry = consumed.entries.at(-1);
+  entry.recordedAt = consumed.createdAt;
+  entry.status = "completed";
+  entry.lifecycle = {
+    state: "consumed",
+    singleUse: true,
+    consumedAt: receipt.completedAt,
+    consumedByReceiptId: receipt.receiptId,
+    revokedAt: null,
+    revocationEvidenceHash: null,
+  };
+  entry.receiptId = receipt.receiptId;
+  entry.receiptPath = PROSPECTIVE_RECEIPT_PATH;
+  entry.receiptHash = receipt.receiptHash;
+  entry.outcome = receipt.outcome;
+  const sealedConsumed = sealHandoffDocument(consumed, "indexHash");
+
+  writeJson(root, PROSPECTIVE_ENVELOPE_PATH, envelope);
+  writeJson(root, PROSPECTIVE_RECEIPT_PATH, receipt);
+  writeJson(root, handoffSnapshotPath(8), sealedAvailable);
+  writeJson(root, handoffSnapshotPath(9), sealedConsumed);
+  writeJson(root, HANDOFF_INDEX_PATH, sealedConsumed);
+  return { anchor, envelope, receipt, available: sealedAvailable, consumed: sealedConsumed };
+}
+
+function installProspectiveFixture(root, fixture) {
+  writeJson(root, PROSPECTIVE_ENVELOPE_PATH, fixture.envelope);
+  writeJson(root, PROSPECTIVE_RECEIPT_PATH, fixture.receipt);
+  writeJson(root, handoffSnapshotPath(8), fixture.available);
+  writeJson(root, handoffSnapshotPath(9), fixture.consumed);
+  writeJson(root, HANDOFF_INDEX_PATH, fixture.consumed);
+}
+
+function resealProspectiveIndexes(fixture) {
+  fixture.available = sealHandoffDocument(fixture.available, "indexHash");
+  fixture.consumed.previousIndexHash = fixture.available.indexHash;
+  fixture.consumed = sealHandoffDocument(fixture.consumed, "indexHash");
+}
+
 function createHandoffSuccessorRoot(state = "approved") {
   const root = createGenesisHandoffRoot();
   const genesis = readJson(root, handoffSnapshotPath(1));
@@ -302,7 +407,7 @@ test("the current Handoff root resolves to its latest immutable snapshot and pre
   }
 });
 
-test("historical publication evidence survives valid approved, consumed, and reviewed Handoff roots", () => {
+test("pre-anchor structural histories remain readable but cannot substitute for the canonical enforcement anchor", () => {
   for (const [state, depth] of [["approved", 2], ["consumed", 3], ["reviewed", 4]]) {
     const { root, indexes } = createHandoffSuccessorRoot(state);
     const chain = validateHandoffIndexChain(root);
@@ -313,14 +418,183 @@ test("historical publication evidence survives valid approved, consumed, and rev
     assert.equal(chain.historicalSnapshotPath, handoffSnapshotPath(1));
     assert.notEqual(chain.currentIndexHash, chain.historicalIndexHash);
 
-    const publication = validatePublicationFinalization(root);
-    assert.equal(publication.status, "passed");
-    assert.equal(publication.verdict, "AMEND");
-    assert.equal(publication.action002Status, "pending");
-    assert.equal(publication.handoffChainDepth, depth);
-    assert.equal(publication.currentHandoffIndexHash, indexes.at(-1).indexHash);
-    assert.equal(publication.historicalHandoffIndexHash, HISTORICAL_HANDOFF_INDEX_HASH);
+    assert.throws(() => validatePublicationFinalization(root), /anchor index 0007 is missing or rewritten/u);
   }
+});
+
+test("publication finalization preserves historical Action 006 HOLD and enforces only post-anchor consumptions", () => {
+  const current = validateHandoffIndexChain(ROOT, { enforceProspectiveEvidenceScope: true });
+  assert.equal(current.currentSnapshotPath, CONNECTOR_SCOPE_ANCHOR_PATH);
+  assert.deepEqual(current.prospectiveEvidenceScope, {
+    status: "passed",
+    anchorIndexHash: CONNECTOR_SCOPE_ANCHOR_HASH,
+    evaluatedConsumptions: 0,
+  });
+  const action006 = current.currentIndex.entries.find(({ actionId }) => actionId === "CLOVER-2026-08-24-006");
+  assert.equal(action006.lifecycle.state, "consumed");
+  assert.equal(action006.outcome, "succeeded");
+  assert.equal(action006.review.status, "completed");
+  assert.equal(action006.review.decisionId, "handoff-review:006:connector-scope-hold");
+  assert.equal(readJson(ROOT, action006.receiptPath).receiptHash, action006.receiptHash);
+
+  const root = createTempRoot();
+  const fixture = createProspectiveConsumptionFixture(root);
+  const before = structuredClone(fixture);
+  const result = validateHandoffIndexChain(root, { enforceProspectiveEvidenceScope: true });
+  assert.equal(result.currentSnapshotPath, handoffSnapshotPath(9));
+  assert.equal(result.prospectiveEvidenceScope.evaluatedConsumptions, 1);
+  assert.deepEqual(fixture, before);
+  const publication = validatePublicationFinalization(root);
+  assert.equal(publication.status, "passed");
+  assert.equal(publication.currentHandoffIndexHash, fixture.consumed.indexHash);
+  assert.equal(fixture.consumed.entries.at(-1).ownerApproval.status, "approved");
+  assert.equal(fixture.consumed.entries.at(-1).review.status, "pending");
+});
+
+test("publication finalization rejects post-anchor out-of-scope evidence before the stable root is accepted", () => {
+  const root = createTempRoot();
+  const fixture = createProspectiveConsumptionFixture(root, { outOfScope: true });
+  const stableBytes = fs.readFileSync(path.join(root, HANDOFF_INDEX_PATH));
+  assert.throws(
+    () => validatePublicationFinalization(root),
+    (error) => error?.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION" && /vercel/u.test(error.message),
+  );
+  assert.deepEqual(fs.readFileSync(path.join(root, HANDOFF_INDEX_PATH)), stableBytes);
+  assert.equal(readJson(root, HANDOFF_INDEX_PATH).indexHash, fixture.consumed.indexHash);
+});
+
+test("publication finalization rejects a post-anchor entry appended already consumed", () => {
+  const root = createTempRoot();
+  const fixture = createProspectiveConsumptionFixture(root);
+  const direct = structuredClone(fixture.consumed);
+  direct.indexId = "handoff-index:prospective-action-008-direct-consumed";
+  direct.previousIndexPath = CONNECTOR_SCOPE_ANCHOR_PATH;
+  direct.previousIndexHash = fixture.anchor.indexHash;
+  direct.createdAt = "2026-08-27T12:01:00.000Z";
+  const sealed = sealHandoffDocument(direct, "indexHash");
+  writeJson(root, handoffSnapshotPath(8), sealed);
+  fs.unlinkSync(path.join(root, handoffSnapshotPath(9)));
+  writeJson(root, HANDOFF_INDEX_PATH, sealed);
+  assert.throws(
+    () => validatePublicationFinalization(root),
+    (error) => error?.code === "HANDOFF_INDEX_TRANSITION_INVALID" && /appended an already-consumed entry/u.test(error.message),
+  );
+});
+
+test("publication finalization fails closed on every post-anchor indexed-document substitution", () => {
+  const cases = [
+    ["stale envelope hash", (root, fixture) => {
+      fixture.envelope.scope.allowedConnectors.push("vercel");
+    }, /envelopeHash|canonical document/u],
+    ["stale receipt hash", (root, fixture) => {
+      fixture.receipt.observations[0].subject = "stale receipt mutation";
+    }, /receiptHash|canonical document/u],
+    ["resealed envelope substitution", (root, fixture) => {
+      fixture.envelope.scope.allowedConnectors.push("vercel");
+      fixture.envelope = sealHandoffDocument(fixture.envelope, "envelopeHash");
+    }, /envelope.*substituted/u],
+    ["resealed receipt substitution", (root, fixture) => {
+      fixture.receipt.observations[0].subject = "resealed receipt substitution";
+      fixture.receipt = sealHandoffDocument(fixture.receipt, "receiptHash");
+    }, /receipt.*substituted/u],
+    ["envelope-path substitution", (root, fixture) => {
+      fixture.available.entries.at(-1).envelopePath = PROSPECTIVE_RECEIPT_PATH;
+      fixture.consumed.entries.at(-1).envelopePath = PROSPECTIVE_RECEIPT_PATH;
+      resealProspectiveIndexes(fixture);
+    }, /envelope.*path was substituted/u],
+    ["receipt-path substitution", (root, fixture) => {
+      fixture.consumed.entries.at(-1).receiptPath = PROSPECTIVE_ENVELOPE_PATH;
+      fixture.consumed = sealHandoffDocument(fixture.consumed, "indexHash");
+    }, /receipt.*path was substituted/u],
+    ["action identity substitution", (root, fixture) => {
+      fixture.available.entries.at(-1).actionId = "CLOVER-2026-08-27-009";
+      fixture.consumed.entries.at(-1).actionId = "CLOVER-2026-08-27-009";
+      resealProspectiveIndexes(fixture);
+    }, /envelope.*substituted|unique indexed envelope/u],
+    ["envelope identity substitution", (root, fixture) => {
+      fixture.available.entries.at(-1).envelopeId = "handoff-action:009:substituted";
+      fixture.consumed.entries.at(-1).envelopeId = "handoff-action:009:substituted";
+      resealProspectiveIndexes(fixture);
+    }, /envelope.*path was substituted|unique indexed envelope/u],
+    ["receipt identity substitution", (root, fixture) => {
+      const entry = fixture.consumed.entries.at(-1);
+      entry.receiptId = "handoff-receipt:009:substituted";
+      entry.lifecycle.consumedByReceiptId = entry.receiptId;
+      fixture.consumed = sealHandoffDocument(fixture.consumed, "indexHash");
+    }, /receipt.*path was substituted|unique indexed envelope and receipt/u],
+    ["duplicate candidate envelope", (root, fixture) => {
+      writeJson(root, "portfolio/core/handoff/versions/0.1.0/prospective/duplicate-envelope.json", fixture.envelope);
+    }, /unique indexed envelope and receipt/u],
+  ];
+  for (const [label, mutate, expected] of cases) {
+    const root = createTempRoot();
+    const fixture = createProspectiveConsumptionFixture(root);
+    mutate(root, fixture);
+    installProspectiveFixture(root, fixture);
+    assert.throws(() => validatePublicationFinalization(root), expected, label);
+  }
+});
+
+test("publication finalization rejects traversal, symlink, missing-anchor, and rewritten-anchor defects", () => {
+  {
+    const root = createTempRoot();
+    const fixture = createProspectiveConsumptionFixture(root);
+    fixture.available.entries.at(-1).envelopePath = "portfolio/core/handoff/versions/0.1.0/prospective/../action-008-envelope.json";
+    fixture.consumed.entries.at(-1).envelopePath = fixture.available.entries.at(-1).envelopePath;
+    resealProspectiveIndexes(fixture);
+    installProspectiveFixture(root, fixture);
+    assert.throws(() => validatePublicationFinalization(root), /Schema violation|canonical repository-relative path/u);
+  }
+  {
+    const root = createTempRoot();
+    createProspectiveConsumptionFixture(root);
+    const envelopePath = path.join(root, PROSPECTIVE_ENVELOPE_PATH);
+    const target = `${envelopePath}.actual`;
+    fs.renameSync(envelopePath, target);
+    fs.symlinkSync(path.basename(target), envelopePath);
+    assert.throws(() => validatePublicationFinalization(root), /symbolic link/u);
+  }
+  {
+    const root = createTempRoot();
+    fs.unlinkSync(path.join(root, CONNECTOR_SCOPE_ANCHOR_PATH));
+    fs.copyFileSync(path.join(root, handoffSnapshotPath(6)), path.join(root, HANDOFF_INDEX_PATH));
+    assert.throws(() => validatePublicationFinalization(root), /anchor index 0007 is missing or rewritten/u);
+  }
+  {
+    const root = createTempRoot();
+    const rewritten = readJson(root, CONNECTOR_SCOPE_ANCHOR_PATH);
+    rewritten.indexId = "handoff-index:rewritten-anchor-0007";
+    const sealed = sealHandoffDocument(rewritten, "indexHash");
+    writeJson(root, CONNECTOR_SCOPE_ANCHOR_PATH, sealed);
+    writeJson(root, HANDOFF_INDEX_PATH, sealed);
+    assert.throws(() => validatePublicationFinalization(root), /anchor index 0007 is missing or rewritten/u);
+  }
+});
+
+test("publication finalization accepts post-anchor non-consumption transitions without widening authority", () => {
+  const root = createTempRoot();
+  const fixture = createProspectiveConsumptionFixture(root);
+  fs.unlinkSync(path.join(root, handoffSnapshotPath(9)));
+  writeJson(root, HANDOFF_INDEX_PATH, fixture.available);
+  const before = structuredClone(fixture.available.entries);
+  const chain = validateHandoffIndexChain(root, { enforceProspectiveEvidenceScope: true });
+  assert.equal(chain.prospectiveEvidenceScope.evaluatedConsumptions, 0);
+  assert.deepEqual(fixture.available.entries, before);
+  assert.equal(fixture.available.entries.at(-1).ownerApproval.status, "approved");
+  assert.equal(fixture.available.entries.at(-1).lifecycle.state, "available");
+});
+
+test("both production validators delegate connector-scope enforcement to the existing prospective helper", () => {
+  const publicationSource = fs.readFileSync(path.join(ROOT, "portfolio/core/lib/publication-finalization.mjs"), "utf8");
+  const activationSource = fs.readFileSync(path.join(ROOT, "portfolio/runtime/validate-core-activation.mjs"), "utf8");
+  const verifyCoreSource = fs.readFileSync(path.join(ROOT, "portfolio/core/scripts/verify-core.mjs"), "utf8");
+  for (const [label, source] of [["publication", publicationSource], ["activation", activationSource]]) {
+    assert.match(source, /import[\s\S]*validateProspectiveConsumptionTransition[\s\S]*from ["'][^"']*handoff-ledger\.mjs["']/u, label);
+    assert.match(source, /validateProspectiveConsumptionTransition\(previous, successor\.(?:value|index), \{ envelopes, receipts \}\)/u, label);
+    assert.doesNotMatch(source, /HANDOFF_CONNECTOR_SCOPE_VIOLATION|function\s+assessReceiptEvidenceScope/u, label);
+  }
+  assert.match(verifyCoreSource, /validateCoreActivation\(\)/u);
+  assert.doesNotMatch(verifyCoreSource, /validateProspectiveConsumptionTransition|assertReceiptEvidenceScope/u);
 });
 
 test("an approved current root cannot become the historical publication root or grant authority", () => {

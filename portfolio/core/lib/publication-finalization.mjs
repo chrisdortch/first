@@ -3,7 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalize, sha256Bytes, sha256Canonical } from "./canonical-json.mjs";
-import { assertHandoffHash, validateIndexTransition } from "./handoff-ledger.mjs";
+import {
+  assertHandoffHash,
+  validateIndexTransition,
+  validateProspectiveConsumptionTransition,
+} from "./handoff-ledger.mjs";
 import { validateJsonSchema } from "./validators.mjs";
 
 const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -13,6 +17,8 @@ export const PUBLICATION_SCHEMA_PATH = "portfolio/core/publication/versions/0.1.
 export const HANDOFF_INDEX_PATH = "portfolio/core/handoff/index.json";
 export const HANDOFF_INDEX_DIRECTORY = "portfolio/core/handoff/versions/0.1.0/indexes";
 export const HANDOFF_INDEX_SCHEMA_PATH = "portfolio/core/handoff/versions/0.1.0/schemas/action-receipt-index.schema.json";
+export const CONNECTOR_SCOPE_ANCHOR_PATH = `${HANDOFF_INDEX_DIRECTORY}/action-receipt-index-0007.json`;
+export const CONNECTOR_SCOPE_ANCHOR_HASH = "b68af5df24f964eb6dabcd3f429a11bcd862de2a893d1ac74a6a74f7c78fc4ce";
 export const HISTORICAL_HANDOFF_INDEX_HASH = "136041730e9c8c705c4ac13823d7b568060bf8d454ecf56fd2fc2cd915a0d42c";
 export const HISTORICAL_HANDOFF_INDEX_BYTE_HASH = "da4b60605402cf4197f8073c312c84a4a374daec35e11664bac86593bd8152ff";
 
@@ -148,6 +154,88 @@ function listNumberedHandoffIndexPaths(rootDirectory) {
     .map((name) => `${HANDOFF_INDEX_DIRECTORY}/${name}`);
 }
 
+function discoverProspectiveHandoffDocuments(rootDirectory) {
+  const versionDirectory = absolutePath(rootDirectory, "portfolio/core/handoff/versions/0.1.0");
+  const documents = [];
+  function visit(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) =>
+      left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) fail(`Handoff document discovery contains a symbolic link: ${path.relative(rootDirectory, absolute)}`);
+      if (entry.isDirectory()) visit(absolute);
+      else if (entry.isFile() && entry.name.endsWith(".json")) {
+        const relativePath = path.relative(rootDirectory, absolute).split(path.sep).join("/");
+        let data;
+        try {
+          data = JSON.parse(readBytes(rootDirectory, relativePath).toString("utf8"));
+        } catch (error) {
+          fail(`Handoff document ${relativePath} is unavailable or invalid: ${error.message}`);
+        }
+        documents.push({ path: relativePath, data });
+      }
+    }
+  }
+  visit(versionDirectory);
+  return documents;
+}
+
+function exactIndexedProspectiveDocument(rootDirectory, documents, relativePath, documentType, idField, id, hashField, hash) {
+  if (typeof relativePath !== "string" || path.isAbsolute(relativePath) || relativePath.split(/[\\/]/u).includes("..")) {
+    fail(`indexed ${documentType} path is not a canonical repository-relative path: ${relativePath}`);
+  }
+  const normalized = relativePath.split(path.sep).join("/");
+  if (normalized !== relativePath || !normalized.startsWith("portfolio/core/handoff/versions/0.1.0/")) {
+    fail(`indexed ${documentType} path is outside the immutable Handoff version: ${relativePath}`);
+  }
+  readBytes(rootDirectory, relativePath);
+  const matches = documents.filter((candidate) => candidate.path === relativePath);
+  if (matches.length !== 1) fail(`indexed ${documentType} path must resolve exactly once: ${relativePath}`);
+  const [document] = matches;
+  if (document.data.documentType !== documentType || document.data[idField] !== id || document.data[hashField] !== hash) {
+    fail(`indexed ${documentType} path was substituted: ${relativePath}`);
+  }
+  return document.data;
+}
+
+function assertProspectiveConsumptionScope(rootDirectory, chain) {
+  const anchorMatches = chain.filter((candidate) => candidate.path === CONNECTOR_SCOPE_ANCHOR_PATH);
+  if (anchorMatches.length !== 1 || anchorMatches[0].value.indexHash !== CONNECTOR_SCOPE_ANCHOR_HASH) {
+    fail("connector-scope enforcement anchor index 0007 is missing or rewritten");
+  }
+  const anchorOffset = chain.indexOf(anchorMatches[0]);
+  const successors = chain.slice(0, anchorOffset).reverse();
+  if (successors.length === 0) return { status: "passed", anchorIndexHash: CONNECTOR_SCOPE_ANCHOR_HASH, evaluatedConsumptions: 0 };
+
+  const documents = discoverProspectiveHandoffDocuments(rootDirectory);
+  const envelopes = documents.filter(({ data }) => data.documentType === "clover-handoff-action-envelope").map(({ data }) => data);
+  const receipts = documents.filter(({ data }) => data.documentType === "clover-handoff-execution-receipt").map(({ data }) => data);
+  let previous = anchorMatches[0].value;
+  let evaluatedConsumptions = 0;
+  for (const successor of successors) {
+    const appendedConsumed = successor.value.entries.slice(previous.entries.length).filter((entry) =>
+      entry.status === "completed" || entry.lifecycle.state === "consumed" || entry.receiptId !== null);
+    if (appendedConsumed.length > 0) {
+      const error = new Error("Post-anchor Handoff successor appended an already-consumed entry");
+      error.code = "HANDOFF_INDEX_TRANSITION_INVALID";
+      throw error;
+    }
+    const consumed = successor.value.entries.filter((entry, offset) =>
+      previous.entries[offset]?.lifecycle.state === "available" && entry.lifecycle.state === "consumed");
+    if (consumed.length > 0) {
+      if (consumed.length !== 1) fail("post-anchor Handoff successor contains ambiguous consumption transitions");
+      const [entry] = consumed;
+      exactIndexedProspectiveDocument(rootDirectory, documents, entry.envelopePath,
+        "clover-handoff-action-envelope", "envelopeId", entry.envelopeId, "envelopeHash", entry.envelopeHash);
+      exactIndexedProspectiveDocument(rootDirectory, documents, entry.receiptPath,
+        "clover-handoff-execution-receipt", "receiptId", entry.receiptId, "receiptHash", entry.receiptHash);
+      validateProspectiveConsumptionTransition(previous, successor.value, { envelopes, receipts });
+      evaluatedConsumptions += 1;
+    }
+    previous = successor.value;
+  }
+  return { status: "passed", anchorIndexHash: CONNECTOR_SCOPE_ANCHOR_HASH, evaluatedConsumptions };
+}
+
 export function validateHandoffIndexChain(rootDirectory = DEFAULT_ROOT_DIRECTORY, options = {}) {
   const root = path.resolve(rootDirectory);
   const historicalIndexHash = options.historicalIndexHash || HISTORICAL_HANDOFF_INDEX_HASH;
@@ -218,6 +306,9 @@ export function validateHandoffIndexChain(rootDirectory = DEFAULT_ROOT_DIRECTORY
       sha256Bytes(historical.bytes) !== HISTORICAL_HANDOFF_INDEX_BYTE_HASH) {
     fail("immutable Handoff genesis index 0001 bytes were rewritten");
   }
+  const prospectiveEvidenceScope = options.enforceProspectiveEvidenceScope === true
+    ? assertProspectiveConsumptionScope(root, chain)
+    : null;
   return {
     status: "passed",
     depth: chain.length,
@@ -227,6 +318,7 @@ export function validateHandoffIndexChain(rootDirectory = DEFAULT_ROOT_DIRECTORY
     historicalSnapshotPath: historical.path,
     currentIndex: rootIndex,
     historicalIndex: historical.value,
+    prospectiveEvidenceScope,
   };
 }
 
@@ -361,6 +453,7 @@ function assertSourceBindings(readback, rootDirectory) {
   }
   const handoffChain = validateHandoffIndexChain(rootDirectory, {
     historicalIndexHash: readback.sourceBindings.handoffIndex.hash,
+    enforceProspectiveEvidenceScope: true,
   });
   const handoff = handoffChain.historicalIndex;
   if (handoff.indexHash !== readback.sourceBindings.handoffIndex.hash) fail("Handoff source binding mismatch");
