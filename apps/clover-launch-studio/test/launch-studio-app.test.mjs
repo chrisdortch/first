@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
+import ts from "typescript";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
+const restoreRoute = read("src/app/api/sessions/[sessionId]/restore/route.ts");
 const source = {
   acl: read("src/lib/acl.ts"),
   auth: read("src/lib/auth.ts"),
@@ -20,11 +23,56 @@ const source = {
     "src/app/api/sessions/[sessionId]/restore/route.ts",
     "src/app/api/sessions/[sessionId]/handoff/route.ts"
   ].map(read).join("\n"),
+  restoreRoute,
   service: read("src/lib/launch-session-service.ts"),
   storage: read("src/lib/storage.ts"),
   transcript: read("src/components/transcript-editor.tsx"),
   package: read("package.json")
 };
+
+async function loadCompiledRuntime() {
+  const directory = mkdtempSync(join(tmpdir(), "clover-launch-studio-runtime-"));
+  const moduleNames = [
+    "config",
+    "auth",
+    "acl",
+    "crypto",
+    "storage",
+    "handoff-codex-adapter",
+    "launch-session-service"
+  ];
+  for (const moduleName of moduleNames) {
+    const compiled = ts.transpileModule(read(`src/lib/${moduleName}.ts`), {
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022
+      },
+      fileName: `${moduleName}.ts`,
+      reportDiagnostics: true
+    });
+    assert.deepEqual(compiled.diagnostics ?? [], []);
+    const withExtensions = compiled.outputText.replace(
+      /from "(\.\/[^"\n]+)"/gu,
+      (_match, specifier) => `from "${specifier}.mjs"`
+    );
+    writeFileSync(join(directory, `${moduleName}.mjs`), withExtensions);
+  }
+  const imported = await Promise.all([
+    import(pathToFileURL(join(directory, "config.mjs")).href),
+    import(pathToFileURL(join(directory, "acl.mjs")).href),
+    import(pathToFileURL(join(directory, "crypto.mjs")).href),
+    import(pathToFileURL(join(directory, "storage.mjs")).href),
+    import(pathToFileURL(join(directory, "launch-session-service.mjs")).href)
+  ]);
+  return {
+    directory,
+    config: imported[0],
+    acl: imported[1],
+    crypto: imported[2],
+    storage: imported[3],
+    service: imported[4]
+  };
+}
 
 test("accept_auth_anonymous_deny", () => {
   assert.match(source.auth, /AuthenticationDeniedError/);
@@ -54,6 +102,9 @@ test("accept_event_append_only", () => {
     assert.match(source.storage, new RegExp(binding));
   }
   assert.match(source.storage, /AppendOnlyViolationError/);
+  assert.match(source.storage, /LAUNCH_EVENT_TYPES/);
+  assert.match(source.service, /requireEventType\(body\.type\)/);
+  assert.doesNotMatch(source.service, /body\.type\) as AppendEventInput/);
 });
 
 test("accept_handoff_lifecycle_append_only", () => {
@@ -100,6 +151,287 @@ test("accept_export_restore", () => {
   assert.match(source.storage, /exportSession/);
   assert.match(source.storage, /restoreSession/);
   assert.match(source.storage, /clover-launch-studio-export-v1/);
+  assert.match(source.config, /MAX_EXPORT_BYTES = 1024 \* 1024/);
+  assert.match(source.restoreRoute, /MAX_RESTORE_REQUEST_BYTES/);
+  assert.match(source.restoreRoute, /service\.restore\(sessionId, archive\)/);
+  assert.match(source.storage, /parsed\.session\.sessionId !== expectedSessionId/);
+});
+
+test("event and restore runtime boundaries reject substitutions before mutation", async () => {
+  const runtime = await loadCompiledRuntime();
+  try {
+    const { MAX_EXPORT_BYTES, MAX_REQUEST_BYTES, MAX_RESTORE_REQUEST_BYTES, MAX_TRANSCRIPT_BYTES, PROJECT_ID } = runtime.config;
+    const { ownerScope } = runtime.acl;
+    const { ExplicitSyntheticKeyProvider } = runtime.crypto;
+    const {
+      AppendOnlyViolationError,
+      InMemorySyntheticLaunchStudioStore,
+      LAUNCH_EVENT_TYPES,
+      SessionNotFoundError,
+      canonicalJson,
+      sha256
+    } = runtime.storage;
+    const { LaunchSessionService, RequestRejectedError, decodeArchiveBase64url, exactJson } = runtime.service;
+    assert.equal(MAX_RESTORE_REQUEST_BYTES, 1_398_125);
+
+    const expectedEventTypes = [
+      "owner-transcript-captured",
+      "owner-transcript-edited",
+      "understanding-reviewed",
+      "context-pack-proposed",
+      "impact-scan-proposed",
+      "build-charter-proposed",
+      "owner-feedback-recorded",
+      "handoff-proposal-prepared"
+    ];
+    assert.deepEqual([...LAUNCH_EVENT_TYPES], expectedEventTypes);
+
+    const identity = {
+      providerSubject: "synthetic-owner",
+      participantId: `participant:${"a".repeat(64)}`,
+      projectId: PROJECT_ID,
+      authenticationMode: "synthetic"
+    };
+    const appended = [];
+    const eventService = new LaunchSessionService(identity, {
+      appendEvent: async (_identity, _sessionId, input) => {
+        appended.push(input);
+        return input;
+      }
+    });
+    for (const [offset, type] of expectedEventTypes.entries()) {
+      await eventService.append("session:allowlist", {
+        type,
+        expectedVersion: offset,
+        predecessorEventId: null,
+        predecessorHash: null,
+        idempotencyKey: `allowlisted-event-${String(offset).padStart(2, "0")}`,
+        payload: { synthetic: true }
+      });
+    }
+    assert.deepEqual(appended.map(({ type }) => type), expectedEventTypes);
+    await assert.rejects(eventService.append("session:allowlist", {
+      type: "owner-authority-granted",
+      expectedVersion: expectedEventTypes.length,
+      predecessorEventId: null,
+      predecessorHash: null,
+      idempotencyKey: "unknown-event-type-0001",
+      payload: { synthetic: true }
+    }), RequestRejectedError);
+    assert.equal(appended.length, expectedEventTypes.length);
+
+    const keys = new ExplicitSyntheticKeyProvider(Buffer.alloc(32, 7));
+    const sourceStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const sourceService = new LaunchSessionService(identity, sourceStore);
+    const session = await sourceStore.createSession(
+      identity,
+      ownerScope(identity),
+      "x".repeat(MAX_TRANSCRIPT_BYTES),
+      "maximum-transcript-session-0001"
+    );
+    const beforeUnknownAppend = await sourceStore.getSession(identity, session.sessionId);
+    await assert.rejects(sourceStore.appendEvent(identity, session.sessionId, {
+      type: "owner-authority-granted",
+      expectedVersion: beforeUnknownAppend.version,
+      predecessorEventId: beforeUnknownAppend.lastEventId,
+      predecessorHash: beforeUnknownAppend.lastEventHash,
+      idempotencyKey: "unknown-direct-event-0001",
+      payload: { synthetic: true }
+    }), AppendOnlyViolationError);
+    assert.equal((await sourceStore.getSession(identity, session.sessionId)).version, beforeUnknownAppend.version);
+    assert.equal((await sourceStore.readEvents(identity, session.sessionId)).length, 1);
+
+    const growthStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const growthService = new LaunchSessionService(identity, growthStore);
+    let growthSession = await growthStore.createSession(
+      identity,
+      ownerScope(identity),
+      "bounded synthetic session",
+      "bounded-export-session-0001"
+    );
+    let growthRejection = null;
+    let rejectedGrowthKey = null;
+    for (let offset = 0; offset < 32; offset += 1) {
+      const idempotencyKey = `bounded-growth-event-${String(offset).padStart(2, "0")}`;
+      try {
+        await growthStore.appendEvent(identity, growthSession.sessionId, {
+          type: "owner-feedback-recorded",
+          expectedVersion: growthSession.version,
+          predecessorEventId: growthSession.lastEventId,
+          predecessorHash: growthSession.lastEventHash,
+          idempotencyKey,
+          payload: { reviewedText: "y".repeat(MAX_TRANSCRIPT_BYTES) }
+        });
+        growthSession = await growthStore.getSession(identity, growthSession.sessionId);
+      } catch (error) {
+        growthRejection = error;
+        rejectedGrowthKey = idempotencyKey;
+        break;
+      }
+    }
+    assert.equal(growthRejection instanceof AppendOnlyViolationError, true);
+    assert.equal(typeof rejectedGrowthKey, "string");
+    const boundedSession = await growthStore.getSession(identity, growthSession.sessionId);
+    assert.equal(boundedSession.version, growthSession.version);
+    assert.equal((await growthStore.readEvents(identity, growthSession.sessionId)).length, growthSession.version);
+    const retryVersion = growthSession.version;
+    await growthStore.appendEvent(identity, growthSession.sessionId, {
+      type: "owner-feedback-recorded",
+      expectedVersion: growthSession.version,
+      predecessorEventId: growthSession.lastEventId,
+      predecessorHash: growthSession.lastEventHash,
+      idempotencyKey: rejectedGrowthKey,
+      payload: { reviewedText: "small" }
+    });
+    growthSession = await growthStore.getSession(identity, growthSession.sessionId);
+    assert.equal(growthSession.version, retryVersion + 1);
+    const boundedArchive = await growthService.export(growthSession.sessionId);
+    assert.equal(boundedArchive.byteLength <= MAX_EXPORT_BYTES, true);
+    await assert.rejects(growthStore.appendProgress(identity, growthSession.sessionId, {
+      sessionId: growthSession.sessionId,
+      label: "Oversized synthetic progress",
+      state: "proposed",
+      evidenceRef: "e".repeat(MAX_EXPORT_BYTES)
+    }), AppendOnlyViolationError);
+    assert.deepEqual(await growthService.export(growthSession.sessionId), boundedArchive);
+
+    const archive = await sourceService.export(session.sessionId);
+    const encodedArchive = archive.toString("base64url");
+    const restoreBody = Buffer.from(JSON.stringify({ archiveBase64url: encodedArchive }), "utf8");
+    assert.equal(archive.byteLength <= MAX_EXPORT_BYTES, true);
+    assert.equal(restoreBody.byteLength > MAX_REQUEST_BYTES, true);
+    assert.equal(restoreBody.byteLength <= MAX_RESTORE_REQUEST_BYTES, true);
+    const parsedRestoreBody = await exactJson(new Request("http://127.0.0.1/restore", {
+      method: "POST",
+      headers: { "content-length": String(restoreBody.byteLength) },
+      body: restoreBody
+    }), ["archiveBase64url"], MAX_RESTORE_REQUEST_BYTES);
+    const decodedArchive = decodeArchiveBase64url(parsedRestoreBody.archiveBase64url);
+    assert.deepEqual(decodedArchive, archive);
+
+    let adapterMutationCalls = 0;
+    const adapterProbeService = new LaunchSessionService(identity, {
+      restoreSession: async (_identity, expectedSessionId) => {
+        adapterMutationCalls += 1;
+        return { sessionId: expectedSessionId };
+      }
+    });
+    const wrongSessionId = `session:${"f".repeat(64)}`;
+    await assert.rejects(adapterProbeService.restore(wrongSessionId, decodedArchive), RequestRejectedError);
+    assert.equal(adapterMutationCalls, 0);
+    assert.equal((await adapterProbeService.restore(session.sessionId, decodedArchive)).sessionId, session.sessionId);
+    assert.equal(adapterMutationCalls, 1);
+
+    const restoreStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const restoreService = new LaunchSessionService(identity, restoreStore);
+    await assert.rejects(restoreService.restore(wrongSessionId, decodedArchive), RequestRejectedError);
+    await assert.rejects(
+      restoreStore.restoreSession(identity, wrongSessionId, decodedArchive),
+      AppendOnlyViolationError
+    );
+    await assert.rejects(restoreStore.getSession(identity, session.sessionId), SessionNotFoundError);
+    const restored = await restoreService.restore(session.sessionId, decodedArchive);
+    assert.equal(restored.sessionId, session.sessionId);
+    assert.equal((await restoreStore.readEvents(identity, session.sessionId)).length, 1);
+
+    const unknownTypeDocument = JSON.parse(archive.toString("utf8"));
+    unknownTypeDocument.events[0].type = "owner-authority-granted";
+    const unsignedUnknownEvent = { ...unknownTypeDocument.events[0] };
+    delete unsignedUnknownEvent.canonicalHash;
+    unknownTypeDocument.events[0].canonicalHash = sha256(canonicalJson(unsignedUnknownEvent));
+    unknownTypeDocument.session.lastEventHash = unknownTypeDocument.events[0].canonicalHash;
+    const unknownTypeArchive = Buffer.from(canonicalJson(unknownTypeDocument), "utf8");
+    const unknownTypeStore = new InMemorySyntheticLaunchStudioStore(keys);
+    await assert.rejects(
+      unknownTypeStore.restoreSession(identity, session.sessionId, unknownTypeArchive),
+      AppendOnlyViolationError
+    );
+    await assert.rejects(unknownTypeStore.getSession(identity, session.sessionId), SessionNotFoundError);
+
+    const canonicalOversizeSessionId = `session:${"c".repeat(64)}`;
+    const canonicalOversizeSession = {
+      ...ownerScope(identity),
+      sessionId: canonicalOversizeSessionId,
+      version: 0,
+      lastEventId: null,
+      lastEventHash: null,
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:00.000Z",
+      terminal: false
+    };
+    const compactProgress = Array.from({ length: 60_000 }, () => "1e20").join(",");
+    const compactArchive = Buffer.from(`{"format":"clover-launch-studio-export-v1","session":${JSON.stringify(canonicalOversizeSession)},"events":[],"progress":[${compactProgress}]}`, "utf8");
+    assert.equal(compactArchive.byteLength < MAX_EXPORT_BYTES, true);
+    assert.equal(Buffer.byteLength(canonicalJson(JSON.parse(compactArchive.toString("utf8"))), "utf8") > MAX_EXPORT_BYTES, true);
+    const canonicalOversizeStore = new InMemorySyntheticLaunchStudioStore(keys);
+    await assert.rejects(
+      canonicalOversizeStore.restoreSession(identity, canonicalOversizeSessionId, compactArchive),
+      AppendOnlyViolationError
+    );
+    await assert.rejects(
+      canonicalOversizeStore.getSession(identity, canonicalOversizeSessionId),
+      SessionNotFoundError
+    );
+
+    const maximumArchive = Buffer.alloc(MAX_EXPORT_BYTES, 0xa5);
+    const maximumEncodedArchive = maximumArchive.toString("base64url");
+    const maximumRestoreBody = Buffer.from(JSON.stringify({ archiveBase64url: maximumEncodedArchive }), "utf8");
+    assert.equal(maximumRestoreBody.byteLength, MAX_RESTORE_REQUEST_BYTES);
+    const maximumParsed = await exactJson(new Request("http://127.0.0.1/restore", {
+      method: "POST",
+      headers: { "content-length": String(maximumRestoreBody.byteLength) },
+      body: maximumRestoreBody
+    }), ["archiveBase64url"], MAX_RESTORE_REQUEST_BYTES);
+    assert.deepEqual(decodeArchiveBase64url(maximumParsed.archiveBase64url), maximumArchive);
+
+    const oversizedArchive = Buffer.alloc(MAX_EXPORT_BYTES + 1, 0xa5);
+    const oversizedRestoreBody = Buffer.from(JSON.stringify({ archiveBase64url: oversizedArchive.toString("base64url") }), "utf8");
+    await assert.rejects(exactJson(new Request("http://127.0.0.1/restore", {
+      method: "POST",
+      headers: { "content-length": "1" },
+      body: oversizedRestoreBody
+    }), ["archiveBase64url"], MAX_RESTORE_REQUEST_BYTES), RequestRejectedError);
+    await assert.rejects(exactJson(new Request("http://127.0.0.1/restore", {
+      method: "POST",
+      headers: { "content-length": String(MAX_RESTORE_REQUEST_BYTES + 1) },
+      body: Buffer.from("{}", "utf8")
+    }), ["archiveBase64url"], MAX_RESTORE_REQUEST_BYTES), RequestRejectedError);
+    assert.throws(() => decodeArchiveBase64url(`${encodedArchive}=`), RequestRejectedError);
+    assert.throws(() => decodeArchiveBase64url(`${encodedArchive} `), RequestRejectedError);
+    assert.throws(() => decodeArchiveBase64url("+/8"), RequestRejectedError);
+    assert.throws(() => decodeArchiveBase64url("!"), RequestRejectedError);
+
+    const exactBoundaryDocument = {
+      format: "clover-launch-studio-export-v1",
+      session: { sessionId: session.sessionId },
+      padding: ""
+    };
+    const exactBoundaryBase = Buffer.from(JSON.stringify(exactBoundaryDocument), "utf8");
+    exactBoundaryDocument.padding = "p".repeat(MAX_EXPORT_BYTES - exactBoundaryBase.byteLength);
+    const exactBoundaryArchive = Buffer.from(JSON.stringify(exactBoundaryDocument), "utf8");
+    assert.equal(exactBoundaryArchive.byteLength, MAX_EXPORT_BYTES);
+
+    let restoreCalls = 0;
+    let exportedArchive = maximumArchive;
+    const boundaryService = new LaunchSessionService(identity, {
+      restoreSession: async (_identity, expectedSessionId, bytes) => {
+        restoreCalls += 1;
+        return { sessionId: expectedSessionId, byteLength: bytes.byteLength };
+      },
+      exportSession: async () => exportedArchive
+    });
+    assert.equal((await boundaryService.restore(session.sessionId, exactBoundaryArchive)).byteLength, MAX_EXPORT_BYTES);
+    assert.equal(restoreCalls, 1);
+    assert.equal((await boundaryService.export(session.sessionId)).byteLength, MAX_EXPORT_BYTES);
+    await assert.rejects(boundaryService.restore(session.sessionId, Buffer.alloc(0)), RequestRejectedError);
+    await assert.rejects(boundaryService.restore(session.sessionId, Buffer.from("{}", "utf8")), RequestRejectedError);
+    await assert.rejects(boundaryService.restore(session.sessionId, oversizedArchive), RequestRejectedError);
+    assert.equal(restoreCalls, 1);
+    exportedArchive = oversizedArchive;
+    await assert.rejects(boundaryService.export(session.sessionId), RequestRejectedError);
+  } finally {
+    rmSync(runtime.directory, { recursive: true, force: true });
+  }
 });
 
 test("accept_memory_separation", () => {

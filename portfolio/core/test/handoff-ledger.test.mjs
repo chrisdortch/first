@@ -941,16 +941,9 @@ const expectedAction004AppPaths = Object.freeze([
 const launchStudioCandidateIdentity = Object.freeze({
   commit: "582427e403fe96ccfea85db365a210421e76e16e",
   tree: "233c96e56d13fccf49d55b4f6af976c60e5c517b",
-  parent: "e5688c771d384d80a8c723cfa655298ce8257889"
-});
-
-const launchStudioIntegrationIdentity = Object.freeze({
-  commit: "9b2b9bddfcff6b8f452e9f234c14024befdb42df",
-  tree: "d15ffc32b5360e0f40c87d15c7054a3454a6d80b",
-  parents: Object.freeze([
-    "ec4ad8ca76dd5fd6da7db8107829a07c3650b7c6",
-    launchStudioCandidateIdentity.commit
-  ])
+  parent: "e5688c771d384d80a8c723cfa655298ce8257889",
+  pathListSha256: "a6622842b852d0bd0476b805db2b209b78167d596f23a935d4086a73c966c9d3",
+  manifestSha256: "285c113b4e1703c76f83c0893c821371cfa4516419ba25a927c31bbe74c988ee"
 });
 
 function gitText(args) {
@@ -962,45 +955,66 @@ function gitText(args) {
   return result.stdout.trim();
 }
 
-function assertImportedLaunchStudioCandidate() {
-  assert.equal(
-    gitText(["rev-parse", `${launchStudioCandidateIdentity.commit}^{tree}`]),
-    launchStudioCandidateIdentity.tree
-  );
-  assert.deepEqual(
-    gitText(["show", "-s", "--format=%P", launchStudioCandidateIdentity.commit]).split(" "),
-    [launchStudioCandidateIdentity.parent]
-  );
-
-  const sourceEntries = gitText([
-    "ls-tree",
-    "-r",
-    "--full-tree",
-    launchStudioCandidateIdentity.commit,
-    "--",
-    "apps/clover-launch-studio"
-  ]).split("\n").filter(Boolean).map((line) => {
-    const match = /^(\d{6}) (\S+) [0-9a-f]+\t(.+)$/u.exec(line);
-    assert.ok(match, `malformed candidate tree entry: ${line}`);
-    return { mode: match[1], type: match[2], path: match[3] };
+function assertRecordedLaunchStudioCandidateProvenance() {
+  assert.equal(computeHandoffHash(action006Receipt, "receiptHash"), action006Receipt.receiptHash);
+  assert.equal(action006Receipt.receiptHash,
+    "d57da7f0ac78121f42e7f7d9363c7a7a65a5e73bd3df06c1ec905530b5f4bbf5");
+  assert.equal(sha256Bytes(fs.readFileSync(action006ReceiptPath)),
+    "a2d1a11c128b72aa58ea7a59e2303e6ba011d113f458cc797a09f6581f68a823");
+  assert.deepEqual(action006Receipt.candidateEffects.commit, {
+    performed: true,
+    commit: launchStudioCandidateIdentity.commit,
+    tree: launchStudioCandidateIdentity.tree
   });
-  assert.deepEqual(sourceEntries.map(({ path }) => path).sort(), [...expectedAction004AppPaths].sort());
-  assert.equal(sourceEntries.every(({ mode, type }) => mode === "100644" && type === "blob"), true);
-
+  assert.equal(action006Receipt.candidateEffects.branch.baseCommit, launchStudioCandidateIdentity.parent);
+  assert.equal(action006Receipt.source.commit, launchStudioCandidateIdentity.parent);
+  assert.equal(action006Receipt.resultingState.sourceCommit, launchStudioCandidateIdentity.commit);
+  assert.deepEqual(action006Receipt.changes.changedPaths, expectedAction004AppPaths);
   assert.equal(
-    gitText(["rev-parse", `${launchStudioIntegrationIdentity.commit}^{tree}`]),
-    launchStudioIntegrationIdentity.tree
+    sha256Bytes(Buffer.from(`${[...expectedAction004AppPaths].sort().join("\n")}\n`)),
+    launchStudioCandidateIdentity.pathListSha256
   );
-  assert.deepEqual(
-    gitText(["show", "-s", "--format=%P", launchStudioIntegrationIdentity.commit]).split(" "),
-    [...launchStudioIntegrationIdentity.parents]
+
+  const observation = action006Receipt.observations.find(
+    ({ observationId }) => observationId === "observation:action006-candidate-commit"
   );
-  assert.equal(spawnSync("git", [
-    "merge-base",
-    "--is-ancestor",
-    launchStudioCandidateIdentity.commit,
-    launchStudioIntegrationIdentity.commit
-  ], { cwd: repositoryRoot }).status, 0);
+  assert.ok(observation);
+  const identityKey = `candidate:${launchStudioCandidateIdentity.commit}:tree:${launchStudioCandidateIdentity.tree}:paths:31:path-list:${launchStudioCandidateIdentity.pathListSha256}:manifest:${launchStudioCandidateIdentity.manifestSha256}`;
+  assert.equal(observation.evidenceRef, `git:commit:${launchStudioCandidateIdentity.commit}`);
+  assert.equal(observation.identityKey, identityKey);
+  assert.equal(observation.observedIdentity, identityKey);
+  assert.equal(observation.availability, "available");
+  assert.equal(observation.identityResolution, "exact-resolved");
+
+  const singleCommitCheck = action006Receipt.checks.find(
+    ({ checkId }) => checkId === "check:action006-single-commit"
+  );
+  assert.deepEqual(singleCommitCheck, {
+    checkHash: "23176a8d258c3752229b1407b7499a5df14832eabce827ab9476923d7e411e20",
+    checkId: "check:action006-single-commit",
+    conclusion: "passed",
+    summary: `One local commit ${launchStudioCandidateIdentity.commit} with exact tree ${launchStudioCandidateIdentity.tree} and sole parent ${launchStudioCandidateIdentity.parent} was created.`
+  });
+  const sourceBinding = action006Receipt.evidenceBindings.find(
+    ({ evidenceId }) => evidenceId === "evidence:action-006-source-identity"
+  );
+  assert.equal(sourceBinding?.boundHashes.includes(observation.evidenceHash), true);
+
+  const consumed = index0006.entries.find(({ actionId }) => actionId === action006.actionId);
+  assert.ok(consumed);
+  assert.deepEqual({
+    receiptId: consumed.receiptId,
+    receiptPath: consumed.receiptPath,
+    receiptHash: consumed.receiptHash,
+    state: consumed.lifecycle.state,
+    outcome: consumed.outcome
+  }, {
+    receiptId: action006Receipt.receiptId,
+    receiptPath: "portfolio/core/handoff/versions/0.1.0/receipts/action-006-launch-studio-phase-b-source-receipt.json",
+    receiptHash: action006Receipt.receiptHash,
+    state: "consumed",
+    outcome: "succeeded"
+  });
 
   const currentEntries = gitText([
     "ls-files",
@@ -1209,7 +1223,7 @@ test("Action 004 persists one closed 14-path source-bound proposal and immutable
   assert.equal(handoffText.includes(absentActionId), false);
   assert.equal(handoffText.includes(absentEnvelopePrefix), false);
   assert.equal(index0002.entries.filter((entry) => entry.actionId === action004.actionId).length, 1);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
 });
 
 test("Action 004 separates verified main from the future branch and safely narrows one unsupported action", () => {
@@ -1977,7 +1991,7 @@ test("Action 005 index 0003 revokes Action 004, appends one proposal and preserv
     "portfolio/core/handoff/versions/0.1.0/approvals/action-005-launch-studio-phase-b-source-approval.json")), false);
   assert.equal(fs.existsSync(path.join(repositoryRoot,
     "portfolio/core/handoff/versions/0.1.0/receipts/action-005-launch-studio-phase-b-source-receipt.json")), false);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
 });
 
 test("Action 005 deterministic synthetic approval and consumption rehearsal is lifecycle-complete and fail-closed", (t) => {
@@ -2339,7 +2353,7 @@ test("Action 005 deterministic synthetic approval and consumption rehearsal is l
   assert.deepEqual(readJson(path.join(repositoryRoot, consumptionIndexPath)), index0005);
   assert.equal(index0005.entries[3].lifecycle.state, "revoked");
   assert.equal(index0005.entries[3].receiptId, null);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
   const localFutureBranch = spawnSync("git", [
     "show-ref", "--verify", "--quiet", `refs/heads/${action005WorkOrder.worktreeBranch}`
   ], { cwd: repositoryRoot });
@@ -2861,7 +2875,7 @@ test("Action 006 index 0004 revokes Action 005, appends one proposal and preserv
     "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0005.json")), true);
   assert.equal(fs.existsSync(path.join(repositoryRoot,
     "portfolio/core/handoff/versions/0.1.0/indexes/action-receipt-index-0006.json")), true);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
 });
 
 test("Action 006 exact owner approval attestation and index 0005 record approval only", (t) => {
@@ -3090,7 +3104,7 @@ test("Action 006 exact owner approval attestation and index 0005 record approval
   assert.equal(fs.lstatSync(action006ApprovalPath).isSymbolicLink(), false);
   assert.equal(fs.existsSync(action006ReceiptPath), true);
   assert.equal(fs.existsSync(action006ConsumptionIndexPath), true);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
 });
 
 test("Action 006 persisted execution receipt and consumed index validate without published application source", () => {
@@ -3250,7 +3264,7 @@ test("Action 006 persisted execution receipt and consumed index validate without
     repositoryRoot,
     now: new Date(Date.parse(action006Receipt.completedAt) + 1).toISOString()
   }), (error) => error.code === "HANDOFF_REPLAY_DENIED");
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
 });
 
 test("Action 006 connector-scope review HOLD preserves physical success and advances only review state", () => {
@@ -3529,7 +3543,7 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
 
   const absentActionId = ["CLOVER", "2026", "08", "24", "007"].join("-");
   assert.equal(index0007.entries.some((entry) => entry.actionId === absentActionId), false);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
   assert.equal(fs.lstatSync(action006ReviewPath).isFile(), true);
   assert.equal(fs.lstatSync(action006ReviewPath).isSymbolicLink(), false);
   assert.equal(fs.lstatSync(action006ReviewIndexPath).isFile(), true);
@@ -4013,5 +4027,5 @@ test("Action 006 deterministic synthetic approval and consumption rehearsal is l
   assert.deepEqual(readJson(path.join(repositoryRoot, approvalIndexPath)), index0005);
   assert.equal(fs.existsSync(path.join(repositoryRoot, consumptionIndexPath)), true);
   assert.deepEqual(readJson(path.join(repositoryRoot, consumptionIndexPath)), index0006);
-  assertImportedLaunchStudioCandidate();
+  assertRecordedLaunchStudioCandidateProvenance();
 });

@@ -2,6 +2,10 @@ export const PROJECT_ID = "clover-launch-studio-private-owner";
 export const WORKSPACE_ID = "workspace:clover-launch-studio-private-owner";
 export const MAX_REQUEST_BYTES = 64 * 1024;
 export const MAX_TRANSCRIPT_BYTES = 48 * 1024;
+export const MAX_EXPORT_BYTES = 1024 * 1024;
+export const MAX_RESTORE_ARCHIVE_BASE64URL_BYTES = Math.ceil(MAX_EXPORT_BYTES * 4 / 3);
+const RESTORE_JSON_OVERHEAD_BYTES = '{"archiveBase64url":""}'.length;
+export const MAX_RESTORE_REQUEST_BYTES = RESTORE_JSON_OVERHEAD_BYTES + MAX_RESTORE_ARCHIVE_BASE64URL_BYTES;
 
 export const FUTURE_SESSION_BUDGET = Object.freeze({
   maximumModelCalls: 12,

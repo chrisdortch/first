@@ -2,17 +2,25 @@ import { createHash, randomUUID } from "node:crypto";
 import type { OwnerScope } from "./acl";
 import { assertOwnerScope } from "./acl";
 import type { OwnerIdentity } from "./auth";
+import { MAX_EXPORT_BYTES } from "./config";
 import { decryptPrivateBytes, encryptPrivateBytes, type EncryptedPayload, type KeyProvider } from "./crypto";
 
-export type LaunchEventType =
-  | "owner-transcript-captured"
-  | "owner-transcript-edited"
-  | "understanding-reviewed"
-  | "context-pack-proposed"
-  | "impact-scan-proposed"
-  | "build-charter-proposed"
-  | "owner-feedback-recorded"
-  | "handoff-proposal-prepared";
+export const LAUNCH_EVENT_TYPES = Object.freeze([
+  "owner-transcript-captured",
+  "owner-transcript-edited",
+  "understanding-reviewed",
+  "context-pack-proposed",
+  "impact-scan-proposed",
+  "build-charter-proposed",
+  "owner-feedback-recorded",
+  "handoff-proposal-prepared"
+] as const);
+
+export type LaunchEventType = (typeof LAUNCH_EVENT_TYPES)[number];
+
+export function isLaunchEventType(value: unknown): value is LaunchEventType {
+  return typeof value === "string" && (LAUNCH_EVENT_TYPES as readonly string[]).includes(value);
+}
 
 export type LaunchSession = OwnerScope & {
   sessionId: string;
@@ -80,6 +88,16 @@ export function canonicalJson(value: unknown): string {
   return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
 }
 
+function assertExportWithinLimit(session: LaunchSession, events: LaunchEvent[], progress: MaterialProgress[]) {
+  const bytes = Buffer.byteLength(canonicalJson({
+    format: "clover-launch-studio-export-v1",
+    session,
+    events,
+    progress
+  }), "utf8");
+  if (bytes > MAX_EXPORT_BYTES) throw new AppendOnlyViolationError();
+}
+
 export function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -104,7 +122,7 @@ export interface LaunchStudioStore {
   readArtifact(identity: OwnerIdentity, sessionId: string, artifactId: string): Promise<Buffer>;
   appendProgress(identity: OwnerIdentity, sessionId: string, item: Omit<MaterialProgress, "progressId" | "cursor" | "recordedAt">): Promise<MaterialProgress>;
   exportSession(identity: OwnerIdentity, sessionId: string): Promise<Buffer>;
-  restoreSession(identity: OwnerIdentity, archive: Uint8Array): Promise<LaunchSession>;
+  restoreSession(identity: OwnerIdentity, expectedSessionId: string, archive: Uint8Array): Promise<LaunchSession>;
 }
 
 type Artifact = { sessionId: string; scope: OwnerScope; mediaType: string; byteLength: number; encrypted: EncryptedPayload };
@@ -166,7 +184,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
     const session = this.#sessions.get(sessionId);
     if (!session) throw new SessionNotFoundError();
     assertOwnerScope(identity, session);
-    if (session.terminal) throw new AppendOnlyViolationError();
+    if (session.terminal || !isLaunchEventType(input.type)) throw new AppendOnlyViolationError();
     assertIdempotencyKey(input.idempotencyKey);
     const scopedIdempotency = `${sessionId}\0${input.idempotencyKey}`;
     if (this.#idempotency.has(scopedIdempotency)) throw new AppendOnlyViolationError();
@@ -199,9 +217,12 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
       createdAt
     };
     const event: LaunchEvent = { ...unsigned, canonicalHash: eventHash(unsigned) };
+    const events = this.#events.get(sessionId)!;
+    const nextSession = { ...session, version: sequence, lastEventId: eventId, lastEventHash: event.canonicalHash, updatedAt: createdAt };
+    assertExportWithinLimit(nextSession, [...events, event], this.#progress.get(sessionId) ?? []);
     this.#idempotency.add(scopedIdempotency);
-    this.#events.get(sessionId)!.push(event);
-    this.#sessions.set(sessionId, { ...session, version: sequence, lastEventId: eventId, lastEventHash: event.canonicalHash, updatedAt: createdAt });
+    events.push(event);
+    this.#sessions.set(sessionId, nextSession);
     return clone(event);
   }
 
@@ -237,7 +258,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
   }
 
   async appendProgress(identity: OwnerIdentity, sessionId: string, item: Omit<MaterialProgress, "progressId" | "cursor" | "recordedAt">) {
-    await this.getSession(identity, sessionId);
+    const session = await this.getSession(identity, sessionId);
     if (item.sessionId !== sessionId || /reasoning|chain.of.thought|token/i.test(item.label)) throw new AppendOnlyViolationError();
     const existing = this.#progress.get(sessionId) ?? [];
     const cursor = existing.length + 1;
@@ -248,6 +269,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
       cursor,
       recordedAt
     };
+    assertExportWithinLimit(session, this.#events.get(sessionId) ?? [], [...existing, progress]);
     existing.push(progress);
     this.#progress.set(sessionId, existing);
     return clone(progress);
@@ -257,22 +279,26 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
     const session = await this.getSession(identity, sessionId);
     const events = await this.readEvents(identity, sessionId);
     const progress = clone(this.#progress.get(sessionId) ?? []);
+    assertExportWithinLimit(session, events, progress);
     const body = canonicalJson({ format: "clover-launch-studio-export-v1", session, events, progress });
     return Buffer.from(body, "utf8");
   }
 
-  async restoreSession(identity: OwnerIdentity, archive: Uint8Array) {
+  async restoreSession(identity: OwnerIdentity, expectedSessionId: string, archive: Uint8Array) {
+    if (archive.byteLength === 0 || archive.byteLength > MAX_EXPORT_BYTES) throw new AppendOnlyViolationError();
     const parsed = JSON.parse(Buffer.from(archive).toString("utf8")) as { format?: string; session?: LaunchSession; events?: LaunchEvent[]; progress?: MaterialProgress[] };
     if (parsed.format !== "clover-launch-studio-export-v1" || !parsed.session || !Array.isArray(parsed.events) || !Array.isArray(parsed.progress)) {
       throw new AppendOnlyViolationError();
     }
     assertOwnerScope(identity, parsed.session);
+    if (parsed.session.sessionId !== expectedSessionId) throw new AppendOnlyViolationError();
     if (this.#sessions.has(parsed.session.sessionId)) throw new AppendOnlyViolationError();
     let predecessorId: string | null = null;
     let predecessorHash: string | null = null;
     parsed.events.forEach((event, offset) => {
       const { canonicalHash, ...unsigned } = event;
       if (
+        !isLaunchEventType(event.type) ||
         event.sequence !== offset + 1 ||
         event.expectedVersion !== offset ||
         event.predecessorEventId !== predecessorId ||
@@ -285,6 +311,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
     if (parsed.session.version !== parsed.events.length || parsed.session.lastEventId !== predecessorId || parsed.session.lastEventHash !== predecessorHash) {
       throw new AppendOnlyViolationError();
     }
+    assertExportWithinLimit(parsed.session, parsed.events, parsed.progress);
     this.#sessions.set(parsed.session.sessionId, clone(parsed.session));
     this.#events.set(parsed.session.sessionId, clone(parsed.events));
     this.#progress.set(parsed.session.sessionId, clone(parsed.progress));

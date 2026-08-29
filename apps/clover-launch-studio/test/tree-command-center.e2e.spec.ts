@@ -986,10 +986,17 @@ test("owner input classifies reviewed text, hashes it and records only a local s
 
 test("synthetic Personal Launch Pod and collaboration flows never send or sign", async ({ page }) => {
   await page.getByRole("button", { name: "Collaboration and JV Center", exact: true }).click();
+  const pod = page.locator(".pod-card");
   await expect(page.getByText("No real account connected")).toBeVisible();
   await page.getByRole("button", { name: "Approve synthetic packet" }).click();
   await page.getByRole("button", { name: "Share synthetic Project Delta" }).click();
   await expect(page.getByText(/nothing was sent/u)).toBeVisible();
+  await expect(pod.locator('[data-complete="true"]')).toHaveCount(8);
+  await pod.getByRole("button", { name: "Revoke synthetic approval", exact: true }).click();
+  await expect(pod.getByRole("status")).toHaveText("Awaiting synthetic participant approval.");
+  await expect(pod.locator('[data-complete="true"]')).toHaveCount(4);
+  await expect(pod.getByRole("button", { name: "Share synthetic Project Delta", exact: true })).toBeDisabled();
+  await expect(pod.getByRole("button", { name: "Withdraw synthetic delta", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Decline" }).click();
   await expect(page.getByText(/nothing was signed or published/u)).toBeVisible();
 });

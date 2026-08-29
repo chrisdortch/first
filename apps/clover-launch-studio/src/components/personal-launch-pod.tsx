@@ -14,8 +14,7 @@ const stages = [
 ] as const;
 
 export function PersonalLaunchPod() {
-  const [approved, setApproved] = useState(false);
-  const [delta, setDelta] = useState(false);
+  const [{ approved, delta }, setPodState] = useState({ approved: false, delta: false });
   return (
     <section className="prototype-card pod-card" aria-labelledby="pod-title">
       <div className="prototype-heading">
@@ -31,8 +30,8 @@ export function PersonalLaunchPod() {
         ))}
       </ol>
       <div className="button-pair">
-        <button className="secondary-button" type="button" onClick={() => setApproved((value) => !value)}>{approved ? "Revoke synthetic approval" : "Approve synthetic packet"}</button>
-        <button className="secondary-button" type="button" disabled={!approved} onClick={() => setDelta((value) => !value)}>{delta ? "Withdraw synthetic delta" : "Share synthetic Project Delta"}</button>
+        <button className="secondary-button" type="button" onClick={() => setPodState((state) => ({ approved: !state.approved, delta: false }))}>{approved ? "Revoke synthetic approval" : "Approve synthetic packet"}</button>
+        <button className="secondary-button" type="button" disabled={!approved} onClick={() => setPodState((state) => state.approved ? { ...state, delta: !state.delta } : state)}>{delta ? "Withdraw synthetic delta" : "Share synthetic Project Delta"}</button>
       </div>
       <p className="inline-state" role="status" aria-live="polite">
         {delta ? "Synthetic Project Delta prepared locally; nothing was sent." : approved ? "Synthetic participant approved locally; no account or Site was changed." : "Awaiting synthetic participant approval."}
