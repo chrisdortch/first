@@ -59,6 +59,7 @@ async function loadCompiledRuntime() {
   }
   const imported = await Promise.all([
     import(pathToFileURL(join(directory, "config.mjs")).href),
+    import(pathToFileURL(join(directory, "auth.mjs")).href),
     import(pathToFileURL(join(directory, "acl.mjs")).href),
     import(pathToFileURL(join(directory, "crypto.mjs")).href),
     import(pathToFileURL(join(directory, "storage.mjs")).href),
@@ -67,10 +68,11 @@ async function loadCompiledRuntime() {
   return {
     directory,
     config: imported[0],
-    acl: imported[1],
-    crypto: imported[2],
-    storage: imported[3],
-    service: imported[4]
+    auth: imported[1],
+    acl: imported[2],
+    crypto: imported[3],
+    storage: imported[4],
+    service: imported[5]
   };
 }
 
@@ -83,7 +85,78 @@ test("accept_auth_clerk_validation", () => {
   assert.match(source.auth, /providerIssuer/);
   assert.match(source.auth, /providerAudience/);
   assert.match(source.auth, /expiresAt/);
+  assert.equal(source.auth.match(/Date\.parse\(/gu)?.length, 1);
+  assert.match(source.auth, /Number\.isFinite\(expiresAt\)/u);
   assert.doesNotMatch(source.package, /clerk/i);
+});
+
+test("provider session expiration rejects every non-future value without returning an identity", async () => {
+  const runtime = await loadCompiledRuntime();
+  const environmentKeys = [
+    "NODE_ENV",
+    "CLOVER_LAUNCH_STUDIO_AUTH_MODE",
+    "CLOVER_LAUNCH_STUDIO_ORIGIN",
+    "CLOVER_LAUNCH_STUDIO_AUTH_ISSUER",
+    "CLOVER_LAUNCH_STUDIO_AUTH_AUDIENCE",
+    "CLOVER_LAUNCH_STUDIO_CSRF_SECRET"
+  ];
+  const originalEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
+  try {
+    Object.assign(process.env, {
+      NODE_ENV: "test",
+      CLOVER_LAUNCH_STUDIO_AUTH_MODE: "provider",
+      CLOVER_LAUNCH_STUDIO_ORIGIN: "https://clover-owner.example",
+      CLOVER_LAUNCH_STUDIO_AUTH_ISSUER: "https://issuer.example",
+      CLOVER_LAUNCH_STUDIO_AUTH_AUDIENCE: "clover-owner",
+      CLOVER_LAUNCH_STUDIO_CSRF_SECRET: "synthetic-csrf-secret"
+    });
+    const request = new Request("https://clover-owner.example/api/sessions");
+    const rejectedExpirations = [
+      ["missing", () => undefined],
+      ["empty", () => ""],
+      ["malformed", () => "2026-13-99T99:99:99Z"],
+      ["NaN-producing", () => "NaN"],
+      ["past", (now) => new Date(now.getTime() - 1).toISOString()],
+      ["current", (now) => now.toISOString()]
+    ];
+    for (const [label, expiration] of rejectedExpirations) {
+      runtime.auth.registerProviderSessionVerifier({
+        verify: async (_request, expected) => ({
+          subject: "owner-subject",
+          issuer: expected.issuer,
+          audience: expected.audience,
+          expiresAt: expiration(expected.now)
+        })
+      });
+      let identity;
+      await assert.rejects(async () => {
+        identity = await runtime.auth.authenticateOwner(request, { mutation: false });
+      }, runtime.auth.AuthenticationDeniedError, label);
+      assert.equal(identity, undefined, label);
+    }
+    for (const [label, session] of [["missing verifier result", undefined], ["null verifier result", null], ["non-object verifier result", "invalid"]]) {
+      runtime.auth.registerProviderSessionVerifier({ verify: async () => session });
+      await assert.rejects(runtime.auth.authenticateOwner(request, { mutation: false }), runtime.auth.AuthenticationDeniedError, label);
+    }
+
+    runtime.auth.registerProviderSessionVerifier({
+      verify: async (_request, expected) => ({
+        subject: "owner-subject",
+        issuer: expected.issuer,
+        audience: expected.audience,
+        expiresAt: new Date(expected.now.getTime() + 60_000).toISOString()
+      })
+    });
+    const identity = await runtime.auth.authenticateOwner(request, { mutation: false });
+    assert.equal(identity.providerSubject, "owner-subject");
+    assert.equal(identity.authenticationMode, "provider");
+  } finally {
+    for (const key of environmentKeys) {
+      if (originalEnvironment[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnvironment[key];
+    }
+    rmSync(runtime.directory, { recursive: true, force: true });
+  }
 });
 
 test("accept_auth_subject_binding", () => {
@@ -221,6 +294,40 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.equal(appended.length, expectedEventTypes.length);
 
     const keys = new ExplicitSyntheticKeyProvider(Buffer.alloc(32, 7));
+    const creationStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const creationScope = ownerScope(identity);
+    const creationKey = "lost-response-create-0001";
+    const firstCreation = await creationStore.createSession(identity, creationScope, "exact reviewed transcript", creationKey);
+    const retryCreation = await creationStore.createSession(identity, creationScope, "exact reviewed transcript", creationKey);
+    assert.equal(retryCreation.sessionId, firstCreation.sessionId);
+    assert.equal((await creationStore.readEvents(identity, firstCreation.sessionId)).length, 1);
+    assert.equal((await creationStore.getSession(identity, firstCreation.sessionId)).version, 1);
+    await assert.rejects(
+      creationStore.createSession(identity, creationScope, "substituted reviewed transcript", creationKey),
+      AppendOnlyViolationError
+    );
+    assert.equal((await creationStore.readEvents(identity, firstCreation.sessionId)).length, 1);
+    const concurrentCreations = await Promise.all([
+      creationStore.createSession(identity, creationScope, "concurrent exact transcript", "concurrent-create-key-0001"),
+      creationStore.createSession(identity, creationScope, "concurrent exact transcript", "concurrent-create-key-0001")
+    ]);
+    assert.equal(concurrentCreations[0].sessionId, concurrentCreations[1].sessionId);
+    assert.equal((await creationStore.readEvents(identity, concurrentCreations[0].sessionId)).length, 1);
+    const secondIdentity = {
+      ...identity,
+      providerSubject: "synthetic-owner-two",
+      participantId: `participant:${"b".repeat(64)}`
+    };
+    await assert.rejects(
+      creationStore.createSession(secondIdentity, ownerScope(secondIdentity), "exact reviewed transcript", creationKey),
+      AppendOnlyViolationError
+    );
+    await assert.rejects(
+      creationStore.createSession(identity, { ...creationScope, projectId: "project:substituted" }, "exact reviewed transcript", creationKey),
+      runtime.acl.AccessDeniedError
+    );
+    assert.equal((await creationStore.readEvents(identity, firstCreation.sessionId)).length, 1);
+
     const sourceStore = new InMemorySyntheticLaunchStudioStore(keys);
     const sourceService = new LaunchSessionService(identity, sourceStore);
     const session = await sourceStore.createSession(
@@ -240,6 +347,78 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     }), AppendOnlyViolationError);
     assert.equal((await sourceStore.getSession(identity, session.sessionId)).version, beforeUnknownAppend.version);
     assert.equal((await sourceStore.readEvents(identity, session.sessionId)).length, 1);
+
+    const beforeConcurrentAppend = await sourceStore.getSession(identity, session.sessionId);
+    const concurrentAppends = await Promise.allSettled([
+      sourceStore.appendEvent(identity, session.sessionId, {
+        type: "owner-feedback-recorded",
+        expectedVersion: beforeConcurrentAppend.version,
+        predecessorEventId: beforeConcurrentAppend.lastEventId,
+        predecessorHash: beforeConcurrentAppend.lastEventHash,
+        idempotencyKey: "concurrent-append-event-0001",
+        payload: { reviewedText: "first concurrent candidate" }
+      }),
+      sourceStore.appendEvent(identity, session.sessionId, {
+        type: "owner-feedback-recorded",
+        expectedVersion: beforeConcurrentAppend.version,
+        predecessorEventId: beforeConcurrentAppend.lastEventId,
+        predecessorHash: beforeConcurrentAppend.lastEventHash,
+        idempotencyKey: "concurrent-append-event-0002",
+        payload: { reviewedText: "second concurrent candidate" }
+      })
+    ]);
+    assert.equal(concurrentAppends.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(concurrentAppends.filter(({ status }) => status === "rejected").length, 1);
+    const afterConcurrentAppend = await sourceStore.getSession(identity, session.sessionId);
+    assert.equal(afterConcurrentAppend.version, beforeConcurrentAppend.version + 1);
+    assert.equal((await sourceStore.readEvents(identity, session.sessionId)).length, afterConcurrentAppend.version);
+
+    let signalEncryptionEntered;
+    let releaseEncryption;
+    const encryptionEntered = new Promise((resolve) => { signalEncryptionEntered = resolve; });
+    const encryptionGate = new Promise((resolve) => { releaseEncryption = resolve; });
+    const gatedMaterial = { keyRef: "synthetic-gated-key", version: 1, key: Buffer.alloc(32, 9) };
+    let currentKeyCalls = 0;
+    const gatedKeys = {
+      current: async () => {
+        currentKeyCalls += 1;
+        if (currentKeyCalls === 2) {
+          signalEncryptionEntered();
+          await encryptionGate;
+        }
+        return gatedMaterial;
+      },
+      resolve: async (keyRef, version) => keyRef === gatedMaterial.keyRef && version === gatedMaterial.version ? gatedMaterial : null
+    };
+    const exportRaceStore = new InMemorySyntheticLaunchStudioStore(gatedKeys);
+    const exportRaceSession = await exportRaceStore.createSession(
+      identity,
+      ownerScope(identity),
+      "export race source",
+      "export-race-create-0001"
+    );
+    const racingAppend = exportRaceStore.appendEvent(identity, exportRaceSession.sessionId, {
+      type: "owner-feedback-recorded",
+      expectedVersion: exportRaceSession.version,
+      predecessorEventId: exportRaceSession.lastEventId,
+      predecessorHash: exportRaceSession.lastEventHash,
+      idempotencyKey: "export-race-append-0001",
+      payload: { reviewedText: "gated append" }
+    });
+    await encryptionEntered;
+    let racingExportSettled = false;
+    const racingExport = exportRaceStore.exportSession(identity, exportRaceSession.sessionId).then((value) => {
+      racingExportSettled = true;
+      return value;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(racingExportSettled, false);
+    releaseEncryption();
+    await racingAppend;
+    const racingArchive = JSON.parse((await racingExport).toString("utf8"));
+    assert.equal(racingArchive.session.version, 2);
+    assert.equal(racingArchive.events.length, 2);
+    assert.equal(racingArchive.session.version, racingArchive.events.length);
 
     const growthStore = new InMemorySyntheticLaunchStudioStore(keys);
     const growthService = new LaunchSessionService(identity, growthStore);
@@ -295,6 +474,12 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     }), AppendOnlyViolationError);
     assert.deepEqual(await growthService.export(growthSession.sessionId), boundedArchive);
 
+    await sourceStore.appendProgress(identity, session.sessionId, {
+      sessionId: session.sessionId,
+      label: "Synthetic source prepared",
+      state: "proposed",
+      evidenceRef: "synthetic-evidence-reference-0001"
+    });
     const archive = await sourceService.export(session.sessionId);
     const encodedArchive = archive.toString("base64url");
     const restoreBody = Buffer.from(JSON.stringify({ archiveBase64url: encodedArchive }), "utf8");
@@ -332,14 +517,15 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     await assert.rejects(restoreStore.getSession(identity, session.sessionId), SessionNotFoundError);
     const restored = await restoreService.restore(session.sessionId, decodedArchive);
     assert.equal(restored.sessionId, session.sessionId);
-    assert.equal((await restoreStore.readEvents(identity, session.sessionId)).length, 1);
+    assert.equal((await restoreStore.readEvents(identity, session.sessionId)).length, afterConcurrentAppend.version);
 
     const unknownTypeDocument = JSON.parse(archive.toString("utf8"));
-    unknownTypeDocument.events[0].type = "owner-authority-granted";
-    const unsignedUnknownEvent = { ...unknownTypeDocument.events[0] };
+    const unknownEventOffset = unknownTypeDocument.events.length - 1;
+    unknownTypeDocument.events[unknownEventOffset].type = "owner-authority-granted";
+    const unsignedUnknownEvent = { ...unknownTypeDocument.events[unknownEventOffset] };
     delete unsignedUnknownEvent.canonicalHash;
-    unknownTypeDocument.events[0].canonicalHash = sha256(canonicalJson(unsignedUnknownEvent));
-    unknownTypeDocument.session.lastEventHash = unknownTypeDocument.events[0].canonicalHash;
+    unknownTypeDocument.events[unknownEventOffset].canonicalHash = sha256(canonicalJson(unsignedUnknownEvent));
+    unknownTypeDocument.session.lastEventHash = unknownTypeDocument.events[unknownEventOffset].canonicalHash;
     const unknownTypeArchive = Buffer.from(canonicalJson(unknownTypeDocument), "utf8");
     const unknownTypeStore = new InMemorySyntheticLaunchStudioStore(keys);
     await assert.rejects(
@@ -347,6 +533,64 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       AppendOnlyViolationError
     );
     await assert.rejects(unknownTypeStore.getSession(identity, session.sessionId), SessionNotFoundError);
+
+    const sourceDocument = JSON.parse(archive.toString("utf8"));
+    const resealLastEvent = (document) => {
+      const offset = document.events.length - 1;
+      const unsigned = { ...document.events[offset] };
+      delete unsigned.canonicalHash;
+      document.events[offset].canonicalHash = sha256(canonicalJson(unsigned));
+      document.session.lastEventHash = document.events[offset].canonicalHash;
+      return Buffer.from(canonicalJson(document), "utf8");
+    };
+    const assertRestoreRejectedWithoutMutation = async (candidateArchive, label, expectedSessionId = session.sessionId) => {
+      const destination = new InMemorySyntheticLaunchStudioStore(keys);
+      const sentinel = await destination.createSession(
+        identity,
+        ownerScope(identity),
+        `sentinel ${label}`,
+        `restore-sentinel-${sha256(label).slice(0, 24)}`
+      );
+      const before = await destination.exportSession(identity, sentinel.sessionId);
+      await assert.rejects(
+        destination.restoreSession(identity, expectedSessionId, candidateArchive),
+        AppendOnlyViolationError,
+        label
+      );
+      assert.deepEqual(await destination.exportSession(identity, sentinel.sessionId), before, label);
+      await assert.rejects(destination.getSession(identity, expectedSessionId), SessionNotFoundError, label);
+    };
+    const substitutedTopLevelSessionId = `session:${"c".repeat(64)}`;
+    const topLevelSessionSubstitution = structuredClone(sourceDocument);
+    topLevelSessionSubstitution.session.sessionId = substitutedTopLevelSessionId;
+    await assertRestoreRejectedWithoutMutation(
+      Buffer.from(canonicalJson(topLevelSessionSubstitution), "utf8"),
+      "top-level sessionId with untouched events",
+      substitutedTopLevelSessionId
+    );
+    for (const [field, replacement] of [
+      ["sessionId", `session:${"d".repeat(64)}`],
+      ["workspaceId", "workspace:substituted"],
+      ["projectId", "project:substituted"],
+      ["participantId", `participant:${"e".repeat(64)}`]
+    ]) {
+      const document = structuredClone(sourceDocument);
+      document.events.at(-1)[field] = replacement;
+      await assertRestoreRejectedWithoutMutation(resealLastEvent(document), `event ${field}`);
+    }
+    const progressScopeDocument = structuredClone(sourceDocument);
+    progressScopeDocument.progress[0].sessionId = `session:${"e".repeat(64)}`;
+    await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(progressScopeDocument), "utf8"), "progress sessionId");
+    for (const [field, replacement] of [
+      ["cursor", 2],
+      ["progressId", `progress:${"f".repeat(64)}`],
+      ["state", "executed"],
+      ["label", "private reasoning token"]
+    ]) {
+      const document = structuredClone(sourceDocument);
+      document.progress[0][field] = replacement;
+      await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(document), "utf8"), `progress ${field}`);
+    }
 
     const canonicalOversizeSessionId = `session:${"c".repeat(64)}`;
     const canonicalOversizeSession = {

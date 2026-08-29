@@ -5,8 +5,10 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,6 +39,8 @@ import {
   buildOutputManifest,
   canonicalJson,
   createDeploymentAttestation,
+  deriveSourceManifestEntries,
+  parseSourceChanges,
   deriveSourceProvenance
 } from "../scripts/clover-deployment-attestation.mjs";
 import { compareDeploymentAttestation, parseBuildProvenance } from "../src/lib/provenance.ts";
@@ -539,6 +543,84 @@ test("source provenance derives from an exact clean Git source and rejects dirty
     assert.match(provenance.runtimeDeploymentKey, /^clover-[0-9a-f]{24}$/u);
     writeFileSync(path.join(root, "candidate.txt"), "dirty\n");
     assert.throws(() => deriveSourceProvenance({ repositoryRoot: root, stackABase }), /CLOVER_DIRTY_SOURCE_REJECTED/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function initializeDeletionSourceRepository(root) {
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "clover@example.invalid"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Clover Test"], { cwd: root });
+  mkdirSync(path.join(root, "apps/clover-launch-studio"), { recursive: true });
+  mkdirSync(path.join(root, "portfolio/core/tree-program"), { recursive: true });
+  writeFileSync(path.join(root, "apps/clover-launch-studio/package.json"), JSON.stringify({ dependencies: { next: "16.3.3" } }));
+  writeFileSync(path.join(root, "apps/clover-launch-studio/package-lock.json"), "{}\n");
+  writeFileSync(path.join(root, "portfolio/core/tree-program/index.json"), JSON.stringify({ indexId: "tree-program:index:0001", indexHash: hex64("4") }));
+  writeFileSync(path.join(root, "deleted.txt"), "immutable deleted base bytes\n");
+  writeFileSync(path.join(root, "modified.txt"), "base modified bytes\n");
+  writeFileSync(path.join(root, "renamed-source.txt"), "renamed bytes\n");
+  writeFileSync(path.join(root, "unchanged.txt"), "unchanged bytes\n");
+  execFileSync("git", ["add", "."], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "Stack A"], { cwd: root });
+  const stackABase = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  unlinkSync(path.join(root, "deleted.txt"));
+  writeFileSync(path.join(root, "modified.txt"), "candidate modified bytes\n");
+  renameSync(path.join(root, "renamed-source.txt"), path.join(root, "renamed-target.txt"));
+  writeFileSync(path.join(root, "added.txt"), "candidate added bytes\n");
+  execFileSync("git", ["add", "-A"], { cwd: root });
+  execFileSync("git", ["commit", "-qm", "Stack B with deletion"], { cwd: root });
+  return stackABase;
+}
+
+test("source provenance binds deleted base objects and preserves current candidate entries", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-source-deletion-"));
+  try {
+    const stackABase = initializeDeletionSourceRepository(root);
+    const candidateCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    const entries = deriveSourceManifestEntries({ repositoryRoot: root, stackABase, candidateCommit });
+    const paths = entries.map(({ path: sourcePath }) => sourcePath);
+    assert.deepEqual(paths, ["added.txt", "deleted.txt", "modified.txt", "renamed-source.txt", "renamed-target.txt"]);
+
+    const deleted = entries.find(({ path: sourcePath }) => sourcePath === "deleted.txt");
+    const deletedBytes = execFileSync("git", ["show", `${stackABase}:deleted.txt`], { cwd: root });
+    assert.deepEqual(deleted, {
+      path: "deleted.txt",
+      status: "D",
+      base: {
+        path: "deleted.txt",
+        mode: "100644",
+        blob: execFileSync("git", ["rev-parse", `${stackABase}:deleted.txt`], { cwd: root, encoding: "utf8" }).trim(),
+        bytes: deletedBytes.byteLength,
+        sha256: sha256(deletedBytes)
+      },
+      current: null
+    });
+    for (const sourcePath of ["added.txt", "modified.txt", "renamed-target.txt"]) {
+      const entry = entries.find(({ path: entryPath }) => entryPath === sourcePath);
+      assert.deepEqual(Object.keys(entry).sort(), ["blob", "bytes", "mode", "path", "sha256"]);
+      assert.equal(entry.path, sourcePath);
+      assert.equal(entry.mode, "100644");
+      assert.equal(entry.blob, execFileSync("git", ["rev-parse", `${candidateCommit}:${sourcePath}`], { cwd: root, encoding: "utf8" }).trim());
+    }
+    assert.equal(entries.find(({ path: sourcePath }) => sourcePath === "renamed-source.txt").status, "D");
+    assert.equal(entries.some(({ path: sourcePath }) => sourcePath === "unchanged.txt"), false);
+
+    const pathList = `${paths.join("\n")}\n`;
+    const provenance = deriveSourceProvenance({ repositoryRoot: root, stackABase });
+    assert.equal(provenance.changedPathCount, 5);
+    assert.equal(provenance.pathListSha256, sha256(pathList));
+    assert.equal(provenance.sourceManifestSha256, sha256(`${canonicalJson(entries)}\n`));
+    assert.notEqual(
+      provenance.sourceManifestSha256,
+      sha256(`${canonicalJson(entries.filter(({ status }) => status !== "D"))}\n`)
+    );
+
+    assert.throws(() => parseSourceChanges(Buffer.from("X\0candidate.txt\0", "utf8")), /CLOVER_SOURCE_STATUS_REJECTED/u);
+    assert.throws(() => parseSourceChanges(Buffer.from("A\0..\/escape.txt\0", "utf8")), /unsafe source path/u);
+    assert.throws(() => parseSourceChanges(Buffer.from("A\0same.txt\0M\0same.txt\0", "utf8")), /CLOVER_SOURCE_PATH_LIST_INVALID/u);
+    assert.throws(() => parseSourceChanges(Buffer.from("R100\0same.txt\0same.txt\0", "utf8")), /CLOVER_SOURCE_PATH_SUBSTITUTION_REJECTED/u);
+    assert.throws(() => parseSourceChanges(Buffer.from("R10\0old.txt\0new.txt\0", "utf8")), /CLOVER_SOURCE_STATUS_REJECTED/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

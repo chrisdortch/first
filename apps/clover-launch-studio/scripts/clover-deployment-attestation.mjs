@@ -58,13 +58,102 @@ function assertHex(value, length, label) {
   if (!new RegExp(`^[0-9a-f]{${length}}$`, "u").test(value)) throw new Error(`${label} is not exact lowercase hex`);
 }
 
-function sourceEntry(repositoryRoot, sourcePath) {
-  if (/\0|\r|\n|(?:^|\/)\.\.(?:\/|$)/u.test(sourcePath)) throw new Error(`unsafe source path: ${sourcePath}`);
-  const line = git(repositoryRoot, ["ls-tree", "HEAD", "--", sourcePath]).trim();
-  const match = /^(\d{6}) blob ([0-9a-f]{40})\t(.+)$/u.exec(line);
-  if (!match || match[3] !== sourcePath) throw new Error(`source path is not one exact tracked blob: ${sourcePath}`);
+function exactSourcePath(value) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value !== value.normalize("NFC") ||
+    value === "." ||
+    value.startsWith("/") ||
+    value.includes("\\") ||
+    /\0|\r|\n/u.test(value) ||
+    path.posix.normalize(value) !== value ||
+    value.split("/").includes("..")
+  ) throw new Error(`unsafe source path: ${value}`);
+  return value;
+}
+
+function sourceObject(repositoryRoot, revision, sourcePath) {
+  exactSourcePath(sourcePath);
+  const listing = git(repositoryRoot, ["ls-tree", "-z", revision, "--", sourcePath], { encoding: null });
+  if (listing.length < 2 || listing[listing.length - 1] !== 0) {
+    throw new Error(`source path is not one exact tracked blob: ${sourcePath}`);
+  }
+  const records = listing.subarray(0, -1).toString("utf8").split("\0");
+  const match = /^(\d{6}) blob ([0-9a-f]{40})\t([\s\S]+)$/u.exec(records[0] ?? "");
+  if (records.length !== 1 || !match || match[3] !== sourcePath) {
+    throw new Error(`source path is not one exact tracked blob: ${sourcePath}`);
+  }
   const bytes = git(repositoryRoot, ["cat-file", "blob", match[2]], { encoding: null });
   return { path: sourcePath, mode: match[1], blob: match[2], bytes: bytes.length, sha256: sha256(bytes) };
+}
+
+function sourceBytes(repositoryRoot, revision, sourcePath) {
+  const identity = sourceObject(repositoryRoot, revision, sourcePath);
+  return git(repositoryRoot, ["cat-file", "blob", identity.blob], { encoding: null });
+}
+
+export function parseSourceChanges(value) {
+  const bytes = Buffer.from(value);
+  const text = bytes.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(bytes)) throw new Error("CLOVER_SOURCE_DIFF_INVALID_UTF8");
+  if (text === "") return [];
+  const fields = text.split("\0");
+  if (fields.pop() !== "") throw new Error("CLOVER_SOURCE_DIFF_INVALID");
+  const changes = [];
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    const scored = /^(?:R|C)(\d{3})$/u.exec(status);
+    const single = /^(?:A|M|T|D)$/u.test(status);
+    if ((!single && !scored) || (scored && Number(scored[1]) > 100)) throw new Error(`CLOVER_SOURCE_STATUS_REJECTED:${status}`);
+    if (scored) {
+      const basePath = exactSourcePath(fields[index++]);
+      const currentPath = exactSourcePath(fields[index++]);
+      if (basePath === currentPath) throw new Error(`CLOVER_SOURCE_PATH_SUBSTITUTION_REJECTED:${currentPath}`);
+      changes.push({ status, path: currentPath, previousPath: basePath, basePath, currentPath });
+      continue;
+    }
+    const sourcePath = exactSourcePath(fields[index++]);
+    changes.push({
+      status,
+      path: sourcePath,
+      previousPath: null,
+      basePath: status === "A" ? null : sourcePath,
+      currentPath: status === "D" ? null : sourcePath
+    });
+  }
+  const effectivePaths = changes.map(({ path: sourcePath }) => sourcePath);
+  if (new Set(effectivePaths).size !== effectivePaths.length) throw new Error("CLOVER_SOURCE_PATH_LIST_INVALID");
+  return changes;
+}
+
+export function deriveSourceManifestEntries({ repositoryRoot, stackABase = STACK_A_BASE, candidateCommit = "HEAD" } = {}) {
+  if (!repositoryRoot) throw new Error("repositoryRoot is required");
+  const root = realpathSync(repositoryRoot);
+  assertHex(stackABase, 40, "Stack A base");
+  const exactCandidateCommit = candidateCommit === "HEAD" ? git(root, ["rev-parse", "HEAD"]).trim() : candidateCommit;
+  assertHex(exactCandidateCommit, 40, "candidate commit");
+  const changes = parseSourceChanges(git(root, [
+    "diff",
+    "--name-status",
+    "--no-renames",
+    "--diff-filter=ACMRTD",
+    "-z",
+    `${stackABase}..${exactCandidateCommit}`
+  ], { encoding: null }));
+  return changes.map(({ status, path: sourcePath, basePath, currentPath }) => {
+    if (status === "D") {
+      if (basePath === null || currentPath !== null) throw new Error(`CLOVER_SOURCE_DELETION_IDENTITY_REJECTED:${sourcePath}`);
+      return {
+        path: sourcePath,
+        status: "D",
+        base: sourceObject(root, stackABase, basePath),
+        current: null
+      };
+    }
+    if (currentPath === null) throw new Error(`CLOVER_SOURCE_CURRENT_IDENTITY_REJECTED:${sourcePath}`);
+    return sourceObject(root, exactCandidateCommit, currentPath);
+  }).sort((left, right) => Buffer.compare(Buffer.from(left.path, "utf8"), Buffer.from(right.path, "utf8")));
 }
 
 export function deriveSourceProvenance({ repositoryRoot, stackABase = STACK_A_BASE } = {}) {
@@ -73,26 +162,27 @@ export function deriveSourceProvenance({ repositoryRoot, stackABase = STACK_A_BA
   assertHex(stackABase, 40, "Stack A base");
   const status = git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (status !== "") throw new Error("CLOVER_DIRTY_SOURCE_REJECTED");
+
+  const commit = git(root, ["rev-parse", "HEAD"]).trim();
+  assertHex(commit, 40, "commit");
   try {
-    git(root, ["merge-base", "--is-ancestor", stackABase, "HEAD"]);
+    git(root, ["merge-base", "--is-ancestor", stackABase, commit]);
   } catch {
     throw new Error("CLOVER_STACK_A_ANCESTRY_REJECTED");
   }
 
-  const commit = git(root, ["rev-parse", "HEAD"]).trim();
-  const tree = git(root, ["rev-parse", "HEAD^{tree}"]).trim();
-  const parent = git(root, ["rev-parse", "HEAD^"]).trim();
-  for (const [label, value] of [["commit", commit], ["tree", tree], ["parent", parent]]) assertHex(value, 40, label);
+  const tree = git(root, ["rev-parse", `${commit}^{tree}`]).trim();
+  const parent = git(root, ["rev-parse", `${commit}^`]).trim();
+  for (const [label, value] of [["tree", tree], ["parent", parent]]) assertHex(value, 40, label);
 
-  const pathBytes = git(root, ["diff", "--name-only", "--diff-filter=ACMRT", "-z", `${stackABase}..HEAD`], { encoding: null });
-  const paths = pathBytes.toString("utf8").split("\0").filter(Boolean).sort();
+  const entries = deriveSourceManifestEntries({ repositoryRoot: root, stackABase, candidateCommit: commit });
+  const paths = entries.map(({ path: sourcePath }) => sourcePath);
   if (paths.length === 0 || new Set(paths).size !== paths.length) throw new Error("CLOVER_SOURCE_PATH_LIST_INVALID");
   const pathList = `${paths.join("\n")}\n`;
-  const entries = paths.map((sourcePath) => sourceEntry(root, sourcePath));
-  const packageDocument = JSON.parse(readFileSync(path.join(root, PACKAGE_PATH), "utf8"));
-  const treeIndexBytes = readFileSync(path.join(root, TREE_INDEX_PATH));
+  const packageDocument = JSON.parse(sourceBytes(root, commit, PACKAGE_PATH).toString("utf8"));
+  const treeIndexBytes = sourceBytes(root, commit, TREE_INDEX_PATH);
   const treeIndex = JSON.parse(treeIndexBytes.toString("utf8"));
-  const lockfileBytes = readFileSync(path.join(root, LOCKFILE_PATH));
+  const lockfileBytes = sourceBytes(root, commit, LOCKFILE_PATH);
 
   const source = {
     commit,
@@ -119,6 +209,9 @@ export function deriveSourceProvenance({ repositoryRoot, stackABase = STACK_A_BA
   }
   if (!/^v(?:22|24)\./u.test(source.nodeVersion) || typeof source.nextVersion !== "string") {
     throw new Error("CLOVER_BUILD_RUNTIME_IDENTITY_REJECTED");
+  }
+  if (git(root, ["rev-parse", "HEAD"]).trim() !== commit || git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) !== "") {
+    throw new Error("CLOVER_SOURCE_CHANGED_DURING_ATTESTATION");
   }
   return Object.freeze({
     documentType: "clover-tree-build-provenance",

@@ -57,11 +57,15 @@ async function verifySubject(request: Request, config: RuntimeConfig): Promise<{
       audience: config.providerAudience,
       now: new Date()
     });
+    const expiresAt = Date.parse(typeof session?.expiresAt === "string" ? session.expiresAt : "");
     if (
+      !session ||
+      typeof session !== "object" ||
       !session.subject ||
       session.issuer !== config.providerIssuer ||
       session.audience !== config.providerAudience ||
-      Date.parse(session.expiresAt) <= Date.now()
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= Date.now()
     ) throw new AuthenticationDeniedError();
     return { subject: session.subject, mode: "provider" };
   }
