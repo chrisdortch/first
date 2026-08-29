@@ -66,11 +66,11 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
   };
   const attestation = { ...attestationBody, attestationHash: createHash("sha256").update(`${canonicalJson(attestationBody)}\n`).digest("hex") };
   const github = {
-    sourceId: "github-public-api", sourceIdentity: "github:chrisdortch/first", evidenceClass: "public-unauthenticated-github-api", status: "current", freshness: "current", observedAt: "2026-08-26T21:00:00.000Z", errorCode: null,
+    sourceId: "github-public-api", sourceIdentity: "github:chrisdortch/first", evidenceClass: "public-unauthenticated-github-api", status: "current", freshness: "current", observedAt: "2026-08-29T17:00:00.000Z", errorCode: null,
     endpoints: [], unauthenticated: true, retriesMaximum: 1, revalidateSeconds: 60, failures: [],
     main: { sha: fixtureMain, tree: "d0ac615a9f038c62fa6c0b1296312920b0dceb4d", protected: true, defaultBranch: "main" },
     pull34: { number: 34, state: "closed", draft: false, merged: true, mergeable: null, updatedAt: "2026-08-29T16:24:08.000Z", headSha: fixtureStackA, headRef: "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: fixtureStackABase, baseRef: "main", baseRepository: "chrisdortch/first" },
-    pull35: { number: 35, state: "open", draft: true, merged: false, mergeable: true, updatedAt: "2026-08-26T20:59:00.000Z", headSha: fixtureCommit, headRef: "feature/clover-tree-command-center-launch-studio-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: fixtureMain, baseRef: "main", baseRepository: "chrisdortch/first" },
+    pull35: { number: 35, state: "open", draft: true, merged: false, mergeable: true, updatedAt: "2026-08-29T16:30:00.000Z", headSha: fixtureCommit, headRef: "feature/clover-tree-command-center-launch-studio-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: fixtureMain, baseRef: "main", baseRepository: "chrisdortch/first" },
     exactHeadChecks: { sha: fixtureCommit, state: "success", requiredNames: ["Clover required main gate (Node 22)", "Clover required main gate (Node 24)", "Tree Command Center (Node 22)", "Tree Command Center (Node 24)", "Tree browser and accessibility"], checks: [] }
   };
   const deploymentSelf = {
@@ -97,7 +97,7 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
     },
     observations: { github, deploymentSelf, clover: { sourceId: "clover-context-gateway", sourceIdentity: "external-owner-console", evidenceClass: "external-owner-console-required", status: "external-owner-console-required", freshness: "unknown", observedAt: null, errorCode: null, webRuntimeConnectorInvoked: false, statement: "no Clover connector was invoked by the web runtime" } },
     reconciled: { currentActionCard: { action: "HOLD" } },
-    requestObservedAt: "2026-08-26T21:00:01.000Z",
+    requestObservedAt: "2026-08-29T17:00:01.000Z",
     authority
   };
   return { provenance: { schemaVersion: "clover-tree-provenance-readback-v0.2", provenance, authority }, attestation, readback };
@@ -912,8 +912,8 @@ test("same-origin deployment attestation unlocks only the preview Action Card wh
   await page.getByRole("button", { name: "System Health", exact: true }).click();
   await expect(page.locator("[data-readiness=ready]")).toHaveCount(13);
   await expect(page.locator("[data-readiness=ready]").filter({ hasText: /^verified$/u })).toHaveCount(2);
-  await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:00\.000Z$/u })).toBeVisible();
-  await expect(page.getByRole("definition").filter({ hasText: /^2026-08-26T21:00:01\.000Z$/u })).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: /^2026-08-29T17:00:00\.000Z$/u })).toBeVisible();
+  await expect(page.getByRole("definition").filter({ hasText: /^2026-08-29T17:00:01\.000Z$/u })).toBeVisible();
 });
 
 test("attestation unavailability or source substitution leaves the current Action Card on HOLD", async ({ page }) => {

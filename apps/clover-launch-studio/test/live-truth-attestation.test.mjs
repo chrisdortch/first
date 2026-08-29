@@ -104,19 +104,19 @@ function githubFixture(endpoint) {
   }
   if (endpoint.endsWith("/pulls/35")) {
     return {
-      number: 35, state: "open", draft: true, merged: false, merged_at: null, mergeable: true, updated_at: "2026-08-26T20:59:00Z",
+      number: 35, state: "open", draft: true, merged: false, merged_at: null, mergeable: true, updated_at: "2026-08-29T16:30:00Z",
       head: { sha: candidateCommit, ref: STACK_B_BRANCH, repo: { full_name: GITHUB_REPOSITORY } },
       base: { sha: EXPECTED_MAIN_COMMIT, ref: "main", repo: { full_name: GITHUB_REPOSITORY } }
     };
   }
   if (endpoint.includes(`/commits/${candidateCommit}/check-runs`)) {
-    const check_runs = REQUIRED_EXACT_HEAD_CHECKS.map((name, index) => ({ id: index + 1, name, head_sha: candidateCommit, status: "completed", conclusion: "success", started_at: "2026-08-26T20:59:00Z", completed_at: `2026-08-26T21:00:0${index}Z` }));
+    const check_runs = REQUIRED_EXACT_HEAD_CHECKS.map((name, index) => ({ id: index + 1, name, head_sha: candidateCommit, status: "completed", conclusion: "success", started_at: "2026-08-29T16:31:00Z", completed_at: `2026-08-29T16:32:0${index}Z` }));
     return { total_count: check_runs.length, check_runs };
   }
   throw new Error(`unexpected fixture endpoint ${endpoint}`);
 }
 
-function githubFetch({ sourceDate = "Wed, 26 Aug 2026 21:00:00 GMT", mutate = (value) => value } = {}) {
+function githubFetch({ sourceDate = "Sat, 29 Aug 2026 17:00:00 GMT", mutate = (value) => value } = {}) {
   const calls = [];
   const implementation = async (endpoint, options) => {
     calls.push({ endpoint, options });
@@ -195,7 +195,7 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
   const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
   assert.equal(observation.status, "current");
   assert.equal(observation.freshness, "current");
-  assert.equal(observation.observedAt, "2026-08-26T21:00:00.000Z");
+  assert.equal(observation.observedAt, "2026-08-29T17:00:00.000Z");
   assert.equal(observation.exactHeadChecks?.state, "success");
   assert.deepEqual(observation.exactHeadChecks?.requiredNames, REQUIRED_EXACT_HEAD_CHECKS);
   assert.equal(fixture.calls.length, 5);
@@ -231,7 +231,7 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
   await t.test("source substitution", async () => {
     const replacement = async (endpoint) => {
       const body = JSON.stringify(githubFixture(endpoint));
-      const response = new Response(body, { status: 200, headers: { date: "Wed, 26 Aug 2026 21:00:00 GMT" } });
+      const response = new Response(body, { status: 200, headers: { date: "Sat, 29 Aug 2026 17:00:00 GMT" } });
       Object.defineProperty(response, "url", { value: `${GITHUB_ORIGIN}/repos/attacker/substituted` });
       return response;
     };
