@@ -3466,16 +3466,24 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
     "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
   const launchIndex0003Path = path.join(repositoryRoot,
     "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json");
+  const launchIndex0004Path = path.join(repositoryRoot,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0004.json");
   assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0002Path)), false);
-  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0003Path)), true);
+  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0003Path)), false);
+  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0004Path)), true);
   assert.equal(sha256Bytes(fs.readFileSync(launchGenesisPath)),
     "c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a");
   assert.equal(sha256Bytes(fs.readFileSync(launchIndex0002Path)),
     "44d17cdb17fb3d96366f13880f109d6a65534e21aabc812a054bf7ab9ea0383f");
-  assert.equal(sha256Bytes(fs.readFileSync(launchStablePath)),
+  assert.equal(sha256Bytes(fs.readFileSync(launchIndex0003Path)),
     "9cb9ec902ddea6fbb6f0d410667a3cfbd8fbff4d6e789d4844d6956e25357960");
+  assert.equal(sha256Bytes(fs.readFileSync(launchIndex0004Path)),
+    "251b792c3f6be8e4c15779c32f122c20ddfb2a96c9fdd6c7d1d92c484d6d104b");
+  assert.equal(sha256Bytes(fs.readFileSync(launchStablePath)),
+    "251b792c3f6be8e4c15779c32f122c20ddfb2a96c9fdd6c7d1d92c484d6d104b");
   const launchIndex0002 = readJson(launchIndex0002Path);
   const launchIndex0003 = readJson(launchIndex0003Path);
+  const launchIndex0004 = readJson(launchIndex0004Path);
   assert.equal(launchIndex0002.indexId, "launch_studio_index_0002");
   assert.equal(launchIndex0002.indexHash,
     "f890fc80f851a7dbf4693c482fe84b47d406b0fed40b846c841b8588a8862a04");
@@ -3493,6 +3501,47 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
   assert.equal(launchIndex0003.engine.coreDependencies.find(({ path: dependencyPath }) =>
     dependencyPath.endsWith("/handoff-ledger.mjs")).sha256,
   "41709cfecfcab62cf393d7490e0e41729ca748d7c6cae739594e7816d4f789a9");
+  assert.equal(launchIndex0004.indexId, "launch_studio_index_0004");
+  assert.equal(launchIndex0004.successorMode, "dependency-pin-rollover");
+  assert.equal(launchIndex0004.previousIndexPath,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json");
+  assert.equal(launchIndex0004.previousIndexHash, launchIndex0003.indexHash);
+  assert.equal(launchIndex0004.indexHash,
+    "a0f33f7c59e1f43d67351972cd9caf3f02767c6938fb84744cb280f89d49ce67");
+  assert.deepEqual(launchIndex0004.entries, launchIndex0003.entries);
+  assert.equal(launchIndex0004.schemaVersion, launchIndex0003.schemaVersion);
+  assert.deepEqual(launchIndex0004.indexSchema, launchIndex0003.indexSchema);
+  assert.deepEqual(launchIndex0004.engine.coreDependencies, launchIndex0003.engine.coreDependencies);
+  const launchIndex0003Replay = launchIndex0003.engine.runtimeModules.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/replay.mjs"));
+  const launchIndex0004Replay = launchIndex0004.engine.runtimeModules.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/replay.mjs"));
+  assert.equal(launchIndex0003Replay.sha256,
+    "d7e4ba717bb1dd0dada5c61ff6d779ea6b7b74ec027a91c37d0eaf5921458a9f");
+  assert.equal(launchIndex0004Replay.sha256,
+    "47153fcac3855b1a05bd091170cc518676ba4b824c3085006961462a23cf008e");
+  assert.deepEqual(launchIndex0004.engine.runtimeModules.map((runtimeModule) =>
+    runtimeModule.path.endsWith("/replay.mjs")
+      ? { ...runtimeModule, sha256: launchIndex0003Replay.sha256 }
+      : runtimeModule), launchIndex0003.engine.runtimeModules);
+  assert.deepEqual({
+    ...launchIndex0004.engine,
+    runtimeModules: launchIndex0003.engine.runtimeModules
+  }, launchIndex0003.engine);
+  const launchRolloverMetadataKeys = new Set([
+    "createdAt",
+    "engine",
+    "indexHash",
+    "indexId",
+    "previousIndexHash",
+    "previousIndexPath"
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(launchIndex0004)
+      .filter(([key]) => !launchRolloverMetadataKeys.has(key))),
+    Object.fromEntries(Object.entries(launchIndex0003)
+      .filter(([key]) => !launchRolloverMetadataKeys.has(key)))
+  );
 });
 
 test("Action 006 deterministic synthetic approval and consumption rehearsal is lifecycle-complete and fail-closed", (t) => {
