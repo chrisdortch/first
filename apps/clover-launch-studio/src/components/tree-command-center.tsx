@@ -70,7 +70,7 @@ const heldAction: CurrentActionCard = {
   bindings: { protectedMain: null, pull34: null, pull35: null, deployment: unavailableDeployment, sourceFreshness: "unavailable", githubObservedAt: null, deploymentObservedAt: null, contradictions: ["live-readback-loading"] },
   requiredOwnerDecision: "HOLD",
   authority: { mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false },
-  rollback: "retain-draft-prs-and-delete-target-null-preview-in-separate-authorized-gate"
+  rollback: "retain-unmerged-pr35-and-delete-target-null-preview-in-separate-authorized-gate"
 };
 
 type LiveTruthState = {

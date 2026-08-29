@@ -15,6 +15,7 @@ import test from "node:test";
 import { getEnv } from "@vercel/functions";
 import {
   EXPECTED_MAIN_COMMIT,
+  EXPECTED_STACK_A_BASE_COMMIT,
   EXPECTED_STACK_A_HEAD,
   GITHUB_ORIGIN,
   GITHUB_REPOSITORY,
@@ -46,8 +47,9 @@ const candidateTree = hex40("b");
 const candidateParent = hex40("c");
 const runtimeDeploymentKey = `clover-${candidateCommit.slice(0, 24)}`;
 const runtimeRequestUrl = "https://clover-tree-command-center-abc.vercel.app/api/tree";
-const amendedStackAHead = "f7b9b7fe3d6d95365e145930f4576b3e97a799b9";
-const amendedStackAPathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
+const mergedStackAHead = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
+const mergedStackABase = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
+const integratedPathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
 
 const build = parseBuildProvenance({
   documentType: "clover-tree-build-provenance",
@@ -55,7 +57,7 @@ const build = parseBuildProvenance({
   commit: candidateCommit,
   tree: candidateTree,
   parent: candidateParent,
-  stackABase: EXPECTED_STACK_A_HEAD,
+  stackABase: EXPECTED_MAIN_COMMIT,
   runtimeDeploymentKey,
   cleanWorktree: true,
   changedPathCount: 17,
@@ -95,16 +97,16 @@ function githubFixture(endpoint) {
   }
   if (endpoint.endsWith("/pulls/34")) {
     return {
-      number: 34, state: "open", draft: true, merged: false, merged_at: null, mergeable: true, updated_at: "2026-08-26T20:58:00Z",
+      number: 34, state: "closed", draft: false, merged: true, merged_at: "2026-08-29T16:24:08Z", mergeable: null, updated_at: "2026-08-29T16:24:08Z",
       head: { sha: EXPECTED_STACK_A_HEAD, ref: STACK_A_BRANCH, repo: { full_name: GITHUB_REPOSITORY } },
-      base: { sha: EXPECTED_MAIN_COMMIT, ref: "main", repo: { full_name: GITHUB_REPOSITORY } }
+      base: { sha: EXPECTED_STACK_A_BASE_COMMIT, ref: "main", repo: { full_name: GITHUB_REPOSITORY } }
     };
   }
   if (endpoint.endsWith("/pulls/35")) {
     return {
       number: 35, state: "open", draft: true, merged: false, merged_at: null, mergeable: true, updated_at: "2026-08-26T20:59:00Z",
       head: { sha: candidateCommit, ref: STACK_B_BRANCH, repo: { full_name: GITHUB_REPOSITORY } },
-      base: { sha: EXPECTED_STACK_A_HEAD, ref: STACK_A_BRANCH, repo: { full_name: GITHUB_REPOSITORY } }
+      base: { sha: EXPECTED_MAIN_COMMIT, ref: "main", repo: { full_name: GITHUB_REPOSITORY } }
     };
   }
   if (endpoint.includes(`/commits/${candidateCommit}/check-runs`)) {
@@ -286,6 +288,29 @@ test("PR head and base drift remain visible and block the current Action Card", 
   assert.equal(reconciled.currentActionCard.reason, "source-refresh-required");
 });
 
+test("merged Stack A identity and state drift remain visible and block acceptance", async (t) => {
+  const cases = [
+    ["head", (value) => ({ ...value, head: { ...value.head, sha: hex40("f") } })],
+    ["base", (value) => ({ ...value, base: { ...value.base, sha: hex40("e") } })],
+    ["state", (value) => ({ ...value, state: "open", merged: false, merged_at: null })],
+    ["draft", (value) => ({ ...value, draft: true })]
+  ];
+  for (const [name, mutatePull] of cases) {
+    await t.test(name, async () => {
+      const fixture = githubFetch({
+        mutate: (value, endpoint) => endpoint.endsWith("/pulls/34") ? mutatePull(value) : value
+      });
+      const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+      assert.equal(github.status, "current");
+      const deployment = deploymentObservation();
+      const attestation = await compareDeploymentAttestation(build, sealedAttestation());
+      const reconciled = reconcileTreeTruth({ baseline, build, github, deployment, attestation });
+      assert.equal(reconciled.contradictions.value.includes("stack-a-pull-request"), true);
+      assert.equal(reconciled.currentActionCard.action, "HOLD");
+    });
+  }
+});
+
 test("deployment self uses an injected getEnv-compatible reader, reads only the allowlist and never supplies source time", () => {
   const environment = previewEnvironment({ CLOVER_PRIVATE_VALUE: "not-read" });
   const observation = deploymentObservation(environment);
@@ -403,9 +428,10 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
   assert.equal(rejected.differences.includes("build-invocation"), true);
 });
 
-test("live reconciliation and source provenance bind the amended Stack A head", async () => {
-  assert.equal(EXPECTED_STACK_A_HEAD, amendedStackAHead);
-  assert.equal(STACK_A_BASE, amendedStackAHead);
+test("live reconciliation binds merged Stack A and integrated Stack B provenance", async () => {
+  assert.equal(EXPECTED_STACK_A_HEAD, mergedStackAHead);
+  assert.equal(EXPECTED_MAIN_COMMIT, mergedStackABase);
+  assert.equal(STACK_A_BASE, mergedStackABase);
 
   const fixture = githubFetch();
   const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
@@ -417,9 +443,9 @@ test("live reconciliation and source provenance bind the amended Stack A head", 
 
   const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
   const provenance = deriveSourceProvenance({ repositoryRoot });
-  assert.equal(provenance.stackABase, amendedStackAHead);
+  assert.equal(provenance.stackABase, mergedStackABase);
   assert.equal(provenance.changedPathCount, 72);
-  assert.equal(provenance.pathListSha256, amendedStackAPathListSha256);
+  assert.equal(provenance.pathListSha256, integratedPathListSha256);
 });
 
 test("deployment attestation rejects every exact source identity substitution", async () => {

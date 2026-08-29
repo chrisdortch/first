@@ -14,7 +14,7 @@ import {
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const STACK_A_BASE = "f7b9b7fe3d6d95365e145930f4576b3e97a799b9";
+export const STACK_A_BASE = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
 export const TREE_INDEX_PATH = "portfolio/core/tree-program/index.json";
 export const LOCKFILE_PATH = "apps/clover-launch-studio/package-lock.json";
 export const PACKAGE_PATH = "apps/clover-launch-studio/package.json";

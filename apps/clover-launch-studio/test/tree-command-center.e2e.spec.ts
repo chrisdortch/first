@@ -27,7 +27,9 @@ const runtimeFindings = new WeakMap<Page, string[]>();
 const fixtureCommit = "a".repeat(40);
 const fixtureTree = "b".repeat(40);
 const fixtureParent = "c".repeat(40);
-const fixtureStackA = "f7b9b7fe3d6d95365e145930f4576b3e97a799b9";
+const fixtureMain = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
+const fixtureStackA = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
+const fixtureStackABase = "7d067d79bbff872846d6673b5f852518ba00fa7e";
 const fixtureIndexHash = "897b7967069f9ec699fcef76175dcdee8a91513b43b3cbf046f840760c7d34d0";
 const fixtureRuntimeDeploymentKey = `clover-${fixtureCommit.slice(0, 24)}`;
 
@@ -44,7 +46,7 @@ function canonicalJson(value: unknown) {
 function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
   const provenance = {
     documentType: "clover-tree-build-provenance", schemaVersion: "0.3.0", commit: fixtureCommit, tree: fixtureTree, parent: fixtureParent,
-    stackABase: fixtureStackA, runtimeDeploymentKey: fixtureRuntimeDeploymentKey, cleanWorktree: true, changedPathCount: 17, pathListSha256: "1".repeat(64), sourceManifestSha256: "2".repeat(64),
+    stackABase: fixtureMain, runtimeDeploymentKey: fixtureRuntimeDeploymentKey, cleanWorktree: true, changedPathCount: 17, pathListSha256: "1".repeat(64), sourceManifestSha256: "2".repeat(64),
     packageLockSha256: "3".repeat(64), treeProgramIndexId: "tree-program:index:0001", treeProgramIndexHash: fixtureIndexHash,
     treeProgramIndexRawSha256: "5".repeat(64), nodeVersion: "v24.16.0", nextVersion: "16.3.3", buildMode: "vercel-prebuilt-preview",
     buildCommand: "npm run build", buildOutputCommand: "vercel build --yes", buildInvocationId: `clover-build:${"6".repeat(64)}`,
@@ -66,9 +68,9 @@ function liveTruthFixtures({ attestationSourceCommit = fixtureCommit } = {}) {
   const github = {
     sourceId: "github-public-api", sourceIdentity: "github:chrisdortch/first", evidenceClass: "public-unauthenticated-github-api", status: "current", freshness: "current", observedAt: "2026-08-26T21:00:00.000Z", errorCode: null,
     endpoints: [], unauthenticated: true, retriesMaximum: 1, revalidateSeconds: 60, failures: [],
-    main: { sha: "7d067d79bbff872846d6673b5f852518ba00fa7e", tree: "d7c62bee356474d055e501ff185a1b3358657d06", protected: true, defaultBranch: "main" },
-    pull34: { number: 34, state: "open", draft: true, merged: false, mergeable: true, updatedAt: "2026-08-26T20:58:00.000Z", headSha: fixtureStackA, headRef: "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: "7d067d79bbff872846d6673b5f852518ba00fa7e", baseRef: "main", baseRepository: "chrisdortch/first" },
-    pull35: { number: 35, state: "open", draft: true, merged: false, mergeable: true, updatedAt: "2026-08-26T20:59:00.000Z", headSha: fixtureCommit, headRef: "feature/clover-tree-command-center-launch-studio-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: fixtureStackA, baseRef: "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826", baseRepository: "chrisdortch/first" },
+    main: { sha: fixtureMain, tree: "d0ac615a9f038c62fa6c0b1296312920b0dceb4d", protected: true, defaultBranch: "main" },
+    pull34: { number: 34, state: "closed", draft: false, merged: true, mergeable: null, updatedAt: "2026-08-29T16:24:08.000Z", headSha: fixtureStackA, headRef: "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: fixtureStackABase, baseRef: "main", baseRepository: "chrisdortch/first" },
+    pull35: { number: 35, state: "open", draft: true, merged: false, mergeable: true, updatedAt: "2026-08-26T20:59:00.000Z", headSha: fixtureCommit, headRef: "feature/clover-tree-command-center-launch-studio-v0.1-20260826", headRepository: "chrisdortch/first", baseSha: fixtureMain, baseRef: "main", baseRepository: "chrisdortch/first" },
     exactHeadChecks: { sha: fixtureCommit, state: "success", requiredNames: ["Clover required main gate (Node 22)", "Clover required main gate (Node 24)", "Tree Command Center (Node 22)", "Tree Command Center (Node 24)", "Tree browser and accessibility"], checks: [] }
   };
   const deploymentSelf = {

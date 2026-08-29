@@ -25,7 +25,7 @@ export type ModelLaunchPacket = {
 const common = {
   mode: "copy-then-open-supported-product" as const,
   sourceAnchors: [
-    "main@7d067d79bbff872846d6673b5f852518ba00fa7e",
+    "main@be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb",
     "tree-program:index:0001"
   ],
   preservationRules: [
