@@ -557,14 +557,22 @@ function exactDecorativeOccurrence(occurrence: Gate04Occurrence, phase: "prior" 
 }
 
 function exactLiveTruthTimestampOccurrence(occurrence: Gate04Occurrence) {
-  const priorHtml = "<dd>2026-08-26T21:00:00.000Z</dd>";
-  const currentHtml = "<dd>2026-08-29T17:00:00.000Z</dd>";
-  const exactTarget = occurrence.state === "base-view"
+  const exactGithubDefinitionTarget = occurrence.state === "base-view"
     && ((occurrence.view === "Today" && occurrence.selector === "div:nth-child(2) > dd")
       || (occurrence.view === "System Health" && occurrence.selector === ".observation-grid > div:nth-child(2) > dd"));
-  return exactTarget && occurrence.html === priorHtml
-    ? { currentHtml, substitution: "github-observed-at-source-time-advance" as const }
-    : null;
+  if (exactGithubDefinitionTarget && occurrence.html === "<dd>2026-08-26T21:00:00.000Z</dd>") {
+    return { currentHtml: "<dd>2026-08-29T17:00:00.000Z</dd>", substitution: "github-observed-at-source-time-advance" as const };
+  }
+  const exactRequestDefinitionTarget = occurrence.state === "base-view"
+    && ((occurrence.view === "Today" && occurrence.selector === "div:nth-child(3) > dd")
+      || (occurrence.view === "System Health" && occurrence.selector === ".observation-grid > div:nth-child(6) > dd"));
+  if (exactRequestDefinitionTarget && occurrence.html === "<dd>2026-08-26T21:00:01.000Z</dd>") {
+    return { currentHtml: "<dd>2026-08-29T17:00:01.000Z</dd>", substitution: "request-observed-at-time-advance" as const };
+  }
+  if (occurrence.html === "<strong>2026-08-26T21:00:00.000Z</strong>") {
+    return { currentHtml: "<strong>2026-08-29T17:00:00.000Z</strong>", substitution: "github-observed-at-source-time-advance" as const };
+  }
+  return null;
 }
 
 function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
@@ -613,7 +621,10 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
   const used = new Set<number>();
   const normalizedMatched: Gate04Occurrence[] = [];
   const substitutions: Array<Gate04Occurrence & { currentHtml: string; substitution: "tree-mark-leaf-aria-hidden" }> = [];
-  const liveTruthTimestampSubstitutions: Array<Gate04Occurrence & { currentHtml: string; substitution: "github-observed-at-source-time-advance" }> = [];
+  const liveTruthTimestampSubstitutions: Array<Gate04Occurrence & {
+    currentHtml: string;
+    substitution: "github-observed-at-source-time-advance" | "request-observed-at-time-advance";
+  }> = [];
   const decorativePriorMatches: Array<{ occurrence: Gate04Occurrence; sourceBucket: "live-dom-decorative-binding"; bindingKind: "tree-mark-leaf" | "navigation-ordinal"; bindingPredicate: "tree-mark-leaf-glyph" | "sidebar-navigation-ordinal"; bindingCanonicalSha256: string }> = [];
   for (const occurrence of prior) {
     const decoration = exactDecorativeOccurrence(occurrence, "prior");
@@ -683,7 +694,7 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
     liveTruthTimestampSubstitutions: {
       count: sortedLiveTruthTimestampSubstitutions.length,
       canonicalSha256: sha256(`${canonicalJson(sortedLiveTruthTimestampSubstitutions)}\n`),
-      exactKind: "github-observed-at-source-time-advance"
+      exactKinds: ["github-observed-at-source-time-advance", "request-observed-at-time-advance"]
     },
     decorativePriorOccurrences: {
       count: sortedDecorativePriorMatches.length,
