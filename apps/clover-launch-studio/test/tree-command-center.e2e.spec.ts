@@ -565,7 +565,7 @@ function exactLiveTruthTimestampOccurrence(occurrence: Gate04Occurrence) {
   }
   const exactRequestDefinitionTarget = occurrence.state === "base-view"
     && ((occurrence.view === "Today" && occurrence.selector === "div:nth-child(3) > dd")
-      || (occurrence.view === "System Health" && occurrence.selector === ".observation-grid > div:nth-child(6) > dd"));
+      || (occurrence.view === "System Health" && occurrence.selector === "div:nth-child(6) > dd"));
   if (exactRequestDefinitionTarget && occurrence.html === "<dd>2026-08-26T21:00:01.000Z</dd>") {
     return { currentHtml: "<dd>2026-08-29T17:00:01.000Z</dd>", substitution: "request-observed-at-time-advance" as const };
   }
