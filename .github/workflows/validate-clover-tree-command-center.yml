@@ -285,6 +285,24 @@ jobs:
             if (occurrence.selector !== inactiveSelector && !(occurrence.selector === activeSelector && occurrence.view === accessibleName)) return null;
             return { kind: 'navigation-ordinal', predicate: 'sidebar-navigation-ordinal', ordinal: match[1], accessibleName, currentHtml: occurrence.html };
           };
+          const exactLiveTruthTimestampOccurrence = (occurrence) => {
+            const exactGithubDefinitionTarget = occurrence.state === 'base-view'
+              && ((occurrence.view === 'Today' && occurrence.selector === 'div:nth-child(2) > dd')
+                || (occurrence.view === 'System Health' && occurrence.selector === '.observation-grid > div:nth-child(2) > dd'));
+            if (exactGithubDefinitionTarget && occurrence.html === '<dd>2026-08-26T21:00:00.000Z</dd>') {
+              return { currentHtml: '<dd>2026-08-29T17:00:00.000Z</dd>', substitution: 'github-observed-at-source-time-advance' };
+            }
+            const exactRequestDefinitionTarget = occurrence.state === 'base-view'
+              && ((occurrence.view === 'Today' && occurrence.selector === 'div:nth-child(3) > dd')
+                || (occurrence.view === 'System Health' && occurrence.selector === 'div:nth-child(6) > dd'));
+            if (exactRequestDefinitionTarget && occurrence.html === '<dd>2026-08-26T21:00:01.000Z</dd>') {
+              return { currentHtml: '<dd>2026-08-29T17:00:01.000Z</dd>', substitution: 'request-observed-at-time-advance' };
+            }
+            if (occurrence.html === '<strong>2026-08-26T21:00:00.000Z</strong>') {
+              return { currentHtml: '<strong>2026-08-29T17:00:00.000Z</strong>', substitution: 'github-observed-at-source-time-advance' };
+            }
+            return null;
+          };
           const validateDecorativeBindings = (scan, project) => {
             const bindings = scan.decorativeBindings;
             requireCondition(bindings?.sourceBucket === 'live-dom-decorative-binding' && Array.isArray(bindings.entries) && bindings.entries.length === 12, `${project} ${scan.view}|${scan.state} decorative binding inventory mismatch`);
@@ -350,6 +368,7 @@ jobs:
             const used = new Set();
             const matched = [];
             const substitutions = [];
+            const liveTruthTimestampSubstitutions = [];
             const decorativePriorMatches = [];
             for (const occurrence of prior) {
               const decoration = exactDecorativeOccurrence(occurrence, 'prior');
@@ -371,15 +390,19 @@ jobs:
                 if (decoration.kind === 'tree-mark-leaf') substitutions.push({ ...occurrence, currentHtml: decoration.currentHtml, substitution: 'tree-mark-leaf-aria-hidden' });
                 continue;
               }
-              const key = canonicalJson(occurrence);
+              const liveTruthTimestamp = exactLiveTruthTimestampOccurrence(occurrence);
+              const currentOccurrence = liveTruthTimestamp ? { ...occurrence, html: liveTruthTimestamp.currentHtml } : occurrence;
+              const key = canonicalJson(currentOccurrence);
               const candidates = (currentByKey.get(key) || []).filter((index) => !used.has(index));
               requireCondition(candidates.length === 1, `${project} Gate 0.4 current occurrence closure mismatch: ${key}`);
               used.add(candidates[0]);
               matched.push(occurrence);
+              if (liveTruthTimestamp) liveTruthTimestampSubstitutions.push({ ...occurrence, ...liveTruthTimestamp });
             }
             const extras = meaningfulCurrent.filter((_, index) => !used.has(index));
             requireCondition(extras.every(({ sourceBucket }) => sourceBucket === 'passes'), `${project} unmatched current incomplete target`);
             const sortedSubstitutions = sortedCanonical(substitutions);
+            const sortedLiveTruthTimestampSubstitutions = sortedCanonical(liveTruthTimestampSubstitutions);
             const sortedDecorativePriorMatches = sortedCanonical(decorativePriorMatches);
             const sortedExcludedAxeDecorative = sortedCanonical(excludedAxeDecorative);
             const sortedExtras = sortedCanonical(extras);
@@ -393,6 +416,11 @@ jobs:
               matchedOccurrences: matched.length,
               normalizedClosure: inventoryDigests(matched),
               substitutions: { count: sortedSubstitutions.length, canonicalSha256: sha256(`${canonicalJson(sortedSubstitutions)}\n`), exactKind: 'tree-mark-leaf-aria-hidden' },
+              liveTruthTimestampSubstitutions: {
+                count: sortedLiveTruthTimestampSubstitutions.length,
+                canonicalSha256: sha256(`${canonicalJson(sortedLiveTruthTimestampSubstitutions)}\n`),
+                exactKinds: ['github-observed-at-source-time-advance', 'request-observed-at-time-advance']
+              },
               decorativePriorOccurrences: {
                 count: sortedDecorativePriorMatches.length,
                 canonicalSha256: sha256(`${canonicalJson(sortedDecorativePriorMatches)}\n`),
@@ -513,6 +541,8 @@ jobs:
           }
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.matchedOccurrences, 0) === gate04.occurrenceCount, 'combined Gate 0.4 occurrence closure count mismatch');
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.substitutions.count, 0) === 60, 'combined Gate 0.4 exact semantic substitution count mismatch');
+          requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.liveTruthTimestampSubstitutions.count, 0) === 68, 'combined Gate 0.4 exact live-truth timestamp substitution count mismatch');
+          requireCondition(documents.every(({ document }) => canonicalJson(document.priorClosure.liveTruthTimestampSubstitutions.exactKinds) === canonicalJson(['github-observed-at-source-time-advance', 'request-observed-at-time-advance'])), 'combined Gate 0.4 exact live-truth timestamp substitution kinds mismatch');
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.decorativePriorOccurrences.count, 0) === 550, 'combined Gate 0.4 live-DOM decorative binding count mismatch');
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.decorativePriorOccurrences.treeMarkLeaf, 0) === 60, 'combined Gate 0.4 tree-leaf decorative binding count mismatch');
           requireCondition(documents.reduce((total, { document }) => total + document.priorClosure.decorativePriorOccurrences.navigationOrdinal, 0) === 490, 'combined Gate 0.4 navigation-ordinal decorative binding count mismatch');
@@ -543,6 +573,7 @@ jobs:
               violations: document.summary.accessibilityViolations, unresolved: document.summary.unresolved,
               gate04MatchedOccurrences: document.priorClosure.matchedOccurrences,
               gate04Substitutions: document.priorClosure.substitutions,
+              gate04LiveTruthTimestampSubstitutions: document.priorClosure.liveTruthTimestampSubstitutions,
               gate04DecorativePriorOccurrences: document.priorClosure.decorativePriorOccurrences,
               gate04ExcludedAxeDecorative: document.priorClosure.excludedAxeDecorative,
               gate04AdditionalPreviouslyPassing: document.priorClosure.additionalPreviouslyPassing
