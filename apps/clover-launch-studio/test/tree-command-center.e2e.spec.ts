@@ -556,6 +556,17 @@ function exactDecorativeOccurrence(occurrence: Gate04Occurrence, phase: "prior" 
   return { kind: "navigation-ordinal" as const, predicate: "sidebar-navigation-ordinal" as const, ordinal: match[1]!, accessibleName, currentHtml: occurrence.html };
 }
 
+function exactLiveTruthTimestampOccurrence(occurrence: Gate04Occurrence) {
+  const priorHtml = "<dd>2026-08-26T21:00:00.000Z</dd>";
+  const currentHtml = "<dd>2026-08-29T17:00:00.000Z</dd>";
+  const exactTarget = occurrence.state === "base-view"
+    && ((occurrence.view === "Today" && occurrence.selector === "div:nth-child(2) > dd")
+      || (occurrence.view === "System Health" && occurrence.selector === ".observation-grid > div:nth-child(2) > dd"));
+  return exactTarget && occurrence.html === priorHtml
+    ? { currentHtml, substitution: "github-observed-at-source-time-advance" as const }
+    : null;
+}
+
 function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
   const fullPrior = gate04PriorInventory();
   const prior = fullPrior.filter((occurrence) => occurrence.project === project);
@@ -602,6 +613,7 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
   const used = new Set<number>();
   const normalizedMatched: Gate04Occurrence[] = [];
   const substitutions: Array<Gate04Occurrence & { currentHtml: string; substitution: "tree-mark-leaf-aria-hidden" }> = [];
+  const liveTruthTimestampSubstitutions: Array<Gate04Occurrence & { currentHtml: string; substitution: "github-observed-at-source-time-advance" }> = [];
   const decorativePriorMatches: Array<{ occurrence: Gate04Occurrence; sourceBucket: "live-dom-decorative-binding"; bindingKind: "tree-mark-leaf" | "navigation-ordinal"; bindingPredicate: "tree-mark-leaf-glyph" | "sidebar-navigation-ordinal"; bindingCanonicalSha256: string }> = [];
   for (const occurrence of prior) {
     const decoration = exactDecorativeOccurrence(occurrence, "prior");
@@ -629,17 +641,21 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
       if (decoration.kind === "tree-mark-leaf") substitutions.push({ ...occurrence, currentHtml: decoration.currentHtml, substitution: "tree-mark-leaf-aria-hidden" });
       continue;
     }
-    const key = canonicalJson(occurrence);
+    const liveTruthTimestamp = exactLiveTruthTimestampOccurrence(occurrence);
+    const currentOccurrence = liveTruthTimestamp ? { ...occurrence, html: liveTruthTimestamp.currentHtml } : occurrence;
+    const key = canonicalJson(currentOccurrence);
     const candidates = (currentByKey.get(key) ?? []).filter((index) => !used.has(index));
     if (candidates.length !== 1) throw new Error(`Gate 0.4 occurrence closure expected one current target and found ${candidates.length}: ${key}`);
     used.add(candidates[0]!);
     normalizedMatched.push(occurrence);
+    if (liveTruthTimestamp) liveTruthTimestampSubstitutions.push({ ...occurrence, ...liveTruthTimestamp });
   }
   const extras = meaningfulCurrent.filter((_, index) => !used.has(index));
   if (extras.some(({ sourceBucket }) => sourceBucket !== "passes")) throw new Error("Gate 0.4 closure left an unmatched current incomplete target");
   const normalizedDigests = inventoryDigests(normalizedMatched);
   if (canonicalJson(normalizedDigests) !== canonicalJson(expectedProject)) throw new Error(`Gate 0.4 ${project} normalized closure mismatch`);
   const sortedSubstitutions = sortedCanonical(substitutions);
+  const sortedLiveTruthTimestampSubstitutions = sortedCanonical(liveTruthTimestampSubstitutions);
   const sortedDecorativePriorMatches = sortedCanonical(decorativePriorMatches);
   const sortedExcludedAxeDecorative = sortedCanonical(excludedAxeDecorative);
   const sortedExtras = sortedCanonical(extras);
@@ -663,6 +679,11 @@ function buildGate04PriorClosure(scans: AxeScanEvidence[], project: string) {
       count: sortedSubstitutions.length,
       canonicalSha256: sha256(`${canonicalJson(sortedSubstitutions)}\n`),
       exactKind: "tree-mark-leaf-aria-hidden"
+    },
+    liveTruthTimestampSubstitutions: {
+      count: sortedLiveTruthTimestampSubstitutions.length,
+      canonicalSha256: sha256(`${canonicalJson(sortedLiveTruthTimestampSubstitutions)}\n`),
+      exactKind: "github-observed-at-source-time-advance"
     },
     decorativePriorOccurrences: {
       count: sortedDecorativePriorMatches.length,
