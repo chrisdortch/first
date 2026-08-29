@@ -67,6 +67,12 @@ export type MaterialProgress = {
   recordedAt: string;
 };
 
+export type AppendProgressInput = Omit<MaterialProgress, "progressId" | "cursor" | "recordedAt"> & {
+  expectedSessionVersion: number;
+  expectedLastEventId: string | null;
+  expectedLastEventHash: string | null;
+};
+
 export class AppendOnlyViolationError extends Error {
   constructor() {
     super("Append-only boundary rejected the request");
@@ -119,6 +125,7 @@ function assertProgressRecord(item: MaterialProgress, sessionId: string, offset:
   if (
     !item ||
     typeof item !== "object" ||
+    Array.isArray(item) ||
     Object.keys(item).sort().join("\0") !== "cursor\0evidenceRef\0label\0progressId\0recordedAt\0sessionId\0state" ||
     item.sessionId !== sessionId ||
     item.cursor !== cursor ||
@@ -130,10 +137,12 @@ function assertProgressRecord(item: MaterialProgress, sessionId: string, offset:
     typeof item.evidenceRef !== "string" ||
     item.evidenceRef.length === 0 ||
     Buffer.byteLength(item.evidenceRef, "utf8") > 4096 ||
-    item.progressId !== `progress:${sha256(`${sessionId}\0${cursor}\0${item.evidenceRef}`)}` ||
     typeof item.recordedAt !== "string" ||
-    !Number.isFinite(Date.parse(item.recordedAt))
+    !Number.isFinite(Date.parse(item.recordedAt)) ||
+    new Date(Date.parse(item.recordedAt)).toISOString() !== item.recordedAt
   ) throw new AppendOnlyViolationError();
+  const { progressId, ...unsigned } = item;
+  if (progressId !== `progress:${sha256(canonicalJson(unsigned))}`) throw new AppendOnlyViolationError();
 }
 
 export interface LaunchStudioStore {
@@ -144,7 +153,7 @@ export interface LaunchStudioStore {
   readPayload(identity: OwnerIdentity, event: LaunchEvent): Promise<unknown>;
   putArtifact(identity: OwnerIdentity, sessionId: string, bytes: Uint8Array, mediaType: string): Promise<{ artifactId: string; digest: string; byteLength: number; mediaType: string }>;
   readArtifact(identity: OwnerIdentity, sessionId: string, artifactId: string): Promise<Buffer>;
-  appendProgress(identity: OwnerIdentity, sessionId: string, item: Omit<MaterialProgress, "progressId" | "cursor" | "recordedAt">): Promise<MaterialProgress>;
+  appendProgress(identity: OwnerIdentity, sessionId: string, item: AppendProgressInput): Promise<MaterialProgress>;
   exportSession(identity: OwnerIdentity, sessionId: string): Promise<Buffer>;
   restoreSession(identity: OwnerIdentity, expectedSessionId: string, archive: Uint8Array): Promise<LaunchSession>;
 }
@@ -158,6 +167,10 @@ type SessionCreationBinding = {
 
 function sameOwnerScope(left: OwnerScope, right: OwnerScope): boolean {
   return left.workspaceId === right.workspaceId && left.projectId === right.projectId && left.participantId === right.participantId;
+}
+
+function artifactStorageKey(sessionId: string, artifactId: string): string {
+  return `${sessionId}\0${artifactId}`;
 }
 
 export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
@@ -310,31 +323,48 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
     const digest = sha256(bytes);
     const artifactId = `artifact:${digest}`;
     const encrypted = await encryptPrivateBytes(bytes, `${sessionId}:${artifactId}:${mediaType}`, this.keys);
-    this.#artifacts.set(artifactId, { sessionId, scope: session, mediaType, byteLength: bytes.byteLength, encrypted });
+    this.#artifacts.set(artifactStorageKey(sessionId, artifactId), { sessionId, scope: session, mediaType, byteLength: bytes.byteLength, encrypted });
     return { artifactId, digest, byteLength: bytes.byteLength, mediaType };
   }
 
   async readArtifact(identity: OwnerIdentity, sessionId: string, artifactId: string) {
-    const artifact = this.#artifacts.get(artifactId);
-    if (!artifact || artifact.sessionId !== sessionId) throw new SessionNotFoundError();
+    const artifact = this.#artifacts.get(artifactStorageKey(sessionId, artifactId));
+    if (!artifact) throw new SessionNotFoundError();
     assertOwnerScope(identity, artifact.scope);
     const bytes = await decryptPrivateBytes(artifact.encrypted, `${sessionId}:${artifactId}:${artifact.mediaType}`, this.keys);
     if (`artifact:${sha256(bytes)}` !== artifactId || bytes.byteLength !== artifact.byteLength) throw new AppendOnlyViolationError();
     return bytes;
   }
 
-  async appendProgress(identity: OwnerIdentity, sessionId: string, item: Omit<MaterialProgress, "progressId" | "cursor" | "recordedAt">) {
+  async appendProgress(identity: OwnerIdentity, sessionId: string, item: AppendProgressInput) {
     return this.#withSessionMutation(sessionId, async () => {
-      const session = await this.getSession(identity, sessionId);
+      if (
+        !item ||
+        typeof item !== "object" ||
+        Array.isArray(item) ||
+        Object.keys(item).sort().join("\0") !== "evidenceRef\0expectedLastEventHash\0expectedLastEventId\0expectedSessionVersion\0label\0sessionId\0state"
+      ) throw new AppendOnlyViolationError();
+      const session = this.#sessions.get(sessionId);
+      if (!session) throw new SessionNotFoundError();
+      assertOwnerScope(identity, session);
+      if (
+        item.sessionId !== sessionId ||
+        item.expectedSessionVersion !== session.version ||
+        item.expectedLastEventId !== session.lastEventId ||
+        item.expectedLastEventHash !== session.lastEventHash
+      ) throw new AppendOnlyViolationError();
       const existing = this.#progress.get(sessionId) ?? [];
       const cursor = existing.length + 1;
       const recordedAt = new Date().toISOString();
-      const progress: MaterialProgress = {
-        ...item,
-        progressId: `progress:${sha256(`${sessionId}\0${cursor}\0${item.evidenceRef}`)}`,
+      const unsigned: Omit<MaterialProgress, "progressId"> = {
+        sessionId: item.sessionId,
         cursor,
+        label: item.label,
+        state: item.state,
+        evidenceRef: item.evidenceRef,
         recordedAt
       };
+      const progress: MaterialProgress = { ...unsigned, progressId: `progress:${sha256(canonicalJson(unsigned))}` };
       assertProgressRecord(progress, sessionId, existing.length);
       assertExportWithinLimit(session, this.#events.get(sessionId) ?? [], [...existing, progress]);
       existing.push(progress);

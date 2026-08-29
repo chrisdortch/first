@@ -7,6 +7,7 @@ import {
   MAX_REQUEST_BYTES,
   MAX_RESTORE_ARCHIVE_BASE64URL_BYTES,
   MAX_TRANSCRIPT_BYTES,
+  MAX_TRANSCRIPT_REQUEST_BYTES,
   readRuntimeConfig
 } from "./config";
 import { prepareProposalOnlyHandoff } from "./handoff-codex-adapter";
@@ -28,6 +29,10 @@ export class RequestRejectedError extends Error {
 
 type RuntimePorts = { store?: LaunchStudioStore };
 const runtime = globalThis as typeof globalThis & { __cloverLaunchStudioPorts?: RuntimePorts };
+const TRANSCRIPT_REQUEST_KEY_SETS = new Set([
+  ["operation", "reviewedText"].sort().join("\0"),
+  ["operation", "reviewedText", "expectedVersion", "predecessorEventId", "predecessorHash", "idempotencyKey"].sort().join("\0")
+]);
 
 export function registerLaunchStudioStore(store: LaunchStudioStore) {
   runtime.__cloverLaunchStudioPorts = { store };
@@ -49,11 +54,20 @@ export async function exactJson(
   maximumBytes = MAX_REQUEST_BYTES
 ): Promise<Record<string, unknown>> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) throw new RequestRejectedError();
+  const allowedKeySignature = [...new Set(allowedKeys)].sort().join("\0");
+  const effectiveMaximumBytes = maximumBytes === MAX_REQUEST_BYTES && TRANSCRIPT_REQUEST_KEY_SETS.has(allowedKeySignature)
+    ? MAX_TRANSCRIPT_REQUEST_BYTES
+    : maximumBytes;
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (!Number.isSafeInteger(declared) || declared < 0 || declared > maximumBytes) throw new RequestRejectedError();
+  if (!Number.isSafeInteger(declared) || declared < 0 || declared > effectiveMaximumBytes) throw new RequestRejectedError();
   const bytes = Buffer.from(await request.arrayBuffer());
-  if (bytes.byteLength > maximumBytes) throw new RequestRejectedError();
-  const value = JSON.parse(bytes.toString("utf8")) as unknown;
+  if (bytes.byteLength > effectiveMaximumBytes) throw new RequestRejectedError();
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new RequestRejectedError();
+  }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new RequestRejectedError();
   const object = value as Record<string, unknown>;
   if (Object.keys(object).some((key) => !allowedKeys.includes(key))) throw new RequestRejectedError();
@@ -167,6 +181,9 @@ export class LaunchSessionService {
     const proposal = prepareProposalOnlyHandoff(session);
     await this.repository.appendProgress(this.identity, sessionId, {
       sessionId,
+      expectedSessionVersion: session.version,
+      expectedLastEventId: session.lastEventId,
+      expectedLastEventHash: session.lastEventHash,
       label: "Handoff proposal prepared",
       state: "proposed",
       evidenceRef: proposal.proposalHash

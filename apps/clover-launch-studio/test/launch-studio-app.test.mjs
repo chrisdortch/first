@@ -196,6 +196,7 @@ test("accept_storage_encryption", () => {
 test("accept_artifact_cas", () => {
   assert.match(source.storage, /artifact:\$\{digest\}/);
   assert.match(source.storage, /artifact:\$\{sha256\(bytes\)\}/);
+  assert.match(source.storage, /artifactStorageKey\(sessionId, artifactId\)/);
 });
 
 test("accept_transcript_integrity", () => {
@@ -228,6 +229,107 @@ test("accept_export_restore", () => {
   assert.match(source.restoreRoute, /MAX_RESTORE_REQUEST_BYTES/);
   assert.match(source.restoreRoute, /service\.restore\(sessionId, archive\)/);
   assert.match(source.storage, /parsed\.session\.sessionId !== expectedSessionId/);
+});
+
+test("transcript request ceiling accepts every valid 48 KiB transcript without widening generic requests", async () => {
+  const runtime = await loadCompiledRuntime();
+  try {
+    const {
+      MAX_REQUEST_BYTES,
+      MAX_TRANSCRIPT_BYTES,
+      MAX_TRANSCRIPT_REQUEST_BYTES,
+      PROJECT_ID
+    } = runtime.config;
+    const { LaunchSessionService, RequestRejectedError, exactJson } = runtime.service;
+    assert.equal(MAX_TRANSCRIPT_REQUEST_BYTES, MAX_REQUEST_BYTES + (6 * MAX_TRANSCRIPT_BYTES));
+    assert.equal(MAX_TRANSCRIPT_REQUEST_BYTES, 360_448);
+
+    const createKeys = ["operation", "reviewedText"];
+    const editKeys = ["operation", "reviewedText", "expectedVersion", "predecessorEventId", "predecessorHash", "idempotencyKey"];
+    const requestFor = (body, declared = body.byteLength) => new Request("http://127.0.0.1/api/sessions", {
+      method: "POST",
+      headers: { "content-length": String(declared) },
+      body
+    });
+    const parse = (document, allowedKeys) => {
+      const body = Buffer.from(JSON.stringify(document), "utf8");
+      return exactJson(requestFor(body), allowedKeys);
+    };
+    const maximumTranscripts = [
+      ["ASCII", "a".repeat(MAX_TRANSCRIPT_BYTES)],
+      ["newline", "\n".repeat(MAX_TRANSCRIPT_BYTES)],
+      ["quote", "\"".repeat(MAX_TRANSCRIPT_BYTES)],
+      ["backslash", "\\".repeat(MAX_TRANSCRIPT_BYTES)],
+      ["control-character", "\0".repeat(MAX_TRANSCRIPT_BYTES)],
+      ["Unicode", "é".repeat(MAX_TRANSCRIPT_BYTES / 2)]
+    ];
+    for (const [label, reviewedText] of maximumTranscripts) {
+      assert.equal(Buffer.byteLength(reviewedText, "utf8"), MAX_TRANSCRIPT_BYTES, label);
+      assert.equal((await parse({ operation: "create", reviewedText }, createKeys)).reviewedText, reviewedText, `${label} create`);
+      assert.equal((await parse({
+        operation: "edit-reviewed-transcript",
+        reviewedText,
+        expectedVersion: Number.MAX_SAFE_INTEGER,
+        predecessorEventId: `event:${"a".repeat(64)}`,
+        predecessorHash: "b".repeat(64),
+        idempotencyKey: "maximum-transcript-edit-0001"
+      }, editKeys)).reviewedText, reviewedText, `${label} edit`);
+    }
+
+    const identity = {
+      providerSubject: "synthetic-transcript-owner",
+      participantId: `participant:${"a".repeat(64)}`,
+      projectId: PROJECT_ID,
+      authenticationMode: "synthetic"
+    };
+    const createCalls = [];
+    const editCalls = [];
+    const transcriptService = new LaunchSessionService(identity, {
+      createSession: async (_identity, _scope, reviewedText, idempotencyKey) => {
+        createCalls.push({ reviewedText, idempotencyKey });
+        return { sessionId: `session:${"a".repeat(64)}`, version: 1 };
+      },
+      appendEvent: async (_identity, _sessionId, input) => {
+        editCalls.push(input);
+        return input;
+      }
+    });
+    const maximumControlTranscript = maximumTranscripts.find(([label]) => label === "control-character")[1];
+    await transcriptService.create(maximumControlTranscript, "maximum-transcript-create-0001");
+    await transcriptService.editTranscript(`session:${"a".repeat(64)}`, {
+      reviewedText: maximumControlTranscript,
+      expectedVersion: 1,
+      predecessorEventId: `event:${"b".repeat(64)}`,
+      predecessorHash: "c".repeat(64),
+      idempotencyKey: "maximum-transcript-edit-0002"
+    });
+    assert.equal(Buffer.byteLength(createCalls[0].reviewedText, "utf8"), MAX_TRANSCRIPT_BYTES);
+    assert.equal(Buffer.byteLength(editCalls[0].payload.text, "utf8"), MAX_TRANSCRIPT_BYTES);
+
+    for (const overflow of ["a".repeat(MAX_TRANSCRIPT_BYTES + 1), `${"é".repeat(MAX_TRANSCRIPT_BYTES / 2)}é`]) {
+      await assert.rejects(transcriptService.create(overflow, "overflow-transcript-create-0001"), RequestRejectedError);
+      await assert.rejects(transcriptService.editTranscript(`session:${"a".repeat(64)}`, {
+        reviewedText: overflow,
+        expectedVersion: 1,
+        predecessorEventId: `event:${"b".repeat(64)}`,
+        predecessorHash: "c".repeat(64),
+        idempotencyKey: "overflow-transcript-edit-0001"
+      }), RequestRejectedError);
+    }
+    assert.equal(createCalls.length, 1);
+    assert.equal(editCalls.length, 1);
+
+    await assert.rejects(parse({ operation: "create", reviewedText: "allowed", extra: true }, createKeys), RequestRejectedError);
+    const malformed = Buffer.from('{"operation":"create","reviewedText":', "utf8");
+    await assert.rejects(exactJson(requestFor(malformed), createKeys), RequestRejectedError);
+    const genericOversize = Buffer.from(JSON.stringify({ payload: "x".repeat(MAX_REQUEST_BYTES) }), "utf8");
+    assert.equal(genericOversize.byteLength > MAX_REQUEST_BYTES, true);
+    assert.equal(genericOversize.byteLength < MAX_TRANSCRIPT_REQUEST_BYTES, true);
+    await assert.rejects(exactJson(requestFor(genericOversize), ["payload"]), RequestRejectedError);
+    await assert.rejects(exactJson(requestFor(Buffer.from("{}", "utf8"), MAX_TRANSCRIPT_REQUEST_BYTES + 1), createKeys), RequestRejectedError);
+  } finally {
+    rmSync(runtime.directory, { recursive: true, force: true });
+  }
 });
 
 test("event and restore runtime boundaries reject substitutions before mutation", async () => {
@@ -328,6 +430,60 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     );
     assert.equal((await creationStore.readEvents(identity, firstCreation.sessionId)).length, 1);
 
+    const sharedArtifactBytes = Buffer.from("session-scoped shared artifact", "utf8");
+    const [firstArtifact, secondArtifact] = await Promise.all([
+      creationStore.putArtifact(identity, firstCreation.sessionId, sharedArtifactBytes, "text/plain"),
+      creationStore.putArtifact(identity, concurrentCreations[0].sessionId, sharedArtifactBytes, "text/plain")
+    ]);
+    assert.equal(firstArtifact.artifactId, secondArtifact.artifactId);
+    assert.equal(firstArtifact.byteLength, sharedArtifactBytes.byteLength);
+    assert.equal(firstArtifact.mediaType, "text/plain");
+    assert.deepEqual(await creationStore.readArtifact(identity, firstCreation.sessionId, firstArtifact.artifactId), sharedArtifactBytes);
+    assert.deepEqual(await creationStore.readArtifact(identity, concurrentCreations[0].sessionId, secondArtifact.artifactId), sharedArtifactBytes);
+    const secondOnlyArtifact = await creationStore.putArtifact(
+      identity,
+      concurrentCreations[0].sessionId,
+      Buffer.from("second-session-only", "utf8"),
+      "application/octet-stream"
+    );
+    await assert.rejects(
+      creationStore.readArtifact(identity, firstCreation.sessionId, secondOnlyArtifact.artifactId),
+      SessionNotFoundError
+    );
+    await assert.rejects(
+      creationStore.readArtifact(secondIdentity, firstCreation.sessionId, firstArtifact.artifactId),
+      runtime.acl.AccessDeniedError
+    );
+
+    const artifactKey = Buffer.alloc(32, 17);
+    let resolvedArtifactKey = artifactKey;
+    const tamperArtifactStore = new InMemorySyntheticLaunchStudioStore({
+      current: async () => ({ keyRef: "artifact-tamper-key", version: 1, key: artifactKey }),
+      resolve: async () => ({ keyRef: "artifact-tamper-key", version: 1, key: resolvedArtifactKey })
+    });
+    const tamperArtifactSession = await tamperArtifactStore.createSession(
+      identity,
+      ownerScope(identity),
+      "artifact tamper source",
+      "artifact-tamper-create-0001"
+    );
+    const tamperArtifact = await tamperArtifactStore.putArtifact(
+      identity,
+      tamperArtifactSession.sessionId,
+      Buffer.from("authenticated artifact", "utf8"),
+      "text/plain"
+    );
+    resolvedArtifactKey = Buffer.alloc(32, 18);
+    await assert.rejects(
+      tamperArtifactStore.readArtifact(identity, tamperArtifactSession.sessionId, tamperArtifact.artifactId),
+      runtime.crypto.CiphertextRejectedError
+    );
+    resolvedArtifactKey = artifactKey;
+    assert.deepEqual(
+      await tamperArtifactStore.readArtifact(identity, tamperArtifactSession.sessionId, tamperArtifact.artifactId),
+      Buffer.from("authenticated artifact", "utf8")
+    );
+
     const sourceStore = new InMemorySyntheticLaunchStudioStore(keys);
     const sourceService = new LaunchSessionService(identity, sourceStore);
     const session = await sourceStore.createSession(
@@ -420,6 +576,59 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.equal(racingArchive.events.length, 2);
     assert.equal(racingArchive.session.version, racingArchive.events.length);
 
+    const handoffStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const handoffSession = await handoffStore.createSession(
+      identity,
+      ownerScope(identity),
+      "handoff snapshot source",
+      "handoff-snapshot-create-0001"
+    );
+    let signalProgressEntered;
+    let releaseProgress;
+    const progressEntered = new Promise((resolve) => { signalProgressEntered = resolve; });
+    const progressGate = new Promise((resolve) => { releaseProgress = resolve; });
+    const staleHandoffService = new LaunchSessionService(identity, {
+      getSession: (...args) => handoffStore.getSession(...args),
+      appendProgress: async (...args) => {
+        signalProgressEntered();
+        await progressGate;
+        return handoffStore.appendProgress(...args);
+      }
+    });
+    const staleHandoff = staleHandoffService.prepareHandoff(handoffSession.sessionId);
+    await progressEntered;
+    await handoffStore.appendEvent(identity, handoffSession.sessionId, {
+      type: "owner-feedback-recorded",
+      expectedVersion: handoffSession.version,
+      predecessorEventId: handoffSession.lastEventId,
+      predecessorHash: handoffSession.lastEventHash,
+      idempotencyKey: "handoff-snapshot-race-0001",
+      payload: { reviewedText: "concurrent owner edit" }
+    });
+    releaseProgress();
+    await assert.rejects(staleHandoff, AppendOnlyViolationError);
+    const afterStaleHandoff = JSON.parse((await handoffStore.exportSession(identity, handoffSession.sessionId)).toString("utf8"));
+    assert.equal(afterStaleHandoff.progress.length, 0);
+
+    let currentProgressExpectation;
+    const currentHandoffService = new LaunchSessionService(identity, {
+      getSession: (...args) => handoffStore.getSession(...args),
+      appendProgress: async (...args) => {
+        currentProgressExpectation = structuredClone(args[2]);
+        return handoffStore.appendProgress(...args);
+      }
+    });
+    const currentHandoffSnapshot = await handoffStore.getSession(identity, handoffSession.sessionId);
+    const currentProposal = await currentHandoffService.prepareHandoff(handoffSession.sessionId);
+    assert.equal(currentProposal.sessionId, currentHandoffSnapshot.sessionId);
+    assert.equal(currentProposal.sessionVersion, currentProgressExpectation.expectedSessionVersion);
+    assert.equal(currentProposal.lastEventHash, currentProgressExpectation.expectedLastEventHash);
+    assert.equal(currentProgressExpectation.expectedLastEventId, currentHandoffSnapshot.lastEventId);
+    assert.equal(currentProgressExpectation.evidenceRef, currentProposal.proposalHash);
+    const afterCurrentHandoff = JSON.parse((await handoffStore.exportSession(identity, handoffSession.sessionId)).toString("utf8"));
+    assert.equal(afterCurrentHandoff.progress.length, 1);
+    assert.equal(afterCurrentHandoff.progress[0].evidenceRef, currentProposal.proposalHash);
+
     const growthStore = new InMemorySyntheticLaunchStudioStore(keys);
     const growthService = new LaunchSessionService(identity, growthStore);
     let growthSession = await growthStore.createSession(
@@ -468,14 +677,21 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.equal(boundedArchive.byteLength <= MAX_EXPORT_BYTES, true);
     await assert.rejects(growthStore.appendProgress(identity, growthSession.sessionId, {
       sessionId: growthSession.sessionId,
+      expectedSessionVersion: growthSession.version,
+      expectedLastEventId: growthSession.lastEventId,
+      expectedLastEventHash: growthSession.lastEventHash,
       label: "Oversized synthetic progress",
       state: "proposed",
       evidenceRef: "e".repeat(MAX_EXPORT_BYTES)
     }), AppendOnlyViolationError);
     assert.deepEqual(await growthService.export(growthSession.sessionId), boundedArchive);
 
+    const sourceProgressSnapshot = await sourceStore.getSession(identity, session.sessionId);
     await sourceStore.appendProgress(identity, session.sessionId, {
       sessionId: session.sessionId,
+      expectedSessionVersion: sourceProgressSnapshot.version,
+      expectedLastEventId: sourceProgressSnapshot.lastEventId,
+      expectedLastEventHash: sourceProgressSnapshot.lastEventHash,
       label: "Synthetic source prepared",
       state: "proposed",
       evidenceRef: "synthetic-evidence-reference-0001"
@@ -535,6 +751,9 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     await assert.rejects(unknownTypeStore.getSession(identity, session.sessionId), SessionNotFoundError);
 
     const sourceDocument = JSON.parse(archive.toString("utf8"));
+    const { progressId: sourceProgressId, ...unsignedSourceProgress } = sourceDocument.progress[0];
+    assert.equal(sourceProgressId, `progress:${sha256(canonicalJson(unsignedSourceProgress))}`);
+    assert.equal(sourceProgressId, `progress:${sha256(canonicalJson(structuredClone(unsignedSourceProgress)))}`);
     const resealLastEvent = (document) => {
       const offset = document.events.length - 1;
       const unsigned = { ...document.events[offset] };
@@ -578,19 +797,36 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       document.events.at(-1)[field] = replacement;
       await assertRestoreRejectedWithoutMutation(resealLastEvent(document), `event ${field}`);
     }
-    const progressScopeDocument = structuredClone(sourceDocument);
-    progressScopeDocument.progress[0].sessionId = `session:${"e".repeat(64)}`;
-    await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(progressScopeDocument), "utf8"), "progress sessionId");
     for (const [field, replacement] of [
       ["cursor", 2],
       ["progressId", `progress:${"f".repeat(64)}`],
+      ["state", "complete"],
       ["state", "executed"],
-      ["label", "private reasoning token"]
+      ["label", "Synthetic source altered"],
+      ["label", "private reasoning token"],
+      ["recordedAt", "2026-08-29T12:00:00.000Z"],
+      ["recordedAt", "not-a-timestamp"],
+      ["evidenceRef", "synthetic-evidence-reference-substituted"],
+      ["sessionId", `session:${"e".repeat(64)}`]
     ]) {
       const document = structuredClone(sourceDocument);
       document.progress[0][field] = replacement;
       await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(document), "utf8"), `progress ${field}`);
     }
+    const addedProgressField = structuredClone(sourceDocument);
+    addedProgressField.progress[0].unexpected = false;
+    await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(addedProgressField), "utf8"), "progress field addition");
+    const deletedProgressField = structuredClone(sourceDocument);
+    delete deletedProgressField.progress[0].label;
+    await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(deletedProgressField), "utf8"), "progress field deletion");
+
+    const reorderedProgressDocument = structuredClone(sourceDocument);
+    reorderedProgressDocument.progress[0] = Object.fromEntries(Object.entries(reorderedProgressDocument.progress[0]).reverse());
+    const reorderedProgressArchive = Buffer.from(JSON.stringify(reorderedProgressDocument), "utf8");
+    assert.notDeepEqual(reorderedProgressArchive, archive);
+    const reorderedProgressStore = new InMemorySyntheticLaunchStudioStore(keys);
+    await reorderedProgressStore.restoreSession(identity, session.sessionId, reorderedProgressArchive);
+    assert.deepEqual(await reorderedProgressStore.exportSession(identity, session.sessionId), archive);
 
     const canonicalOversizeSessionId = `session:${"c".repeat(64)}`;
     const canonicalOversizeSession = {
