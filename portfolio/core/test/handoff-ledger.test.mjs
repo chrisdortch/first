@@ -7,7 +7,9 @@ import test from "node:test";
 
 import { canonicalize, sha256Bytes, sha256Canonical } from "../lib/canonical-json.mjs";
 import {
+  assessReceiptEvidenceScope,
   assertActionEnvelopeExecutable,
+  assertReceiptEvidenceScope,
   assertSanitizedHandoffDocument,
   canonicalOwnerApprovalStatement,
   computeHandoffHash,
@@ -20,7 +22,8 @@ import {
   validateHandoffLedger,
   validateIndependentReviewDecision,
   validateIndexTransition,
-  validateOwnerApprovalAttestation
+  validateOwnerApprovalAttestation,
+  validateProspectiveConsumptionTransition
 } from "../lib/handoff-ledger.mjs";
 import {
   assertBuildCharter,
@@ -3218,6 +3221,160 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
   assert.deepEqual(action006Receipt.observations
     .filter((observation) => observation.observationId === "observation:action006-vercel-inventory")
     .map((observation) => observation.sourceId), ["vercel"]);
+  assert.deepEqual(assessReceiptEvidenceScope(action006Receipt, action006), {
+    compliant: false,
+    allowedConnectors: ["github", "local-canonical-checkout"],
+    evidenceSourceIds: ["github", "local-canonical-checkout", "vercel"],
+    outOfScopeSourceIds: ["vercel"]
+  });
+  assert.throws(() => assertReceiptEvidenceScope(action006Receipt, action006),
+    (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION" &&
+      error.details.outOfScopeSourceIds[0] === "vercel");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+    envelopes: [action006],
+    receipts: [action006Receipt]
+  }), (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  const compliantReceiptValue = clone(action006Receipt);
+  compliantReceiptValue.observations = compliantReceiptValue.observations
+    .filter(({ sourceId }) => sourceId !== "vercel");
+  const compliantReceipt = sealHandoffDocument(compliantReceiptValue, "receiptHash");
+  const compliantConsumptionValue = clone(index0006);
+  compliantConsumptionValue.entries[4].receiptHash = compliantReceipt.receiptHash;
+  const compliantConsumption = sealHandoffDocument(compliantConsumptionValue, "indexHash");
+  assert.deepEqual(validateProspectiveConsumptionTransition(index0005, compliantConsumption, {
+    envelopes: [action006],
+    receipts: [compliantReceipt]
+  }), {
+    valid: true,
+    transitionedEntries: 1,
+    appendedEntries: 0,
+    connectorScope: {
+      compliant: true,
+      allowedConnectors: ["github", "local-canonical-checkout"],
+      evidenceSourceIds: ["github", "local-canonical-checkout"],
+      outOfScopeSourceIds: []
+    }
+  });
+
+  const staleReceipt = clone(action006Receipt);
+  staleReceipt.observations = staleReceipt.observations.filter(({ sourceId }) => sourceId !== "vercel");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+    envelopes: [action006],
+    receipts: [staleReceipt]
+  }), (error) => error.code === "HANDOFF_HASH_MISMATCH");
+  const staleEnvelope = clone(action006);
+  staleEnvelope.scope.allowedConnectors.push("vercel");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+    envelopes: [staleEnvelope],
+    receipts: [action006Receipt]
+  }), (error) => error.code === "HANDOFF_HASH_MISMATCH");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+    envelopes: [action006],
+    receipts: [compliantReceipt]
+  }), (error) => error.code === "HANDOFF_RECEIPT_SUBSTITUTION");
+  const resealedEnvelope = sealHandoffDocument(staleEnvelope, "envelopeHash");
+  const mutuallySubstitutedReceiptValue = clone(action006Receipt);
+  mutuallySubstitutedReceiptValue.envelopeHash = resealedEnvelope.envelopeHash;
+  const mutuallySubstitutedReceipt = sealHandoffDocument(mutuallySubstitutedReceiptValue, "receiptHash");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+    envelopes: [resealedEnvelope],
+    receipts: [mutuallySubstitutedReceipt]
+  }), (error) => error.code === "HANDOFF_ENVELOPE_SUBSTITUTION");
+
+  for (const invalidEnvelope of [
+    { ...clone(action006), envelopeHash: "0".repeat(64) },
+    { ...clone(action006), unknownProspectiveField: true }
+  ]) {
+    assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+      envelopes: [invalidEnvelope],
+      receipts: [action006Receipt]
+    }), (error) => ["HANDOFF_HASH_MISMATCH", "HANDOFF_SCHEMA_VIOLATION"].includes(error.code));
+  }
+  for (const invalidReceipt of [
+    { ...clone(action006Receipt), receiptHash: "0".repeat(64) },
+    { ...clone(action006Receipt), unknownProspectiveField: true }
+  ]) {
+    assert.throws(() => validateProspectiveConsumptionTransition(index0005, index0006, {
+      envelopes: [action006],
+      receipts: [invalidReceipt]
+    }), (error) => ["HANDOFF_HASH_MISMATCH", "HANDOFF_SCHEMA_VIOLATION"].includes(error.code));
+  }
+
+  const wrongEnvelopeReceiptValue = clone(compliantReceipt);
+  wrongEnvelopeReceiptValue.envelopeId = "handoff-action:005:launch-studio-phase-b-source";
+  const wrongEnvelopeReceipt = sealHandoffDocument(wrongEnvelopeReceiptValue, "receiptHash");
+  const wrongEnvelopeConsumptionValue = clone(compliantConsumption);
+  wrongEnvelopeConsumptionValue.entries[4].receiptHash = wrongEnvelopeReceipt.receiptHash;
+  const wrongEnvelopeConsumption = sealHandoffDocument(wrongEnvelopeConsumptionValue, "indexHash");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, wrongEnvelopeConsumption, {
+    envelopes: [action006],
+    receipts: [wrongEnvelopeReceipt]
+  }), (error) => error.code === "HANDOFF_RECEIPT_SUBSTITUTION");
+  const wrongActionReceiptValue = clone(compliantReceipt);
+  wrongActionReceiptValue.actionId = "CLOVER-2026-08-24-005";
+  const wrongActionReceipt = sealHandoffDocument(wrongActionReceiptValue, "receiptHash");
+  const wrongActionConsumptionValue = clone(compliantConsumption);
+  wrongActionConsumptionValue.entries[4].receiptHash = wrongActionReceipt.receiptHash;
+  const wrongActionConsumption = sealHandoffDocument(wrongActionConsumptionValue, "indexHash");
+  assert.throws(() => validateProspectiveConsumptionTransition(index0005, wrongActionConsumption, {
+    envelopes: [action006],
+    receipts: [wrongActionReceipt]
+  }), (error) => error.code === "HANDOFF_RECEIPT_SUBSTITUTION");
+  for (const candidates of [
+    { envelopes: [], receipts: [compliantReceipt] },
+    { envelopes: [action006], receipts: [] },
+    { envelopes: [action006, clone(action006)], receipts: [compliantReceipt] },
+    { envelopes: [action006], receipts: [compliantReceipt, clone(compliantReceipt)] }
+  ]) {
+    assert.throws(() => validateProspectiveConsumptionTransition(index0005, compliantConsumption, candidates),
+      (error) => error.code === "HANDOFF_INDEX_INCONSISTENT");
+  }
+
+  for (const [invalidSourceId, expectedCode] of [
+    ["clover-context-gateway", "HANDOFF_CONNECTOR_SCOPE_VIOLATION"],
+    ["Vercel", "HANDOFF_SCHEMA_VIOLATION"],
+    ["vercel-api", "HANDOFF_SCHEMA_VIOLATION"],
+    ["../vercel", "HANDOFF_SCHEMA_VIOLATION"],
+    [" vercel", "HANDOFF_SCHEMA_VIOLATION"],
+    ["", "HANDOFF_SCHEMA_VIOLATION"],
+    [null, "HANDOFF_SCHEMA_VIOLATION"]
+  ]) {
+    const malformedReceiptValue = clone(compliantReceipt);
+    malformedReceiptValue.observations[0].sourceId = invalidSourceId;
+    malformedReceiptValue.observations[0] = sealHandoffDocument(
+      malformedReceiptValue.observations[0], "evidenceHash");
+    const malformedReceipt = sealHandoffDocument(malformedReceiptValue, "receiptHash");
+    const malformedConsumptionValue = clone(compliantConsumption);
+    malformedConsumptionValue.entries[4].receiptHash = malformedReceipt.receiptHash;
+    const malformedConsumption = sealHandoffDocument(malformedConsumptionValue, "indexHash");
+    assert.throws(() => validateProspectiveConsumptionTransition(index0005, malformedConsumption, {
+      envelopes: [action006],
+      receipts: [malformedReceipt]
+    }), (error) => error.code === expectedCode);
+  }
+  const structurallyValidHistoricalConsumption = validateIndexTransition(index0005, index0006);
+  assert.deepEqual(structurallyValidHistoricalConsumption,
+    { valid: true, transitionedEntries: 1, appendedEntries: 0 });
+  const allowedOnlyReceipt = clone(action006Receipt);
+  allowedOnlyReceipt.observations = allowedOnlyReceipt.observations.filter(({ sourceId }) => sourceId !== "vercel");
+  assert.equal(assessReceiptEvidenceScope(allowedOnlyReceipt, action006).compliant, true);
+  for (const invalidSourceId of ["Vercel", "../vercel", " vercel", "", null]) {
+    const malformed = clone(action006Receipt);
+    malformed.observations[0].sourceId = invalidSourceId;
+    assert.throws(() => assessReceiptEvidenceScope(malformed, action006),
+      (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  }
+  const duplicatedAllowlist = clone(action006);
+  duplicatedAllowlist.scope.allowedConnectors.push("github");
+  assert.throws(() => assessReceiptEvidenceScope(action006Receipt, duplicatedAllowlist),
+    (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
+  const invalidApproval = clone(action006Review);
+  invalidApproval.decision = "approve";
+  const sealedInvalidApproval = sealHandoffDocument(invalidApproval, "decisionHash");
+  assert.throws(() => validateIndependentReviewDecision(sealedInvalidApproval, {
+    receipt: action006Receipt,
+    envelope: action006
+  }), (error) => error.code === "HANDOFF_CONNECTOR_SCOPE_VIOLATION");
   assert.equal(action006Receipt.outcome, "succeeded");
   assert.equal(sha256Bytes(fs.readFileSync(action006ReceiptPath)),
     "a2d1a11c128b72aa58ea7a59e2303e6ba011d113f458cc797a09f6581f68a823");
@@ -3301,17 +3458,90 @@ test("Action 006 connector-scope review HOLD preserves physical success and adva
   assert.equal(fs.lstatSync(action006ReviewIndexPath).isSymbolicLink(), false);
   assert.equal(sha256Bytes(fs.readFileSync(path.join(repositoryRoot,
     "portfolio/core/lib/handoff-ledger.mjs"))),
-  "e169202b2d750fb79b5a76a7d9e67094e5cb8035cca6db9617cd0b2058837dc0");
+  "41709cfecfcab62cf393d7490e0e41729ca748d7c6cae739594e7816d4f789a9");
   const launchStablePath = path.join(repositoryRoot, "portfolio/core/launch-studio/index.json");
-  const launchImmutablePath = path.join(repositoryRoot,
+  const launchGenesisPath = path.join(repositoryRoot,
     "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
-  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchImmutablePath)), true);
-  assert.equal(sha256Bytes(fs.readFileSync(launchStablePath)),
+  const launchIndex0002Path = path.join(repositoryRoot,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+  const launchIndex0003Path = path.join(repositoryRoot,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json");
+  const launchIndex0004Path = path.join(repositoryRoot,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0004.json");
+  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0002Path)), false);
+  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0003Path)), false);
+  assert.equal(fs.readFileSync(launchStablePath).equals(fs.readFileSync(launchIndex0004Path)), true);
+  assert.equal(sha256Bytes(fs.readFileSync(launchGenesisPath)),
     "c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a");
-  const launchIndex = readJson(launchImmutablePath);
-  assert.equal(launchIndex.indexId, "launch_studio_index_0001");
-  assert.equal(launchIndex.indexHash,
-    "97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89");
+  assert.equal(sha256Bytes(fs.readFileSync(launchIndex0002Path)),
+    "44d17cdb17fb3d96366f13880f109d6a65534e21aabc812a054bf7ab9ea0383f");
+  assert.equal(sha256Bytes(fs.readFileSync(launchIndex0003Path)),
+    "9cb9ec902ddea6fbb6f0d410667a3cfbd8fbff4d6e789d4844d6956e25357960");
+  assert.equal(sha256Bytes(fs.readFileSync(launchIndex0004Path)),
+    "251b792c3f6be8e4c15779c32f122c20ddfb2a96c9fdd6c7d1d92c484d6d104b");
+  assert.equal(sha256Bytes(fs.readFileSync(launchStablePath)),
+    "251b792c3f6be8e4c15779c32f122c20ddfb2a96c9fdd6c7d1d92c484d6d104b");
+  const launchIndex0002 = readJson(launchIndex0002Path);
+  const launchIndex0003 = readJson(launchIndex0003Path);
+  const launchIndex0004 = readJson(launchIndex0004Path);
+  assert.equal(launchIndex0002.indexId, "launch_studio_index_0002");
+  assert.equal(launchIndex0002.indexHash,
+    "f890fc80f851a7dbf4693c482fe84b47d406b0fed40b846c841b8588a8862a04");
+  assert.equal(launchIndex0002.engine.coreDependencies.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/handoff-ledger.mjs")).sha256,
+  "0ca8538ee50dcd4f51c7ec4e5bbef7b51eb16970e734993564bf7d908c7fc13b");
+  assert.equal(launchIndex0003.indexId, "launch_studio_index_0003");
+  assert.equal(launchIndex0003.successorMode, "dependency-pin-rollover");
+  assert.equal(launchIndex0003.previousIndexPath,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0002.json");
+  assert.equal(launchIndex0003.previousIndexHash, launchIndex0002.indexHash);
+  assert.deepEqual(launchIndex0003.entries, launchIndex0002.entries);
+  assert.equal(launchIndex0003.indexHash,
+    "71e96c08c1cca497b8929a3c265817fa20a533833d7dca57e79e3f7ef99f4102");
+  assert.equal(launchIndex0003.engine.coreDependencies.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/handoff-ledger.mjs")).sha256,
+  "41709cfecfcab62cf393d7490e0e41729ca748d7c6cae739594e7816d4f789a9");
+  assert.equal(launchIndex0004.indexId, "launch_studio_index_0004");
+  assert.equal(launchIndex0004.successorMode, "dependency-pin-rollover");
+  assert.equal(launchIndex0004.previousIndexPath,
+    "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0003.json");
+  assert.equal(launchIndex0004.previousIndexHash, launchIndex0003.indexHash);
+  assert.equal(launchIndex0004.indexHash,
+    "a0f33f7c59e1f43d67351972cd9caf3f02767c6938fb84744cb280f89d49ce67");
+  assert.deepEqual(launchIndex0004.entries, launchIndex0003.entries);
+  assert.equal(launchIndex0004.schemaVersion, launchIndex0003.schemaVersion);
+  assert.deepEqual(launchIndex0004.indexSchema, launchIndex0003.indexSchema);
+  assert.deepEqual(launchIndex0004.engine.coreDependencies, launchIndex0003.engine.coreDependencies);
+  const launchIndex0003Replay = launchIndex0003.engine.runtimeModules.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/replay.mjs"));
+  const launchIndex0004Replay = launchIndex0004.engine.runtimeModules.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/replay.mjs"));
+  assert.equal(launchIndex0003Replay.sha256,
+    "d7e4ba717bb1dd0dada5c61ff6d779ea6b7b74ec027a91c37d0eaf5921458a9f");
+  assert.equal(launchIndex0004Replay.sha256,
+    "47153fcac3855b1a05bd091170cc518676ba4b824c3085006961462a23cf008e");
+  assert.deepEqual(launchIndex0004.engine.runtimeModules.map((runtimeModule) =>
+    runtimeModule.path.endsWith("/replay.mjs")
+      ? { ...runtimeModule, sha256: launchIndex0003Replay.sha256 }
+      : runtimeModule), launchIndex0003.engine.runtimeModules);
+  assert.deepEqual({
+    ...launchIndex0004.engine,
+    runtimeModules: launchIndex0003.engine.runtimeModules
+  }, launchIndex0003.engine);
+  const launchRolloverMetadataKeys = new Set([
+    "createdAt",
+    "engine",
+    "indexHash",
+    "indexId",
+    "previousIndexHash",
+    "previousIndexPath"
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(launchIndex0004)
+      .filter(([key]) => !launchRolloverMetadataKeys.has(key))),
+    Object.fromEntries(Object.entries(launchIndex0003)
+      .filter(([key]) => !launchRolloverMetadataKeys.has(key)))
+  );
 });
 
 test("Action 006 deterministic synthetic approval and consumption rehearsal is lifecycle-complete and fail-closed", (t) => {

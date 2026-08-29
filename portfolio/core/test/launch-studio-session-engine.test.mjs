@@ -33,8 +33,69 @@ const { fixture, events } = loadSyntheticInputs();
 function clone(value) { return structuredClone(value); }
 function selfHash(value) { return { ...value, recordHash: sha256Canonical(value) }; }
 function reseal(value) { const copy = clone(value); delete copy.recordHash; return selfHash(copy); }
+function sealIndex(value) { const copy = clone(value); delete copy.indexHash; return { ...copy, indexHash: sha256Canonical(copy) }; }
 function tempRoot(prefix) { return fs.mkdtempSync(path.join(os.tmpdir(), prefix)); }
 function eventBytes(list = events) { return `${list.map(canonicalize).join("\n")}\n`; }
+const launchIndexPath = (number) =>
+  `portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-${String(number).padStart(4, "0")}.json`;
+const stableLaunchIndexPath = "portfolio/core/launch-studio/index.json";
+
+function indexSchemaBinding(index) {
+  return index.schemaVersion === "0.1.0"
+    ? index.schemas.find(({ path: schemaPath }) => schemaPath.endsWith("/launch-session-index.schema.json"))
+    : index.indexSchema;
+}
+
+function copyRepositoryFile(root, relativePath) {
+  const target = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(path.join(REPOSITORY_ROOT, relativePath), target);
+}
+
+function writeCanonicalJson(root, relativePath, value) {
+  const target = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, `${canonicalize(value)}\n`);
+}
+
+function createLaunchIndexFixtureRoot(prefix) {
+  const root = tempRoot(prefix);
+  const latest = readCanonicalJson(path.join(REPOSITORY_ROOT, stableLaunchIndexPath));
+  const referencedPaths = new Set([
+    indexSchemaBinding(latest).path,
+    ...latest.engine.runtimeModules.map((entry) => entry.path),
+    ...latest.engine.coreDependencies.map((entry) => entry.path),
+    ...latest.schemas.map((entry) => entry.path),
+    latest.profileCatalog.path,
+    latest.syntheticSession.reportPath,
+    ...latest.entries.flatMap((entry) => Object.entries(entry)
+      .filter(([key]) => key.endsWith("Path")).map(([, value]) => value))
+  ]);
+  for (const relativePath of referencedPaths) copyRepositoryFile(root, relativePath);
+  for (const number of [1, 2, 3, 4]) copyRepositoryFile(root, launchIndexPath(number));
+  copyRepositoryFile(root, stableLaunchIndexPath);
+  return {
+    root,
+    latest,
+    stablePath: path.join(root, stableLaunchIndexPath),
+    immutablePath: path.join(root, launchIndexPath(4)),
+    verificationOptions: {
+      repositoryRoot: root,
+      stableIndexPath: path.join(root, stableLaunchIndexPath),
+      immutableIndexPath: path.join(root, launchIndexPath(4))
+    }
+  };
+}
+
+function createIndexSchemaFixtureRoot(index, prefix) {
+  const root = tempRoot(prefix);
+  const schemaPaths = new Set([
+    ...index.schemas.map((entry) => entry.path),
+    indexSchemaBinding(index).path
+  ]);
+  for (const relativePath of schemaPaths) copyRepositoryFile(root, relativePath);
+  return root;
+}
 const INDEX_VERIFY_OPTIONS = {};
 const ZERO_USAGE = { modelCalls: 0, implementationAgents: 0, ciRuns: 0, previews: 0, elapsedMinutes: 0, providerUsage: 0, purchaseUsd: 0, repairLoops: 0 };
 
@@ -43,7 +104,7 @@ function participantRole(overrides = {}) {
   return { ...unsigned, recordHash: sha256Canonical(unsigned) };
 }
 
-test("the frozen implementation contains exactly 46 authorized paths", () => {
+test("the append-only dependency-pin successor contains exactly 50 authorized paths", () => {
   function walk(directory) {
     return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
       const absolute = path.join(directory, entry.name);
@@ -51,7 +112,7 @@ test("the frozen implementation contains exactly 46 authorized paths", () => {
     });
   }
   const paths = [...walk(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio")), "portfolio/core/test/launch-studio-session-engine.test.mjs"].sort();
-  assert.equal(paths.length, 46);
+  assert.equal(paths.length, 50);
   assert.ok(paths.every((entry) => entry.startsWith("portfolio/core/launch-studio/") || entry === "portfolio/core/test/launch-studio-session-engine.test.mjs"));
   assert.equal(SCHEMA_FILES.length, 29);
 });
@@ -573,18 +634,75 @@ test("fixture graph rejects independently resealed scope, source, and record sub
   assert.throws(() => assertFixtureGraph(fixture, earlyEvidence), /early event 1 evidence/);
 });
 
+test("every historical and current index requires its exact recorded schema file bytes", () => {
+  for (const number of [1, 2, 3, 4]) {
+    const index = readCanonicalJson(path.join(REPOSITORY_ROOT, launchIndexPath(number)));
+    const binding = indexSchemaBinding(index);
+
+    {
+      const root = createIndexSchemaFixtureRoot(index, `launch-index-${number}-altered-schema-`);
+      try {
+        fs.appendFileSync(path.join(root, binding.path), " ");
+        assert.throws(() => verifyLaunchIndexDocument(index, { repositoryRoot: root }),
+          /schema digest mismatch/iu);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+
+    {
+      const root = createIndexSchemaFixtureRoot(index, `launch-index-${number}-stale-schema-pin-`);
+      try {
+        const stale = clone(index);
+        indexSchemaBinding(stale).sha256 = "0".repeat(64);
+        assert.throws(() => verifyLaunchIndexDocument(sealIndex(stale), { repositoryRoot: root }),
+          /schema digest mismatch/iu);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+
+    {
+      const root = createIndexSchemaFixtureRoot(index, `launch-index-${number}-schema-path-`);
+      try {
+        const substituted = clone(index);
+        indexSchemaBinding(substituted).path =
+          "portfolio/core/launch-studio/versions/0.1.0/schemas/substituted-index.schema.json";
+        assert.throws(() => verifyLaunchIndexDocument(sealIndex(substituted), { repositoryRoot: root }),
+          /substituted schema path|schema path substitution/iu);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+
+    {
+      const root = createIndexSchemaFixtureRoot(index, `launch-index-${number}-missing-schema-`);
+      try {
+        fs.unlinkSync(path.join(root, binding.path));
+        assert.throws(() => verifyLaunchIndexDocument(index, { repositoryRoot: root }),
+          /schema path does not exist/iu);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+
+    {
+      const root = createIndexSchemaFixtureRoot(index, `launch-index-${number}-schema-symlink-`);
+      try {
+        const schemaPath = path.join(root, binding.path);
+        fs.unlinkSync(schemaPath);
+        fs.symlinkSync(path.join(REPOSITORY_ROOT, binding.path), schemaPath);
+        assert.throws(() => verifyLaunchIndexDocument(index, { repositoryRoot: root }),
+          /schema path crosses a symbolic link/iu);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  }
+});
+
 test("stable index rejects resealed hash, path, missing, symlink, schema, and report substitution", () => {
   const index = readCanonicalJson(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/index.json"));
   const reseal = (value) => { const copy = clone(value); delete copy.indexHash; return { ...copy, indexHash: sha256Canonical(copy) }; };
   const invalidIndexTime = clone(index); invalidIndexTime.createdAt = "2026-02-30T12:23:00.000Z";
   assert.throws(() => verifyLaunchIndexDocument(reseal(invalidIndexTime), INDEX_VERIFY_OPTIONS), /real canonical|index createdAt/);
-  const futureEntry = clone(index); futureEntry.entries[0].recordedAt = "2026-08-23T12:23:00.001Z";
+  const futureEntry = clone(index);
+  futureEntry.entries[0].recordedAt = new Date(Date.parse(index.createdAt) + 1).toISOString();
   assert.throws(() => verifyLaunchIndexDocument(reseal(futureEntry), INDEX_VERIFY_OPTIONS), /cannot postdate its containing index/);
   const prematureEntry = clone(index); prematureEntry.entries[0].recordedAt = "2026-08-23T12:21:59.999Z";
   assert.throws(() => verifyLaunchIndexDocument(reseal(prematureEntry), INDEX_VERIFY_OPTIONS), /chronology is inconsistent/);
   const nonIncreasingSuccessor = clone(index);
-  Object.assign(nonIncreasingSuccessor, { indexId: "launch_studio_index_0002", previousIndexPath: "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json", previousIndexHash: index.indexHash });
-  nonIncreasingSuccessor.entries.push({ ...clone(index.entries[0]), sequence: 2, sessionId: "launch_session_synthetic_owner_002", recordedAt: "2026-08-23T12:24:00.000Z" });
+  nonIncreasingSuccessor.createdAt = "2026-08-23T12:23:00.000Z";
   assert.throws(() => verifyLaunchIndexDocument(reseal(nonIncreasingSuccessor), INDEX_VERIFY_OPTIONS), /index chronology is not increasing/);
   assert.throws(() => verifyLaunchIndexDocument(index, { eventStreamVerifier: () => ({ valid: true }), fixtureGraphVerifier: () => true }), /rejects caller-supplied verifier/);
   const zero = clone(index); zero.schemas[0].sha256 = "0".repeat(64);
@@ -594,7 +712,8 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
   const missing = clone(index); missing.entries[0].fixturePath = "portfolio/core/launch-studio/versions/0.1.0/synthetic/missing.json";
   assert.throws(() => verifyLaunchIndexDocument(reseal(missing), INDEX_VERIFY_OPTIONS), /does not exist/);
   const reportSubstitution = clone(index); reportSubstitution.syntheticSession.reportPath = reportSubstitution.entries[0].fixturePath;
-  assert.throws(() => verifyLaunchIndexDocument(reseal(reportSubstitution), INDEX_VERIFY_OPTIONS), /report cross-binding/);
+  assert.throws(() => verifyLaunchIndexDocument(reseal(reportSubstitution), INDEX_VERIFY_OPTIONS),
+    /successor substituted immutable syntheticSession/);
   for (const mutate of [
     (copy) => { copy.engine.stateCount = 1; },
     (copy) => { copy.profiles[0] = "Bogus"; },
@@ -606,11 +725,12 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
     const changed = clone(index); mutate(changed);
     assert.throws(() => verifyLaunchIndexDocument(reseal(changed), INDEX_VERIFY_OPTIONS), /substituted|digest mismatch|const 29|must equal const/);
   }
-  const temp = tempRoot("launch-index-symlink-");
+  const temp = createIndexSchemaFixtureRoot(index, "launch-index-symlink-");
   try {
-    const firstRuntime = index.engine.runtimeModules[0].path;
-    const link = path.join(temp, firstRuntime); fs.mkdirSync(path.dirname(link), { recursive: true });
-    fs.symlinkSync(path.join(REPOSITORY_ROOT, firstRuntime), link);
+    const schemaPath = index.indexSchema.path;
+    const link = path.join(temp, schemaPath);
+    fs.unlinkSync(link);
+    fs.symlinkSync(path.join(REPOSITORY_ROOT, schemaPath), link);
     assert.throws(() => verifyLaunchIndexDocument(index, { ...INDEX_VERIFY_OPTIONS, repositoryRoot: temp }), /symbolic link/);
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   const parentLinkRoot = tempRoot("launch-index-parent-link-");
@@ -632,29 +752,31 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
       assert.throws(() => verifyStableIndex({ repositoryRoot: numberingRoot, immutableIndexPath: path.join(indexDirectory, names.at(-1)), stableIndexPath: stableCopy }), /start at 0001 and remain contiguous/);
     } finally { fs.rmSync(numberingRoot, { recursive: true, force: true }); }
   }
-  const integrityRoot = tempRoot("launch-index-full-integrity-");
+  const integrityFixture = createLaunchIndexFixtureRoot("launch-index-full-integrity-");
   try {
-    const referencedPaths = new Set([
-      ...index.engine.runtimeModules.map((entry) => entry.path),
-      ...index.engine.coreDependencies.map((entry) => entry.path),
-      ...index.schemas.map((entry) => entry.path),
-      index.profileCatalog.path,
-      index.syntheticSession.reportPath,
-      ...index.entries.flatMap((entry) => Object.entries(entry).filter(([key]) => key.endsWith("Path")).map(([, value]) => value))
-    ]);
-    for (const relativePath of referencedPaths) {
-      const target = path.join(integrityRoot, relativePath);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.copyFileSync(path.join(REPOSITORY_ROOT, relativePath), target);
-    }
-    const stablePath = path.join(integrityRoot, "portfolio/core/launch-studio/index.json");
-    const immutablePath = path.join(integrityRoot, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json");
-    fs.mkdirSync(path.dirname(stablePath), { recursive: true });
-    fs.mkdirSync(path.dirname(immutablePath), { recursive: true });
-    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/index.json"), stablePath);
-    fs.copyFileSync(path.join(REPOSITORY_ROOT, "portfolio/core/launch-studio/versions/0.1.0/indexes/launch-session-index-0001.json"), immutablePath);
-    const verificationOptions = { repositoryRoot: integrityRoot, stableIndexPath: stablePath, immutableIndexPath: immutablePath };
+    const { root: integrityRoot, verificationOptions } = integrityFixture;
     assert.equal(verifyStableIndex(verificationOptions).valid, true);
+
+    const schemaPath = path.join(integrityRoot, index.indexSchema.path);
+    const immutablePath = path.join(integrityRoot, launchIndexPath(4));
+    const originalSchemaBytes = fs.readFileSync(schemaPath);
+    const originalImmutableBytes = fs.readFileSync(immutablePath);
+    const alteredSchema = JSON.parse(originalSchemaBytes);
+    alteredSchema.$comment = "synthetic historical schema-binding substitution";
+    const alteredSchemaBytes = `${canonicalize(alteredSchema)}\n`;
+    fs.writeFileSync(schemaPath, alteredSchemaBytes);
+    const shiftedLatest = clone(index);
+    shiftedLatest.indexSchema.sha256 = sha256Bytes(alteredSchemaBytes);
+    const sealedShiftedLatest = sealIndex(shiftedLatest);
+    writeCanonicalJson(integrityRoot, launchIndexPath(4), sealedShiftedLatest);
+    writeCanonicalJson(integrityRoot, stableLaunchIndexPath, sealedShiftedLatest);
+    assert.throws(() => verifyStableIndex(verificationOptions),
+      /index schema digest mismatch for exact recorded binding/iu);
+    fs.writeFileSync(schemaPath, originalSchemaBytes);
+    fs.writeFileSync(immutablePath, originalImmutableBytes);
+    fs.writeFileSync(integrityFixture.stablePath, originalImmutableBytes);
+    assert.equal(verifyStableIndex(verificationOptions).valid, true);
+
     const validatorPath = path.join(integrityRoot, "portfolio/core/lib/validators.mjs");
     fs.appendFileSync(validatorPath, "\n// synthetic mutation\n");
     assert.throws(() => verifyStableIndex(verificationOptions), /transitive Core dependency digest mismatch/);
@@ -666,7 +788,123 @@ test("stable index rejects resealed hash, path, missing, symlink, schema, and re
       assert.throws(() => verifyStableIndex(verificationOptions), /indexed artifact byte hash mismatch|JSON/);
       fs.writeFileSync(artifactPath, originalBytes);
     }
-  } finally { fs.rmSync(integrityRoot, { recursive: true, force: true }); }
+  } finally { fs.rmSync(integrityFixture.root, { recursive: true, force: true }); }
+});
+
+test("dependency-pin rollovers preserve the exact four-index chain and reject every rollback or substitution", () => {
+  const relativePaths = [1, 2, 3, 4].map(launchIndexPath);
+  const absolutePaths = relativePaths.map((relativePath) => path.join(REPOSITORY_ROOT, relativePath));
+  const [genesis, firstSuccessor, secondSuccessor, latestSuccessor] =
+    absolutePaths.map((indexPath) => readCanonicalJson(indexPath));
+  const stablePath = path.join(REPOSITORY_ROOT, stableLaunchIndexPath);
+
+  const immutableIdentities = [
+    ["c66011d11ea16f5b12784828761f0f1668c5353b5de03d398336e25e8f60274a",
+      "97febc922dc70fca6e488d08cd83f8d6e06ca86de79b3732053e59173e68ee89"],
+    ["44d17cdb17fb3d96366f13880f109d6a65534e21aabc812a054bf7ab9ea0383f",
+      "f890fc80f851a7dbf4693c482fe84b47d406b0fed40b846c841b8588a8862a04"],
+    ["9cb9ec902ddea6fbb6f0d410667a3cfbd8fbff4d6e789d4844d6956e25357960",
+      "71e96c08c1cca497b8929a3c265817fa20a533833d7dca57e79e3f7ef99f4102"],
+    ["251b792c3f6be8e4c15779c32f122c20ddfb2a96c9fdd6c7d1d92c484d6d104b",
+      "a0f33f7c59e1f43d67351972cd9caf3f02767c6938fb84744cb280f89d49ce67"]
+  ];
+  for (const [offset, indexPath] of absolutePaths.entries()) {
+    assert.equal(sha256Bytes(fs.readFileSync(indexPath)), immutableIdentities[offset][0]);
+    assert.equal([genesis, firstSuccessor, secondSuccessor, latestSuccessor][offset].indexHash,
+      immutableIdentities[offset][1]);
+  }
+
+  assert.equal(genesis.previousIndexPath, null);
+  assert.equal(genesis.previousIndexHash, null);
+  for (const offset of [1, 2, 3]) {
+    const previous = [genesis, firstSuccessor, secondSuccessor][offset - 1];
+    const current = [firstSuccessor, secondSuccessor, latestSuccessor][offset - 1];
+    assert.equal(current.previousIndexPath, relativePaths[offset - 1]);
+    assert.equal(current.previousIndexHash, previous.indexHash);
+    assert.equal(current.successorMode, "dependency-pin-rollover");
+    assert.deepEqual(current.entries, previous.entries);
+  }
+
+  const legacySchemaBinding = {
+    path: "portfolio/core/launch-studio/versions/0.1.0/schemas/launch-session-index.schema.json",
+    sha256: "0eda0a38b9b91c6009aa0072f0fe3e2a7d1c8a0fd073440aa829571a1cd10853"
+  };
+  const currentSchemaBinding = {
+    path: "portfolio/core/launch-studio/versions/0.2.0/schemas/launch-session-index.schema.json",
+    sha256: "5457c18ee1619ca8a391ce4103ead75111e726d445d166324a6b02b42c725f05"
+  };
+  assert.deepEqual([genesis, firstSuccessor, secondSuccessor, latestSuccessor].map(indexSchemaBinding),
+    [legacySchemaBinding, currentSchemaBinding, currentSchemaBinding, currentSchemaBinding]);
+  assert.equal(fs.readFileSync(stablePath).equals(fs.readFileSync(absolutePaths[2])), false);
+  assert.equal(fs.readFileSync(stablePath).equals(fs.readFileSync(absolutePaths[3])), true);
+
+  const stableVerification = verifyStableIndex(INDEX_VERIFY_OPTIONS);
+  assert.equal(stableVerification.valid, true);
+  assert.equal(stableVerification.latestIndexPath, absolutePaths[3]);
+  assert.equal(stableVerification.fileSha256, immutableIdentities[3][0]);
+
+  const handoffChanges = secondSuccessor.engine.coreDependencies.filter((entry, offset) =>
+    entry.sha256 !== firstSuccessor.engine.coreDependencies[offset].sha256);
+  assert.deepEqual(handoffChanges, [{
+    path: "portfolio/core/lib/handoff-ledger.mjs",
+    sha256: "41709cfecfcab62cf393d7490e0e41729ca748d7c6cae739594e7816d4f789a9"
+  }]);
+  const latestChangedTopLevelFields = Object.keys(latestSuccessor).filter((key) =>
+    canonicalize(latestSuccessor[key]) !== canonicalize(secondSuccessor[key])).sort();
+  assert.deepEqual(latestChangedTopLevelFields,
+    ["createdAt", "engine", "indexHash", "indexId", "previousIndexHash", "previousIndexPath"]);
+  assert.deepEqual(Object.keys(latestSuccessor.engine).filter((key) =>
+    canonicalize(latestSuccessor.engine[key]) !== canonicalize(secondSuccessor.engine[key])),
+  ["runtimeModules"]);
+  const replayChanges = latestSuccessor.engine.runtimeModules.filter((entry, offset) =>
+    canonicalize(entry) !== canonicalize(secondSuccessor.engine.runtimeModules[offset]));
+  assert.deepEqual(replayChanges, [{
+    path: "portfolio/core/launch-studio/versions/0.1.0/runtime/replay.mjs",
+    sha256: sha256Bytes(fs.readFileSync(path.join(REPOSITORY_ROOT,
+      "portfolio/core/launch-studio/versions/0.1.0/runtime/replay.mjs")))
+  }]);
+  assert.deepEqual(latestSuccessor.engine.coreDependencies, secondSuccessor.engine.coreDependencies);
+  assert.equal(latestSuccessor.rawPrivateDataAllowedInCore, false);
+  assert.equal(latestSuccessor.personalChatGptMemoryIsSharedTruth, false);
+  assert.equal(latestSuccessor.standingConsequentialAuthority, false);
+
+  const mixed = clone(latestSuccessor);
+  mixed.successorMode = "session-append";
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(mixed), INDEX_VERIFY_OPTIONS), /mixed session and dependency-pin changes/);
+
+  for (const mutate of [
+    (copy) => { copy.engine.coreDependencies.pop(); },
+    (copy) => { copy.engine.coreDependencies[1] = clone(copy.engine.coreDependencies[0]); },
+    (copy) => { copy.engine.coreDependencies[0].path = "portfolio/core/lib/substituted.mjs"; }
+  ]) {
+    const invalid = clone(latestSuccessor);
+    mutate(invalid);
+    assert.throws(() => verifyLaunchIndexDocument(sealIndex(invalid), INDEX_VERIFY_OPTIONS),
+      /too few|unique|removed|duplicated|substituted|cardinality|path order/iu);
+  }
+
+  const rollback = clone(latestSuccessor);
+  rollback.indexId = "launch_studio_index_0005";
+  rollback.createdAt = "2026-08-29T14:36:30.000Z";
+  rollback.previousIndexPath = launchIndexPath(4);
+  rollback.previousIndexHash = latestSuccessor.indexHash;
+  rollback.engine.runtimeModules.find(({ path: dependencyPath }) =>
+    dependencyPath.endsWith("/replay.mjs")).sha256 =
+      secondSuccessor.engine.runtimeModules.find(({ path: dependencyPath }) =>
+        dependencyPath.endsWith("/replay.mjs")).sha256;
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(rollback), INDEX_VERIFY_OPTIONS),
+    /dependency pin rollback/);
+
+  const schemaPathSubstitution = clone(latestSuccessor);
+  schemaPathSubstitution.indexSchema.path = "../launch-session-index.schema.json";
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(schemaPathSubstitution), INDEX_VERIFY_OPTIONS),
+    /schema path substitution/);
+  const schemaRollback = clone(latestSuccessor);
+  schemaRollback.indexSchema = clone(legacySchemaBinding);
+  assert.throws(() => verifyLaunchIndexDocument(sealIndex(schemaRollback), INDEX_VERIFY_OPTIONS),
+    /schema path substitution|schema binding rollback/);
+  assert.throws(() => verifyLaunchIndexDocument({ ...latestSuccessor, indexHash: "0".repeat(64) }, INDEX_VERIFY_OPTIONS),
+    /index hash mismatch/);
 });
 
 test("export rejects traversal, duplicate paths, tamper, path escape, and symbolic links", () => {
@@ -750,6 +988,9 @@ test("every synthetic authority/effect assertion remains default deny", () => {
     Object.values(value).forEach(walk);
   }
   walk(fixture); walk(events); walk(deriveSyntheticOutputs(fixture, events));
+  for (const number of [1, 2, 3, 4]) {
+    walk(readCanonicalJson(path.join(REPOSITORY_ROOT, launchIndexPath(number))));
+  }
   assert.equal(authorityTrue, 0);
   assert.equal(nonemptyEffects, 0);
   assert.equal(fixture.executorWorkOrder.executed, false);

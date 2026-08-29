@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/launch-studio/0.2.0/launch-session-index.schema.json",
+  "title": "Launch Studio append-only index successor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "documentType", "schemaVersion", "indexId", "status", "createdAt", "previousIndexPath",
+    "previousIndexHash", "successorMode", "indexSchema", "engine", "profileCatalog", "profiles",
+    "schemas", "syntheticSession", "sourceBoundary", "rawPrivateDataAllowedInCore",
+    "personalChatGptMemoryIsSharedTruth", "standingConsequentialAuthority", "entries", "indexHash"
+  ],
+  "properties": {
+    "documentType": { "const": "clover-launch-studio-index" },
+    "schemaVersion": { "const": "0.2.0" },
+    "indexId": { "$ref": "#/$defs/id" },
+    "status": { "const": "candidate-unmerged" },
+    "createdAt": { "$ref": "#/$defs/timestamp" },
+    "previousIndexPath": { "type": "string", "minLength": 1 },
+    "previousIndexHash": { "$ref": "#/$defs/hash" },
+    "successorMode": { "enum": ["session-append", "dependency-pin-rollover"] },
+    "indexSchema": { "$ref": "#/$defs/sourceFile" },
+    "engine": { "$ref": "#/$defs/engine" },
+    "profileCatalog": { "$ref": "#/$defs/sourceFile" },
+    "profiles": { "$ref": "#/$defs/stringArray" },
+    "schemas": {
+      "type": "array",
+      "minItems": 29,
+      "maxItems": 29,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sourceFile" }
+    },
+    "syntheticSession": { "$ref": "#/$defs/syntheticSession" },
+    "sourceBoundary": { "$ref": "#/$defs/stringArray" },
+    "rawPrivateDataAllowedInCore": { "const": false },
+    "personalChatGptMemoryIsSharedTruth": { "const": false },
+    "standingConsequentialAuthority": { "const": false },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "indexHash": { "$ref": "#/$defs/hash" }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 160, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$" },
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+    "stringArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "sourceFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtimeVersion", "canonicalization", "hashAlgorithm", "stateCount", "runtimeModules", "coreDependencies"],
+      "properties": {
+        "runtimeVersion": { "const": "0.2.0" },
+        "canonicalization": { "const": "RFC8785-JCS" },
+        "hashAlgorithm": { "const": "sha256" },
+        "stateCount": { "const": 29 },
+        "runtimeModules": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceFile" }
+        },
+        "coreDependencies": {
+          "type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sourceFile" }
+        }
+      }
+    },
+    "syntheticSession": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessionId", "finalState", "replayReceiptPath", "reportPath"],
+      "properties": {
+        "sessionId": { "$ref": "#/$defs/id" },
+        "finalState": { "const": "held" },
+        "replayReceiptPath": { "type": "string", "minLength": 1 },
+        "reportPath": { "type": "string", "minLength": 1 }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence", "recordedAt", "sessionId", "fixturePath", "fixtureHash", "eventStreamPath",
+        "eventStreamHash", "finalStatePath", "finalStateHash", "exportManifestPath", "exportManifestHash",
+        "restorationReceiptPath", "restorationReceiptHash", "timelinePath", "timelineHash", "reportPath",
+        "reportHash", "replayReceiptPath", "replayReceiptHash", "status"
+      ],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "recordedAt": { "$ref": "#/$defs/timestamp" },
+        "sessionId": { "$ref": "#/$defs/id" },
+        "fixturePath": { "type": "string", "minLength": 1 },
+        "fixtureHash": { "$ref": "#/$defs/hash" },
+        "eventStreamPath": { "type": "string", "minLength": 1 },
+        "eventStreamHash": { "$ref": "#/$defs/hash" },
+        "finalStatePath": { "type": "string", "minLength": 1 },
+        "finalStateHash": { "$ref": "#/$defs/hash" },
+        "exportManifestPath": { "type": "string", "minLength": 1 },
+        "exportManifestHash": { "$ref": "#/$defs/hash" },
+        "restorationReceiptPath": { "type": "string", "minLength": 1 },
+        "restorationReceiptHash": { "$ref": "#/$defs/hash" },
+        "timelinePath": { "type": "string", "minLength": 1 },
+        "timelineHash": { "$ref": "#/$defs/hash" },
+        "reportPath": { "type": "string", "minLength": 1 },
+        "reportHash": { "$ref": "#/$defs/hash" },
+        "replayReceiptPath": { "type": "string", "minLength": 1 },
+        "replayReceiptHash": { "$ref": "#/$defs/hash" },
+        "status": { "const": "held-awaiting-real-execution-authority" }
+      }
+    }
+  }
+}
