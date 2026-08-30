@@ -418,6 +418,97 @@ type SessionCreationBinding = {
   transcriptDigest: string;
   result: Promise<LaunchSession>;
 };
+type PreparedAppendEventInput = {
+  type: LaunchEventType;
+  expectedVersion: number;
+  predecessorEventId: string | null;
+  predecessorHash: string | null;
+  idempotencyKey: string;
+  payloadBytes: Buffer;
+  payloadDigest: string;
+  requestedCreatedAt: string | null;
+};
+type EventIdempotencyBinding = {
+  sessionId: string;
+  type: LaunchEventType;
+  expectedVersion: number;
+  predecessorEventId: string | null;
+  predecessorHash: string | null;
+  idempotencyKey: string;
+  payloadDigest: string;
+  resultEvent: LaunchEvent;
+};
+
+function prepareAppendEventInput(input: AppendEventInput): PreparedAppendEventInput {
+  try {
+    if (
+      !input ||
+      typeof input !== "object" ||
+      Array.isArray(input) ||
+      !exactKeys(input, Object.prototype.hasOwnProperty.call(input, "createdAt")
+        ? ["type", "expectedVersion", "predecessorEventId", "predecessorHash", "idempotencyKey", "payload", "createdAt"]
+        : ["type", "expectedVersion", "predecessorEventId", "predecessorHash", "idempotencyKey", "payload"])
+    ) throw new AppendOnlyViolationError();
+    const type = input.type;
+    const expectedVersion = input.expectedVersion;
+    const predecessorEventId = input.predecessorEventId;
+    const predecessorHash = input.predecessorHash;
+    const idempotencyKey = input.idempotencyKey;
+    if (
+      !isLaunchEventType(type) ||
+      !Number.isSafeInteger(expectedVersion) ||
+      expectedVersion < 0 ||
+      (predecessorEventId !== null && !/^event:[a-f0-9]{64}$/u.test(predecessorEventId)) ||
+      (predecessorHash !== null && !/^[a-f0-9]{64}$/u.test(predecessorHash))
+    ) throw new AppendOnlyViolationError();
+    assertIdempotencyKey(idempotencyKey);
+    const requestedCreatedAt = Object.prototype.hasOwnProperty.call(input, "createdAt")
+      ? canonicalTimestamp(input.createdAt)
+      : null;
+    const payloadSource = canonicalJson(input.payload);
+    if (typeof payloadSource !== "string") throw new AppendOnlyViolationError();
+    const parsedPayload = parseJsonWithoutDuplicateKeys(payloadSource);
+    if (canonicalJson(parsedPayload) !== payloadSource) throw new AppendOnlyViolationError();
+    const payloadBytes = Buffer.from(payloadSource, "utf8");
+    return {
+      type,
+      expectedVersion,
+      predecessorEventId,
+      predecessorHash,
+      idempotencyKey,
+      payloadBytes,
+      payloadDigest: sha256(payloadBytes),
+      requestedCreatedAt
+    };
+  } catch (error) {
+    if (error instanceof AppendOnlyViolationError) throw error;
+    throw new AppendOnlyViolationError();
+  }
+}
+
+function eventBinding(event: LaunchEvent): EventIdempotencyBinding {
+  return {
+    sessionId: event.sessionId,
+    type: event.type,
+    expectedVersion: event.expectedVersion,
+    predecessorEventId: event.predecessorEventId,
+    predecessorHash: event.predecessorHash,
+    idempotencyKey: event.idempotencyKey,
+    payloadDigest: event.payloadDigest,
+    resultEvent: clone(event)
+  };
+}
+
+function exactEventRetry(binding: EventIdempotencyBinding, sessionId: string, input: PreparedAppendEventInput): boolean {
+  return binding.sessionId === sessionId &&
+    binding.type === input.type &&
+    binding.expectedVersion === input.expectedVersion &&
+    binding.predecessorEventId === input.predecessorEventId &&
+    binding.predecessorHash === input.predecessorHash &&
+    binding.idempotencyKey === input.idempotencyKey &&
+    binding.payloadDigest === input.payloadDigest &&
+    (input.requestedCreatedAt === null || input.requestedCreatedAt === binding.resultEvent.createdAt);
+}
 
 function sameOwnerScope(left: OwnerScope, right: OwnerScope): boolean {
   return left.workspaceId === right.workspaceId && left.projectId === right.projectId && left.participantId === right.participantId;
@@ -430,7 +521,7 @@ function artifactStorageKey(sessionId: string, artifactId: string): string {
 export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
   readonly #sessions = new Map<string, LaunchSession>();
   readonly #events = new Map<string, LaunchEvent[]>();
-  readonly #idempotency = new Set<string>();
+  readonly #idempotency = new Map<string, EventIdempotencyBinding>();
   readonly #sessionCreations = new Map<string, SessionCreationBinding>();
   readonly #sessionMutations = new Map<string, Promise<unknown>>();
   readonly #artifacts = new Map<string, Artifact>();
@@ -535,40 +626,42 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
   }
 
   async appendEvent(identity: OwnerIdentity, sessionId: string, input: AppendEventInput) {
+    const prepared = prepareAppendEventInput(input);
     return this.#withSessionMutation(sessionId, async () => {
       const session = this.#sessions.get(sessionId);
       if (!session) throw new SessionNotFoundError();
       assertOwnerScope(identity, session);
-      if (session.terminal || !isLaunchEventType(input.type)) throw new AppendOnlyViolationError();
-      assertIdempotencyKey(input.idempotencyKey);
-      const scopedIdempotency = `${sessionId}\0${input.idempotencyKey}`;
-      if (this.#idempotency.has(scopedIdempotency)) throw new AppendOnlyViolationError();
+      const scopedIdempotency = `${sessionId}\0${prepared.idempotencyKey}`;
+      const priorResult = this.#idempotency.get(scopedIdempotency);
+      if (priorResult) {
+        if (!exactEventRetry(priorResult, sessionId, prepared)) throw new AppendOnlyViolationError();
+        return clone(priorResult.resultEvent);
+      }
+      if (session.terminal) throw new AppendOnlyViolationError();
       if (
-        input.expectedVersion !== session.version ||
-        input.predecessorEventId !== session.lastEventId ||
-        input.predecessorHash !== session.lastEventHash
+        prepared.expectedVersion !== session.version ||
+        prepared.predecessorEventId !== session.lastEventId ||
+        prepared.predecessorHash !== session.lastEventHash
       ) throw new AppendOnlyViolationError();
 
       const sequence = session.version + 1;
-      const createdAt = canonicalTimestamp(input.createdAt ?? new Date().toISOString());
+      const createdAt = prepared.requestedCreatedAt ?? new Date().toISOString();
       if (Date.parse(createdAt) < Date.parse(session.updatedAt)) throw new AppendOnlyViolationError();
-      const payloadBytes = Buffer.from(canonicalJson(input.payload), "utf8");
-      const payloadDigest = sha256(payloadBytes);
-      const eventId = `event:${sha256(`${sessionId}\0${sequence}\0${payloadDigest}\0${input.idempotencyKey}`)}`;
-      const encryptedPayload = await encryptPrivateBytes(payloadBytes, `${sessionId}:${eventId}:${input.type}`, this.keys);
+      const eventId = `event:${sha256(`${sessionId}\0${sequence}\0${prepared.payloadDigest}\0${prepared.idempotencyKey}`)}`;
+      const encryptedPayload = await encryptPrivateBytes(prepared.payloadBytes, `${sessionId}:${eventId}:${prepared.type}`, this.keys);
       const unsigned: Omit<LaunchEvent, "canonicalHash"> = {
         workspaceId: session.workspaceId,
         projectId: session.projectId,
         participantId: session.participantId,
         sessionId,
         eventId,
-        type: input.type,
+        type: prepared.type,
         sequence,
-        expectedVersion: input.expectedVersion,
-        predecessorEventId: input.predecessorEventId,
-        predecessorHash: input.predecessorHash,
-        idempotencyKey: input.idempotencyKey,
-        payloadDigest,
+        expectedVersion: prepared.expectedVersion,
+        predecessorEventId: prepared.predecessorEventId,
+        predecessorHash: prepared.predecessorHash,
+        idempotencyKey: prepared.idempotencyKey,
+        payloadDigest: prepared.payloadDigest,
         encryptedPayload,
         createdAt
       };
@@ -582,7 +675,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
         this.#progress.get(sessionId) ?? [],
         this.#archivedArtifacts(sessionId)
       );
-      this.#idempotency.add(scopedIdempotency);
+      this.#idempotency.set(scopedIdempotency, eventBinding(event));
       events.push(event);
       this.#sessions.set(sessionId, nextSession);
       return clone(event);
@@ -603,28 +696,29 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
   }
 
   async putArtifact(identity: OwnerIdentity, sessionId: string, bytes: Uint8Array, mediaType: string) {
+    if (!(bytes instanceof Uint8Array)) throw new AppendOnlyViolationError();
+    const artifactBytes = Buffer.from(bytes);
+    assertMediaType(mediaType);
     return this.#withSessionMutation(sessionId, async () => {
       const session = this.#sessions.get(sessionId);
       if (!session) throw new SessionNotFoundError();
       assertOwnerScope(identity, session);
-      if (!(bytes instanceof Uint8Array)) throw new AppendOnlyViolationError();
-      assertMediaType(mediaType);
-      const digest = sha256(bytes);
+      const digest = sha256(artifactBytes);
       const artifactId = `artifact:${digest}`;
       const storageKey = artifactStorageKey(sessionId, artifactId);
       const existing = this.#artifacts.get(storageKey);
       if (existing) {
-        if (existing.mediaType !== mediaType || existing.byteLength !== bytes.byteLength) throw new AppendOnlyViolationError();
+        if (existing.mediaType !== mediaType || existing.byteLength !== artifactBytes.byteLength) throw new AppendOnlyViolationError();
         const restored = await decryptPrivateBytes(existing.encrypted, `${sessionId}:${artifactId}:${mediaType}`, this.keys);
-        if (!Buffer.from(bytes).equals(restored)) throw new AppendOnlyViolationError();
-        return { artifactId, digest, byteLength: bytes.byteLength, mediaType };
+        if (!artifactBytes.equals(restored)) throw new AppendOnlyViolationError();
+        return { artifactId, digest, byteLength: artifactBytes.byteLength, mediaType };
       }
-      const encrypted = await encryptPrivateBytes(bytes, `${sessionId}:${artifactId}:${mediaType}`, this.keys);
+      const encrypted = await encryptPrivateBytes(artifactBytes, `${sessionId}:${artifactId}:${mediaType}`, this.keys);
       const archived: ArchivedArtifact = {
         sessionId,
         artifactId,
         mediaType,
-        byteLength: bytes.byteLength,
+        byteLength: artifactBytes.byteLength,
         encryptedPayload: encrypted
       };
       const artifacts = [...this.#archivedArtifacts(sessionId), archived]
@@ -640,10 +734,10 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
         sessionId,
         scope: clone(session),
         mediaType,
-        byteLength: bytes.byteLength,
+        byteLength: artifactBytes.byteLength,
         encrypted
       });
-      return { artifactId, digest, byteLength: bytes.byteLength, mediaType };
+      return { artifactId, digest, byteLength: artifactBytes.byteLength, mediaType };
     });
   }
 
@@ -752,7 +846,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
       let predecessorId: string | null = null;
       let predecessorHash: string | null = null;
       let priorCreatedAt: string | null = null;
-      const restoredIdempotency = new Set<string>();
+      const restoredIdempotency = new Map<string, EventIdempotencyBinding>();
       const restoredPayloads: unknown[] = [];
       for (const [offset, event] of parsed.events.entries()) {
         if (!exactKeys(event, [
@@ -780,8 +874,11 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
         ) throw new AppendOnlyViolationError();
         assertEncryptedPayload(event.encryptedPayload, `${event.sessionId}:${event.eventId}:${event.type}`);
         assertIdempotencyKey(event.idempotencyKey);
-        if (restoredIdempotency.has(event.idempotencyKey)) throw new AppendOnlyViolationError();
-        restoredIdempotency.add(event.idempotencyKey);
+        const scopedIdempotency = `${event.sessionId}\0${event.idempotencyKey}`;
+        if (restoredIdempotency.has(scopedIdempotency) || this.#idempotency.has(scopedIdempotency)) {
+          throw new AppendOnlyViolationError();
+        }
+        restoredIdempotency.set(scopedIdempotency, eventBinding(event));
         let payloadBytes: Buffer;
         try {
           payloadBytes = await decryptPrivateBytes(event.encryptedPayload, `${event.sessionId}:${event.eventId}:${event.type}`, this.keys);
@@ -863,7 +960,9 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
       this.#events.set(parsed.session.sessionId, clone(parsed.events));
       this.#progress.set(parsed.session.sessionId, clone(parsed.progress));
       for (const [storageKey, artifact] of stagedArtifacts) this.#artifacts.set(storageKey, artifact);
-      for (const event of parsed.events) this.#idempotency.add(`${parsed.session.sessionId}\0${event.idempotencyKey}`);
+      for (const [scopedIdempotency, binding] of restoredIdempotency) {
+        this.#idempotency.set(scopedIdempotency, binding);
+      }
       this.#sessionCreations.set(creationKey, {
         scope: clone(parsed.session),
         transcriptDigest: creation.transcriptDigest,

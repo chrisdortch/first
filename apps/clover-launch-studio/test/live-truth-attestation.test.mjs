@@ -23,6 +23,9 @@ import {
   EXPECTED_STACK_B_PATH_LIST_SHA256,
   GITHUB_ORIGIN,
   GITHUB_REPOSITORY,
+  GITHUB_REPOSITORY_ID,
+  MAX_GITHUB_CHECK_RUN_PAGES,
+  MAX_GITHUB_CHECK_RUNS,
   NO_ATTESTATION_COMPARISON,
   REQUIRED_EXACT_HEAD_CHECKS,
   STACK_A_BRANCH,
@@ -97,7 +100,7 @@ const baseline = {
 };
 
 function githubFixture(endpoint) {
-  if (endpoint === `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`) return { full_name: GITHUB_REPOSITORY, default_branch: "main" };
+  if (endpoint === `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`) return { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY, default_branch: "main" };
   if (endpoint.endsWith("/branches/main")) {
     return { name: "main", protected: true, commit: { sha: EXPECTED_MAIN_COMMIT, commit: { tree: { sha: hex40("d") } } } };
   }
@@ -129,6 +132,55 @@ function githubFetch({ sourceDate = "Sat, 29 Aug 2026 17:00:00 GMT", mutate = (v
     const body = JSON.stringify(mutate(structuredClone(githubFixture(endpoint)), endpoint));
     const headers = new Headers({ "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
     if (sourceDate) headers.set("date", sourceDate);
+    const response = new Response(body, { status: 200, headers });
+    Object.defineProperty(response, "url", { value: endpoint });
+    return response;
+  };
+  return { calls, implementation };
+}
+
+function checkRun({
+  id,
+  name = `auxiliary-check-${id}`,
+  headSha = candidateCommit,
+  status = "completed",
+  conclusion = status === "completed" ? "success" : null,
+  startedAt = new Date(Date.UTC(2026, 7, 29, 16, 31, 0) + id * 1_000).toISOString(),
+  completedAt = status === "completed" ? new Date(Date.parse(startedAt) + 500).toISOString() : null
+}) {
+  return { id, name, head_sha: headSha, status, conclusion, started_at: startedAt, completed_at: completedAt };
+}
+
+function githubPageEndpoint(page, commit = candidateCommit, canonicalRepository = false) {
+  const repositoryPath = canonicalRepository ? `repositories/${GITHUB_REPOSITORY_ID}` : `repos/${GITHUB_REPOSITORY}`;
+  return `${GITHUB_ORIGIN}/${repositoryPath}/commits/${commit}/check-runs?filter=all&per_page=100&page=${page}`;
+}
+
+function githubPaginationFetch({ pages, totalCount, linkForPage, responseForPage, sourceDate = "Sat, 29 Aug 2026 17:00:00 GMT" }) {
+  const calls = [];
+  const implementation = async (endpoint, options) => {
+    calls.push({ endpoint, options });
+    if (!endpoint.includes(`/commits/${candidateCommit}/check-runs`)) {
+      const body = JSON.stringify(githubFixture(endpoint));
+      const headers = new Headers({ date: sourceDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
+      const response = new Response(body, { status: 200, headers });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    }
+    const page = Number(new URL(endpoint).searchParams.get("page"));
+    if (responseForPage) {
+      const replacement = await responseForPage(page, endpoint, options);
+      if (replacement) return replacement;
+    }
+    const check_runs = structuredClone(pages[page - 1] ?? []);
+    const body = JSON.stringify({ total_count: typeof totalCount === "function" ? totalCount(page) : totalCount, check_runs });
+    const headers = new Headers({ date: sourceDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
+    const link = linkForPage ? linkForPage(page) : page < pages.length
+      ? `<${githubPageEndpoint(page + 1, candidateCommit, true)}>; rel="next", <${githubPageEndpoint(pages.length, candidateCommit, true)}>; rel="last"`
+      : page > 1
+        ? `<${githubPageEndpoint(1, candidateCommit, true)}>; rel="first", <${githubPageEndpoint(page - 1, candidateCommit, true)}>; rel="prev"`
+        : null;
+    if (link) headers.set("link", link);
     const response = new Response(body, { status: 200, headers });
     Object.defineProperty(response, "url", { value: endpoint });
     return response;
@@ -206,7 +258,7 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
   assert.deepEqual(observation.exactHeadChecks?.requiredNames, REQUIRED_EXACT_HEAD_CHECKS);
   assert.equal(fixture.calls.length, 5);
   for (const { endpoint, options } of fixture.calls) {
-    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|commits/${candidateCommit}/check-runs\\?per_page=100)$)`, "u"));
+    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1)$)`, "u"));
     assert.equal(options.method, "GET");
     assert.equal(options.redirect, "error");
     assert.equal(options.credentials, "omit");
@@ -214,6 +266,254 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
     assert.deepEqual(options.next, { revalidate: 60 });
     assert.equal(new Headers(options.headers).has("authorization"), false);
   }
+});
+
+test("GitHub check-run pagination is complete, bounded, source-locked and rerun-aware", async (t) => {
+  const requiredRuns = (startId = 1) => REQUIRED_EXACT_HEAD_CHECKS.map((name, offset) => checkRun({ id: startId + offset, name }));
+  const auxiliaryRuns = (startId, count) => Array.from({ length: count }, (_, offset) => checkRun({ id: startId + offset }));
+
+  await t.test("fewer than 100 and exactly 100 complete on one page", async () => {
+    const fewer = githubPaginationFetch({ pages: [requiredRuns()], totalCount: 5 });
+    assert.equal((await observeGitHubTruth({ candidateCommit, fetchImpl: fewer.implementation, retries: 0 })).status, "current");
+    const exactly = githubPaginationFetch({ pages: [[...requiredRuns(), ...auxiliaryRuns(6, 95)]], totalCount: 100 });
+    const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: exactly.implementation, retries: 0 });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.deepEqual(observation.endpoints.filter((endpoint) => endpoint.includes("/check-runs")), [githubPageEndpoint(1)]);
+  });
+
+  await t.test("101 runs include a required check found only on page two", async () => {
+    const required = requiredRuns();
+    const fixture = githubPaginationFetch({
+      pages: [[...required.slice(0, 4), ...auxiliaryRuns(6, 96)], [required[4]]],
+      totalCount: 101
+    });
+    const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.deepEqual(observation.endpoints.filter((endpoint) => endpoint.includes("/check-runs")), [githubPageEndpoint(1), githubPageEndpoint(2, candidateCommit, true)]);
+  });
+
+  await t.test("250 runs aggregate across three pages with required names distributed", async () => {
+    const required = requiredRuns(900);
+    const all = auxiliaryRuns(1, 245);
+    all.splice(20, 0, required[0]);
+    all.splice(140, 0, required[1], required[2]);
+    all.push(required[3], required[4]);
+    const fixture = githubPaginationFetch({ pages: [all.slice(0, 100), all.slice(100, 200), all.slice(200)], totalCount: 250 });
+    const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.deepEqual(observation.endpoints.slice(-3), [githubPageEndpoint(1), githubPageEndpoint(2, candidateCommit, true), githubPageEndpoint(3, candidateCommit, true)]);
+  });
+
+  await t.test("newest start time wins over stale completion order", async () => {
+    const base = requiredRuns(100);
+    const target = REQUIRED_EXACT_HEAD_CHECKS[0];
+    const olderFailure = checkRun({
+      id: 10,
+      name: target,
+      conclusion: "failure",
+      startedAt: "2026-08-29T16:00:00.000Z",
+      completedAt: "2026-08-29T18:00:00.000Z"
+    });
+    const newerSuccess = checkRun({
+      id: 11,
+      name: target,
+      conclusion: "success",
+      startedAt: "2026-08-29T17:00:00.000Z",
+      completedAt: "2026-08-29T17:01:00.000Z"
+    });
+    let fixture = githubPaginationFetch({ pages: [[...base.slice(1), olderFailure, newerSuccess]], totalCount: 6 });
+    let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    const newerFailure = { ...newerSuccess, id: 12, conclusion: "failure" };
+    fixture = githubPaginationFetch({ pages: [[...base.slice(1), olderFailure, newerFailure]], totalCount: 6 });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.exactHeadChecks?.state, "failure");
+    const newestPending = checkRun({
+      id: 13,
+      name: target,
+      status: "in_progress",
+      conclusion: null,
+      startedAt: "2026-08-29T17:30:00.000Z",
+      completedAt: null
+    });
+    fixture = githubPaginationFetch({ pages: [[...base.slice(1), newerSuccess, newestPending]], totalCount: 6 });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.exactHeadChecks?.state, "pending");
+
+    const sameStartSuccess = checkRun({ id: 20, name: target, conclusion: "success", startedAt: "2026-08-29T18:00:00.000Z" });
+    const sameStartFailure = checkRun({ id: 21, name: target, conclusion: "failure", startedAt: "2026-08-29T18:00:00.000Z" });
+    fixture = githubPaginationFetch({ pages: [[...base.slice(1), sameStartSuccess, sameStartFailure]], totalCount: 6 });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.exactHeadChecks?.state, "failure");
+  });
+
+  await t.test("missing start time and impossible completion chronology fail closed", async () => {
+    for (const mutate of [
+      (run) => { run.started_at = null; },
+      (run) => { run.completed_at = "2026-08-29T15:00:00.000Z"; }
+    ]) {
+      const runs = requiredRuns();
+      mutate(runs[0]);
+      const fixture = githubPaginationFetch({ pages: [runs], totalCount: runs.length });
+      const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+      assert.equal(observation.status, "partial");
+      assert.equal(observation.exactHeadChecks, null);
+      assert.match(observation.failures.join("\n"), /GITHUB_MALFORMED_CHECK_RUN/u);
+    }
+  });
+
+  await t.test("identical duplicate IDs deduplicate and contradictory duplicates fail closed", async () => {
+    const required = requiredRuns(1);
+    const firstPage = [...required, ...auxiliaryRuns(6, 95)];
+    const final = checkRun({ id: 101 });
+    let fixture = githubPaginationFetch({ pages: [firstPage, [structuredClone(firstPage[0]), final]], totalCount: 101 });
+    let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "current");
+    const contradictory = { ...firstPage[0], conclusion: "failure" };
+    fixture = githubPaginationFetch({ pages: [firstPage, [contradictory, final]], totalCount: 101 });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "contradictory");
+    assert.match(observation.failures.join("\n"), /SOURCE_CONTRADICTION:duplicate-check-run/u);
+  });
+
+  await t.test("later-page head substitution is contradictory", async () => {
+    const first = [...requiredRuns(), ...auxiliaryRuns(6, 95)];
+    const fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 101, headSha: hex40("f") })]], totalCount: 101 });
+    const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "contradictory");
+    assert.match(observation.failures.join("\n"), /check-run-sha/u);
+  });
+
+  await t.test("malformed and substituted next links never leave the exact endpoint", async () => {
+    const first = [...requiredRuns(), ...auxiliaryRuns(6, 95)];
+    const links = [
+      ["cross origin", `<https://attacker.example/repos/${GITHUB_REPOSITORY}/commits/${candidateCommit}/check-runs?filter=all&per_page=100&page=2>; rel="next"`, "contradictory"],
+      ["repository path", `<${GITHUB_ORIGIN}/repos/attacker/first/commits/${candidateCommit}/check-runs?filter=all&per_page=100&page=2>; rel="next"`, "contradictory"],
+      ["numeric repository ID", `<${GITHUB_ORIGIN}/repositories/${GITHUB_REPOSITORY_ID + 1}/commits/${candidateCommit}/check-runs?filter=all&per_page=100&page=2>; rel="next"`, "contradictory"],
+      ["commit substitution", `<${githubPageEndpoint(2, hex40("f"))}>; rel="next"`, "contradictory"],
+      ["query substitution", `<${githubPageEndpoint(2)}&ref=main>; rel="next"`, "contradictory"],
+      ["skipped page", `<${githubPageEndpoint(3)}>; rel="next"`, "contradictory"],
+      ["repeated page", `<${githubPageEndpoint(1)}>; rel="next"`, "contradictory"],
+      ["last page before next", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(1)}>; rel="last"`, "contradictory"],
+      ["inflated last page", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(3)}>; rel="last"`, "contradictory"],
+      ["malformed", `${githubPageEndpoint(2)}; rel="next"`, "partial"],
+      ["duplicate next", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(2)}>; rel="next"`, "partial"]
+    ];
+    for (const [label, link, expectedStatus] of links) {
+      const fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 101 })]], totalCount: 101, linkForPage: (page) => page === 1 ? link : null });
+      const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+      assert.equal(observation.status, expectedStatus, label);
+      assert.equal(fixture.calls.some(({ endpoint }) => endpoint === githubPageEndpoint(2)), false, label);
+    }
+  });
+
+  await t.test("missing pages, count drift, later failures and finite ceilings remain partial HOLD", async () => {
+    const first = [...requiredRuns(), ...auxiliaryRuns(6, 95)];
+    let fixture = githubPaginationFetch({ pages: [first], totalCount: 101, linkForPage: () => null });
+    let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.match(observation.failures.join("\n"), /CHECK_RUNS_PAGE_MISSING/u);
+
+    fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 101 })]], totalCount: (page) => page === 1 ? 101 : 102 });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.match(observation.failures.join("\n"), /TOTAL_DISAGREEMENT/u);
+
+    fixture = githubPaginationFetch({
+      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      responseForPage: async (page, _endpoint, options) => page === 2
+        ? new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }))
+        : null
+    });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, timeoutMs: 5, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.match(observation.failures.join("\n"), /GITHUB_TIMEOUT/u);
+
+    fixture = githubPaginationFetch({
+      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      responseForPage: async (page) => page === 2 ? new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } }) : null
+    });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.match(observation.failures.join("\n"), /GITHUB_RATE_LIMITED/u);
+
+    let pageTwoAttempts = 0;
+    fixture = githubPaginationFetch({
+      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      responseForPage: async (page) => {
+        if (page !== 2) return null;
+        pageTwoAttempts += 1;
+        return pageTwoAttempts === 1 ? new Response("temporary", { status: 503 }) : null;
+      }
+    });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 1 });
+    assert.equal(observation.status, "current");
+    assert.equal(pageTwoAttempts, 2);
+
+    fixture = githubPaginationFetch({
+      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      responseForPage: async (page) => page === 2
+        ? new Response("{}", { status: 200, headers: { "content-length": "300000", date: "Sat, 29 Aug 2026 17:00:00 GMT" } })
+        : null
+    });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.match(observation.failures.join("\n"), /GITHUB_RESPONSE_TOO_LARGE/u);
+
+    fixture = githubPaginationFetch({
+      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      responseForPage: async (page, endpoint) => {
+        if (page !== 2) return null;
+        const body = JSON.stringify({ total_count: 101, check_runs: [checkRun({ id: 101 })] });
+        const response = new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      }
+    });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.match(observation.failures.join("\n"), /GITHUB_SOURCE_TIME_UNAVAILABLE/u);
+
+    fixture = githubPaginationFetch({ pages: [requiredRuns()], totalCount: MAX_GITHUB_CHECK_RUNS + 1 });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.equal(observation.errorCode, "GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+
+    const overlappingPages = Array.from({ length: MAX_GITHUB_CHECK_RUN_PAGES + 1 }, (_, page) => [checkRun({ id: page + 1 })]);
+    fixture = githubPaginationFetch({
+      pages: overlappingPages,
+      totalCount: MAX_GITHUB_CHECK_RUN_PAGES + 1,
+      linkForPage: (page) => `<${githubPageEndpoint(page + 1, candidateCommit, true)}>; rel="next"`
+    });
+    observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "partial");
+    assert.equal(observation.errorCode, "GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+    assert.equal(observation.endpoints.filter((endpoint) => endpoint.includes("/check-runs")).length, MAX_GITHUB_CHECK_RUN_PAGES);
+  });
+
+  await t.test("a complete paginated result produces an available Action Card in draft or ready state", async () => {
+    const required = requiredRuns();
+    for (const draft of [true, false]) {
+      const fixture = githubPaginationFetch({ pages: [[...required.slice(0, 4), ...auxiliaryRuns(6, 96)], [required[4]]], totalCount: 101 });
+      const baseFetch = fixture.implementation;
+      const fetchImpl = async (endpoint, options) => {
+        if (!endpoint.endsWith("/pulls/35")) return baseFetch(endpoint, options);
+        const body = JSON.stringify({ ...githubFixture(endpoint), draft });
+        const response = new Response(body, { status: 200, headers: { date: "Sat, 29 Aug 2026 17:00:00 GMT" } });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      };
+      const github = await observeGitHubTruth({ candidateCommit, fetchImpl, retries: 0 });
+      const attestation = await compareDeploymentAttestation(build, sealedAttestation());
+      const reconciled = reconcileTreeTruth({ baseline, build, github, deployment: deploymentObservation(), attestation });
+      assert.equal(github.status, "current");
+      assert.equal(reconciled.currentActionCard.action, "ACCEPT SOURCE-GROUNDED TREE PREVIEW", `draft=${draft}`);
+      assert.equal(reconciled.contradictions.value.includes("stack-b-pull-request"), false);
+    }
+  });
 });
 
 test("request time never upgrades missing GitHub source freshness", async () => {

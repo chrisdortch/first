@@ -28,6 +28,7 @@ export type OwnerIdentity = {
 
 type RuntimeRegistry = { providerVerifier?: ProviderSessionVerifier };
 const registry = globalThis as typeof globalThis & { __cloverLaunchStudioAuth?: RuntimeRegistry };
+const MAX_PROVIDER_SUBJECT_BYTES = 4 * 1024;
 
 export function registerProviderSessionVerifier(verifier: ProviderSessionVerifier) {
   registry.__cloverLaunchStudioAuth = { providerVerifier: verifier };
@@ -52,22 +53,52 @@ async function verifySubject(request: Request, config: RuntimeConfig): Promise<{
   if (config.authMode === "provider") {
     const verifier = registry.__cloverLaunchStudioAuth?.providerVerifier;
     if (!verifier || !config.providerIssuer || !config.providerAudience) throw new AuthenticationDeniedError();
-    const session = await verifier.verify(request, {
-      issuer: config.providerIssuer,
-      audience: config.providerAudience,
-      now: new Date()
-    });
-    const expiresAt = Date.parse(typeof session?.expiresAt === "string" ? session.expiresAt : "");
+    const verificationNow = Date.now();
+    let session: unknown;
+    try {
+      session = await verifier.verify(request, {
+        issuer: config.providerIssuer,
+        audience: config.providerAudience,
+        now: new Date(verificationNow)
+      });
+    } catch {
+      throw new AuthenticationDeniedError();
+    }
     if (
       !session ||
       typeof session !== "object" ||
-      !session.subject ||
-      session.issuer !== config.providerIssuer ||
-      session.audience !== config.providerAudience ||
-      !Number.isFinite(expiresAt) ||
-      expiresAt <= Date.now()
+      Array.isArray(session)
     ) throw new AuthenticationDeniedError();
-    return { subject: session.subject, mode: "provider" };
+    let subject: unknown;
+    let issuer: unknown;
+    let audience: unknown;
+    let expiration: unknown;
+    try {
+      const record = session as Record<string, unknown>;
+      subject = record.subject;
+      issuer = record.issuer;
+      audience = record.audience;
+      expiration = record.expiresAt;
+    } catch {
+      throw new AuthenticationDeniedError();
+    }
+    if (
+      typeof subject !== "string" ||
+      subject.length === 0 ||
+      subject.length > MAX_PROVIDER_SUBJECT_BYTES
+    ) throw new AuthenticationDeniedError();
+    const subjectBytes = Buffer.from(subject, "utf8");
+    const expiresAt = Date.parse(typeof expiration === "string" ? expiration : "");
+    const validationNow = Date.now();
+    if (
+      subjectBytes.byteLength > MAX_PROVIDER_SUBJECT_BYTES ||
+      subjectBytes.toString("utf8") !== subject ||
+      issuer !== config.providerIssuer ||
+      audience !== config.providerAudience ||
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= validationNow
+    ) throw new AuthenticationDeniedError();
+    return { subject, mode: "provider" };
   }
 
   const token = bearer(request);

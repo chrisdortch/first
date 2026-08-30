@@ -140,6 +140,64 @@ test("provider session expiration rejects every non-future value without returni
       await assert.rejects(runtime.auth.authenticateOwner(request, { mutation: false }), runtime.auth.AuthenticationDeniedError, label);
     }
 
+    const validProviderSession = (subject) => ({
+      subject,
+      issuer: "https://issuer.example",
+      audience: "clover-owner",
+      expiresAt: new Date(Date.now() + 60_000).toISOString()
+    });
+    for (const [label, subject] of [
+      ["undefined subject", undefined],
+      ["null subject", null],
+      ["empty subject", ""],
+      ["array subject", ["owner"]],
+      ["object subject one", { owner: 1 }],
+      ["object subject two", { owner: 2 }],
+      ["number subject", 7],
+      ["boolean subject", true],
+      ["function subject", () => "owner"],
+      ["oversized subject", "s".repeat(4 * 1024 + 1)],
+      ["unbounded subject", "s".repeat(1024 * 1024)],
+      ["leading lone surrogate", "\ud800"],
+      ["trailing lone surrogate", "\udfff"]
+    ]) {
+      runtime.auth.registerProviderSessionVerifier({ verify: async () => validProviderSession(subject) });
+      let rejectedIdentity;
+      await assert.rejects(async () => {
+        rejectedIdentity = await runtime.auth.authenticateOwner(request, { mutation: false });
+      }, runtime.auth.AuthenticationDeniedError, label);
+      assert.equal(rejectedIdentity, undefined, label);
+    }
+    for (const [label, override] of [
+      ["issuer substitution", { issuer: "https://substituted.example" }],
+      ["audience substitution", { audience: "substituted-owner" }]
+    ]) {
+      runtime.auth.registerProviderSessionVerifier({
+        verify: async () => ({ ...validProviderSession("owner-subject"), ...override })
+      });
+      await assert.rejects(runtime.auth.authenticateOwner(request, { mutation: false }), runtime.auth.AuthenticationDeniedError, label);
+    }
+    runtime.auth.registerProviderSessionVerifier({ verify: async () => { throw new Error("provider detail must not escape"); } });
+    await assert.rejects(runtime.auth.authenticateOwner(request, { mutation: false }), runtime.auth.AuthenticationDeniedError);
+
+    runtime.auth.registerProviderSessionVerifier({
+      verify: async (_request, expected) => {
+        const session = {
+          subject: "owner-subject",
+          issuer: expected.issuer,
+          audience: expected.audience,
+          expiresAt: new Date(expected.now.getTime() + 5).toISOString()
+        };
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return session;
+      }
+    });
+    let expiredDuringVerificationIdentity;
+    await assert.rejects(async () => {
+      expiredDuringVerificationIdentity = await runtime.auth.authenticateOwner(request, { mutation: false });
+    }, runtime.auth.AuthenticationDeniedError, "expires during provider verification");
+    assert.equal(expiredDuringVerificationIdentity, undefined);
+
     runtime.auth.registerProviderSessionVerifier({
       verify: async (_request, expected) => ({
         subject: "owner-subject",
@@ -151,6 +209,39 @@ test("provider session expiration rejects every non-future value without returni
     const identity = await runtime.auth.authenticateOwner(request, { mutation: false });
     assert.equal(identity.providerSubject, "owner-subject");
     assert.equal(identity.authenticationMode, "provider");
+
+    let subjectReads = 0;
+    const accessorSession = validProviderSession("unused");
+    Object.defineProperty(accessorSession, "subject", {
+      enumerable: true,
+      get() {
+        subjectReads += 1;
+        return subjectReads === 1 ? " exact owner \ud83c\udf40 " : "substituted-owner";
+      }
+    });
+    runtime.auth.registerProviderSessionVerifier({ verify: async () => accessorSession });
+    const exactAccessorIdentity = await runtime.auth.authenticateOwner(request, { mutation: false });
+    assert.equal(subjectReads, 1);
+    assert.equal(exactAccessorIdentity.providerSubject, " exact owner \ud83c\udf40 ");
+    const repeatedAccessorSubject = "exact-owner-\ud83c\udf40";
+    runtime.auth.registerProviderSessionVerifier({ verify: async () => validProviderSession(repeatedAccessorSubject) });
+    const firstExactIdentity = await runtime.auth.authenticateOwner(request, { mutation: false });
+    const secondExactIdentity = await runtime.auth.authenticateOwner(request, { mutation: false });
+    assert.deepEqual(secondExactIdentity, firstExactIdentity);
+    assert.equal(firstExactIdentity.providerSubject, repeatedAccessorSubject);
+
+    const csrf = createHmac("sha256", "synthetic-csrf-secret").update(repeatedAccessorSubject, "utf8").digest("hex");
+    const mutationRequest = new Request("https://clover-owner.example/api/sessions", {
+      method: "POST",
+      headers: { origin: "https://clover-owner.example", "x-clover-csrf": csrf }
+    });
+    assert.equal((await runtime.auth.authenticateOwner(mutationRequest, { mutation: true })).participantId, firstExactIdentity.participantId);
+    for (const invalidMutation of [
+      new Request("https://clover-owner.example/api/sessions", { method: "POST", headers: { origin: "https://wrong.example", "x-clover-csrf": csrf } }),
+      new Request("https://clover-owner.example/api/sessions", { method: "POST", headers: { origin: "https://clover-owner.example", "x-clover-csrf": "0".repeat(64) } })
+    ]) {
+      await assert.rejects(runtime.auth.authenticateOwner(invalidMutation, { mutation: true }), runtime.auth.AuthenticationDeniedError);
+    }
   } finally {
     for (const key of environmentKeys) {
       if (originalEnvironment[key] === undefined) delete process.env[key];
@@ -463,6 +554,217 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     );
     assert.equal((await creationStore.readEvents(identity, firstCreation.sessionId)).length, 1);
 
+    let eventKeyReads = 0;
+    const eventMaterial = { keyRef: "event-idempotency-key", version: 1, key: Buffer.alloc(32, 21) };
+    const eventKeys = {
+      current: async () => { eventKeyReads += 1; return eventMaterial; },
+      resolve: async (keyRef, version) => keyRef === eventMaterial.keyRef && version === eventMaterial.version ? eventMaterial : null
+    };
+    const eventStore = new InMemorySyntheticLaunchStudioStore(eventKeys);
+    const eventSession = await eventStore.createSession(
+      identity,
+      creationScope,
+      "event idempotency source",
+      "event-idempotency-create-0001"
+    );
+    const exactEventInput = {
+      type: "owner-feedback-recorded",
+      expectedVersion: eventSession.version,
+      predecessorEventId: eventSession.lastEventId,
+      predecessorHash: eventSession.lastEventHash,
+      idempotencyKey: "event-idempotency-replay-0001",
+      payload: { reviewedText: "immutable replay result", nested: { accepted: true } }
+    };
+    const firstEventResult = await eventStore.appendEvent(identity, eventSession.sessionId, exactEventInput);
+    const keyReadsAfterFirstEvent = eventKeyReads;
+    const exactReplayResult = await eventStore.appendEvent(identity, eventSession.sessionId, structuredClone(exactEventInput));
+    assert.deepEqual(exactReplayResult, firstEventResult);
+    assert.equal(eventKeyReads, keyReadsAfterFirstEvent);
+    assert.equal((await eventStore.getSession(identity, eventSession.sessionId)).version, 2);
+    assert.equal((await eventStore.readEvents(identity, eventSession.sessionId)).length, 2);
+
+    const afterFirstEvent = await eventStore.getSession(identity, eventSession.sessionId);
+    await eventStore.appendEvent(identity, eventSession.sessionId, {
+      type: "understanding-reviewed",
+      expectedVersion: afterFirstEvent.version,
+      predecessorEventId: afterFirstEvent.lastEventId,
+      predecessorHash: afterFirstEvent.lastEventHash,
+      idempotencyKey: "event-idempotency-later-0001",
+      payload: { reviewedText: "later immutable event" }
+    });
+    const archiveBeforeLateReplay = await eventStore.exportSession(identity, eventSession.sessionId);
+    assert.deepEqual(
+      await eventStore.appendEvent(identity, eventSession.sessionId, structuredClone(exactEventInput)),
+      firstEventResult
+    );
+    assert.deepEqual(await eventStore.exportSession(identity, eventSession.sessionId), archiveBeforeLateReplay);
+
+    const assertEventConflictWithoutMutation = async (mutate, label) => {
+      const candidate = structuredClone(exactEventInput);
+      mutate(candidate);
+      const before = await eventStore.exportSession(identity, eventSession.sessionId);
+      await assert.rejects(eventStore.appendEvent(identity, eventSession.sessionId, candidate), AppendOnlyViolationError, label);
+      assert.deepEqual(await eventStore.exportSession(identity, eventSession.sessionId), before, label);
+    };
+    for (const [label, mutate] of [
+      ["event type conflict", (candidate) => { candidate.type = "context-pack-proposed"; }],
+      ["event payload conflict", (candidate) => { candidate.payload.nested.accepted = false; }],
+      ["event expected version conflict", (candidate) => { candidate.expectedVersion += 1; }],
+      ["event predecessor id conflict", (candidate) => { candidate.predecessorEventId = `event:${"1".repeat(64)}`; }],
+      ["event predecessor hash conflict", (candidate) => { candidate.predecessorHash = "2".repeat(64); }],
+      ["event field addition", (candidate) => { candidate.authority = false; }],
+      ["event field deletion", (candidate) => { delete candidate.payload; }]
+    ]) await assertEventConflictWithoutMutation(mutate, label);
+
+    const explicitSnapshot = await eventStore.getSession(identity, eventSession.sessionId);
+    const explicitCreatedAt = new Date(Date.parse(explicitSnapshot.updatedAt) + 1).toISOString();
+    const explicitInput = {
+      type: "owner-feedback-recorded",
+      expectedVersion: explicitSnapshot.version,
+      predecessorEventId: explicitSnapshot.lastEventId,
+      predecessorHash: explicitSnapshot.lastEventHash,
+      idempotencyKey: "event-idempotency-explicit-time-0001",
+      payload: { reviewedText: "explicit timestamp" },
+      createdAt: explicitCreatedAt
+    };
+    const explicitResult = await eventStore.appendEvent(identity, eventSession.sessionId, explicitInput);
+    assert.deepEqual(await eventStore.appendEvent(identity, eventSession.sessionId, explicitInput), explicitResult);
+    const changedExplicit = { ...explicitInput, createdAt: new Date(Date.parse(explicitCreatedAt) + 1).toISOString() };
+    const beforeChangedExplicit = await eventStore.exportSession(identity, eventSession.sessionId);
+    await assert.rejects(eventStore.appendEvent(identity, eventSession.sessionId, changedExplicit), AppendOnlyViolationError);
+    assert.deepEqual(await eventStore.exportSession(identity, eventSession.sessionId), beforeChangedExplicit);
+
+    const concurrentSession = await eventStore.createSession(
+      identity,
+      creationScope,
+      "concurrent event replay source",
+      "event-idempotency-concurrent-create-0001"
+    );
+    const concurrentInput = {
+      type: "owner-feedback-recorded",
+      expectedVersion: concurrentSession.version,
+      predecessorEventId: concurrentSession.lastEventId,
+      predecessorHash: concurrentSession.lastEventHash,
+      idempotencyKey: "event-idempotency-concurrent-0001",
+      payload: { reviewedText: "one concurrent result" }
+    };
+    const concurrentExactResults = await Promise.all([
+      eventStore.appendEvent(identity, concurrentSession.sessionId, structuredClone(concurrentInput)),
+      eventStore.appendEvent(identity, concurrentSession.sessionId, structuredClone(concurrentInput))
+    ]);
+    assert.deepEqual(concurrentExactResults[1], concurrentExactResults[0]);
+    assert.equal((await eventStore.getSession(identity, concurrentSession.sessionId)).version, 2);
+    assert.equal((await eventStore.readEvents(identity, concurrentSession.sessionId)).length, 2);
+
+    let releaseSnapshotGate;
+    let signalSnapshotGate;
+    const snapshotGateEntered = new Promise((resolve) => { signalSnapshotGate = resolve; });
+    const snapshotGate = new Promise((resolve) => { releaseSnapshotGate = resolve; });
+    let gateSnapshotCurrent = false;
+    const snapshotMaterial = { keyRef: "event-snapshot-key", version: 1, key: Buffer.alloc(32, 22) };
+    const snapshotStore = new InMemorySyntheticLaunchStudioStore({
+      current: async () => {
+        if (gateSnapshotCurrent) {
+          gateSnapshotCurrent = false;
+          signalSnapshotGate();
+          await snapshotGate;
+        }
+        return snapshotMaterial;
+      },
+      resolve: async (keyRef, version) => keyRef === snapshotMaterial.keyRef && version === snapshotMaterial.version ? snapshotMaterial : null
+    });
+    const snapshotSession = await snapshotStore.createSession(
+      identity,
+      creationScope,
+      "call-time input snapshot source",
+      "event-snapshot-create-0001"
+    );
+    const snapshotReplayInput = {
+      type: "owner-feedback-recorded",
+      expectedVersion: snapshotSession.version,
+      predecessorEventId: snapshotSession.lastEventId,
+      predecessorHash: snapshotSession.lastEventHash,
+      idempotencyKey: "event-snapshot-replay-0001",
+      payload: { reviewedText: "captured before queued mutation" }
+    };
+    const snapshotOriginalEvent = await snapshotStore.appendEvent(identity, snapshotSession.sessionId, snapshotReplayInput);
+    const snapshotCurrent = await snapshotStore.getSession(identity, snapshotSession.sessionId);
+    gateSnapshotCurrent = true;
+    const blockingAppend = snapshotStore.appendEvent(identity, snapshotSession.sessionId, {
+      type: "understanding-reviewed",
+      expectedVersion: snapshotCurrent.version,
+      predecessorEventId: snapshotCurrent.lastEventId,
+      predecessorHash: snapshotCurrent.lastEventHash,
+      idempotencyKey: "event-snapshot-blocker-0001",
+      payload: { reviewedText: "block queued retry" }
+    });
+    await snapshotGateEntered;
+    const callerMutableRetry = structuredClone(snapshotReplayInput);
+    const snapshottedRetry = snapshotStore.appendEvent(identity, snapshotSession.sessionId, callerMutableRetry);
+    callerMutableRetry.type = "impact-scan-proposed";
+    callerMutableRetry.expectedVersion = 99;
+    callerMutableRetry.predecessorEventId = `event:${"3".repeat(64)}`;
+    callerMutableRetry.predecessorHash = "4".repeat(64);
+    callerMutableRetry.idempotencyKey = "event-snapshot-substituted-0001";
+    callerMutableRetry.payload.reviewedText = "mutated after invocation";
+    releaseSnapshotGate();
+    await blockingAppend;
+    assert.deepEqual(await snapshottedRetry, snapshotOriginalEvent);
+    assert.equal((await snapshotStore.getSession(identity, snapshotSession.sessionId)).version, 3);
+    assert.equal((await snapshotStore.readEvents(identity, snapshotSession.sessionId)).length, 3);
+
+    const conflictSession = await eventStore.createSession(
+      identity,
+      creationScope,
+      "concurrent event conflict source",
+      "event-idempotency-conflict-create-0001"
+    );
+    const conflictBase = {
+      type: "owner-feedback-recorded",
+      expectedVersion: conflictSession.version,
+      predecessorEventId: conflictSession.lastEventId,
+      predecessorHash: conflictSession.lastEventHash,
+      idempotencyKey: "event-idempotency-conflict-0001"
+    };
+    const concurrentConflicts = await Promise.allSettled([
+      eventStore.appendEvent(identity, conflictSession.sessionId, { ...conflictBase, payload: { reviewedText: "candidate A" } }),
+      eventStore.appendEvent(identity, conflictSession.sessionId, { ...conflictBase, payload: { reviewedText: "candidate B" } })
+    ]);
+    assert.equal(concurrentConflicts.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(concurrentConflicts.filter(({ status }) => status === "rejected").length, 1);
+    assert.equal((await eventStore.getSession(identity, conflictSession.sessionId)).version, 2);
+    assert.equal((await eventStore.readEvents(identity, conflictSession.sessionId)).length, 2);
+
+    const independentSession = await eventStore.createSession(
+      identity,
+      creationScope,
+      "independent event key scope",
+      "event-idempotency-independent-create-0001"
+    );
+    const independentEvent = await eventStore.appendEvent(identity, independentSession.sessionId, {
+      ...exactEventInput,
+      expectedVersion: independentSession.version,
+      predecessorEventId: independentSession.lastEventId,
+      predecessorHash: independentSession.lastEventHash
+    });
+    assert.equal(independentEvent.idempotencyKey, firstEventResult.idempotencyKey);
+    assert.notEqual(independentEvent.eventId, firstEventResult.eventId);
+
+    const restoredEventArchive = await eventStore.exportSession(identity, eventSession.sessionId);
+    const restoredEventStore = new InMemorySyntheticLaunchStudioStore(eventKeys);
+    await restoredEventStore.restoreSession(identity, eventSession.sessionId, restoredEventArchive);
+    assert.deepEqual(
+      await restoredEventStore.appendEvent(identity, eventSession.sessionId, structuredClone(exactEventInput)),
+      firstEventResult
+    );
+    assert.deepEqual(await restoredEventStore.exportSession(identity, eventSession.sessionId), restoredEventArchive);
+    const beforeRestoredConflict = await restoredEventStore.exportSession(identity, eventSession.sessionId);
+    await assert.rejects(restoredEventStore.appendEvent(identity, eventSession.sessionId, {
+      ...exactEventInput,
+      payload: { reviewedText: "restored conflict" }
+    }), AppendOnlyViolationError);
+    assert.deepEqual(await restoredEventStore.exportSession(identity, eventSession.sessionId), beforeRestoredConflict);
+
     const sharedArtifactBytes = Buffer.from("session-scoped shared artifact", "utf8");
     const [firstArtifact, secondArtifact] = await Promise.all([
       creationStore.putArtifact(identity, firstCreation.sessionId, sharedArtifactBytes, "text/plain"),
@@ -486,6 +788,62 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     await assert.rejects(
       creationStore.readArtifact(secondIdentity, firstCreation.sessionId, firstArtifact.artifactId),
       runtime.acl.AccessDeniedError
+    );
+
+    let releaseArtifactSnapshotGate;
+    let signalArtifactSnapshotGate;
+    const artifactSnapshotGateEntered = new Promise((resolve) => { signalArtifactSnapshotGate = resolve; });
+    const artifactSnapshotGate = new Promise((resolve) => { releaseArtifactSnapshotGate = resolve; });
+    let gateArtifactSnapshotCurrent = false;
+    const artifactSnapshotMaterial = { keyRef: "artifact-snapshot-key", version: 1, key: Buffer.alloc(32, 23) };
+    const artifactSnapshotKeys = {
+      current: async () => {
+        if (gateArtifactSnapshotCurrent) {
+          gateArtifactSnapshotCurrent = false;
+          signalArtifactSnapshotGate();
+          await artifactSnapshotGate;
+        }
+        return artifactSnapshotMaterial;
+      },
+      resolve: async (keyRef, version) => keyRef === artifactSnapshotMaterial.keyRef && version === artifactSnapshotMaterial.version
+        ? artifactSnapshotMaterial
+        : null
+    };
+    const artifactSnapshotStore = new InMemorySyntheticLaunchStudioStore(artifactSnapshotKeys);
+    const artifactSnapshotSession = await artifactSnapshotStore.createSession(
+      identity,
+      ownerScope(identity),
+      "artifact call-time snapshot source",
+      "artifact-snapshot-create-0001"
+    );
+    const callerOwnedArtifactBytes = Buffer.from("bytes captured at invocation", "utf8");
+    const expectedArtifactBytes = Buffer.from(callerOwnedArtifactBytes);
+    gateArtifactSnapshotCurrent = true;
+    const pendingSnapshottedArtifact = artifactSnapshotStore.putArtifact(
+      identity,
+      artifactSnapshotSession.sessionId,
+      callerOwnedArtifactBytes,
+      "application/octet-stream"
+    );
+    await artifactSnapshotGateEntered;
+    callerOwnedArtifactBytes.fill(0x78);
+    releaseArtifactSnapshotGate();
+    const snapshottedArtifact = await pendingSnapshottedArtifact;
+    assert.equal(snapshottedArtifact.artifactId, `artifact:${sha256(expectedArtifactBytes)}`);
+    assert.deepEqual(
+      await artifactSnapshotStore.readArtifact(identity, artifactSnapshotSession.sessionId, snapshottedArtifact.artifactId),
+      expectedArtifactBytes
+    );
+    const artifactSnapshotArchive = await artifactSnapshotStore.exportSession(identity, artifactSnapshotSession.sessionId);
+    const artifactSnapshotDestination = new InMemorySyntheticLaunchStudioStore(artifactSnapshotKeys);
+    await artifactSnapshotDestination.restoreSession(identity, artifactSnapshotSession.sessionId, artifactSnapshotArchive);
+    assert.deepEqual(
+      await artifactSnapshotDestination.readArtifact(identity, artifactSnapshotSession.sessionId, snapshottedArtifact.artifactId),
+      expectedArtifactBytes
+    );
+    assert.deepEqual(
+      await artifactSnapshotDestination.exportSession(identity, artifactSnapshotSession.sessionId),
+      artifactSnapshotArchive
     );
 
     const artifactKey = Buffer.alloc(32, 17);

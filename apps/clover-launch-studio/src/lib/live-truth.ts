@@ -3,6 +3,7 @@ import type { TreeProgramSnapshot } from "./tree-program";
 
 export const GITHUB_ORIGIN = "https://api.github.com";
 export const GITHUB_REPOSITORY = "chrisdortch/first";
+export const GITHUB_REPOSITORY_ID = 1_231_415_392;
 export const EXPECTED_MAIN_COMMIT = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
 export const EXPECTED_STACK_A_HEAD = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
 export const EXPECTED_STACK_A_BASE_COMMIT = "7d067d79bbff872846d6673b5f852518ba00fa7e";
@@ -15,6 +16,9 @@ export const MAX_GITHUB_RESPONSE_BYTES = 256 * 1024;
 export const DEFAULT_GITHUB_TIMEOUT_MS = 4_000;
 export const DEFAULT_GITHUB_RETRIES = 1;
 export const GITHUB_REVALIDATE_SECONDS = 60;
+export const MAX_GITHUB_CHECK_RUN_PAGES = 10;
+export const MAX_GITHUB_CHECK_RUNS = 1_000;
+const GITHUB_CHECK_RUNS_PER_PAGE = 100;
 export const REQUIRED_EXACT_HEAD_CHECKS = Object.freeze([
   "Clover required main gate (Node 22)",
   "Clover required main gate (Node 24)",
@@ -40,7 +44,7 @@ type PublicGitHubPull = {
   baseRepository: string;
   updatedAt: string;
 };
-type PublicCheckRun = { id: number; name: string; status: string; conclusion: string | null; startedAt: string | null; completedAt: string | null };
+type PublicCheckRun = { id: number; name: string; status: string; conclusion: string | null; startedAt: string; completedAt: string | null };
 type PublicGitHubChecks = { sha: string; state: "success" | "pending" | "failure"; requiredNames: string[]; checks: PublicCheckRun[] };
 
 export type GitHubLiveObservation = {
@@ -212,7 +216,11 @@ function exactTimestamp(value: unknown, context: string): string {
 }
 
 function parseRepository(value: unknown): { defaultBranch: string } {
-  if (!isRecord(value) || requiredString(value, "full_name", "REPOSITORY") !== GITHUB_REPOSITORY) throw new Error("GITHUB_SOURCE_SUBSTITUTION:repository");
+  if (
+    !isRecord(value) ||
+    requiredString(value, "full_name", "REPOSITORY") !== GITHUB_REPOSITORY ||
+    value.id !== GITHUB_REPOSITORY_ID
+  ) throw new Error("GITHUB_SOURCE_SUBSTITUTION:repository");
   const defaultBranch = requiredString(value, "default_branch", "REPOSITORY");
   if (defaultBranch !== "main") throw new Error("GITHUB_SOURCE_SUBSTITUTION:default-branch");
   return { defaultBranch };
@@ -259,27 +267,49 @@ function parsePull(value: unknown, expectedNumber: number): PublicGitHubPull {
   };
 }
 
-function parseCheckRuns(value: unknown, expectedSha: string): PublicGitHubChecks {
-  if (!isRecord(value) || !Number.isSafeInteger(value.total_count) || !Array.isArray(value.check_runs) || Number(value.total_count) > value.check_runs.length) throw new Error("GITHUB_MALFORMED_CHECK_RUNS");
-  const parsed = value.check_runs.map((candidate): PublicCheckRun => {
-    if (!isRecord(candidate) || !Number.isSafeInteger(candidate.id)) throw new Error("GITHUB_MALFORMED_CHECK_RUNS:entry");
+const GITHUB_CHECK_RUN_STATUSES = new Set(["queued", "in_progress", "completed", "waiting", "requested", "pending"]);
+const GITHUB_CHECK_RUN_CONCLUSIONS = new Set(["success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required", "stale", "startup_failure"]);
+
+function parseCheckRun(candidate: unknown, expectedSha: string): PublicCheckRun {
+    if (!isRecord(candidate) || !Number.isSafeInteger(candidate.id) || Number(candidate.id) < 1) throw new Error("GITHUB_MALFORMED_CHECK_RUNS:entry");
     if (requiredString(candidate, "head_sha", "CHECK_RUN") !== expectedSha) throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-run-sha");
+    const status = requiredString(candidate, "status", "CHECK_RUN");
     const conclusion = candidate.conclusion;
-    if (conclusion !== null && typeof conclusion !== "string") throw new Error("GITHUB_MALFORMED_CHECK_RUNS:conclusion");
+    if (
+      !GITHUB_CHECK_RUN_STATUSES.has(status) ||
+      (conclusion !== null && (typeof conclusion !== "string" || !GITHUB_CHECK_RUN_CONCLUSIONS.has(conclusion))) ||
+      (status === "completed" ? conclusion === null : conclusion !== null)
+    ) throw new Error("GITHUB_MALFORMED_CHECK_RUNS:conclusion");
+    const startedAt = exactTimestamp(candidate.started_at, "CHECK_RUN");
+    const completedAt = candidate.completed_at === null ? null : exactTimestamp(candidate.completed_at, "CHECK_RUN");
+    if (
+      (status === "completed") !== (completedAt !== null) ||
+      (completedAt !== null && completedAt < startedAt)
+    ) throw new Error("GITHUB_MALFORMED_CHECK_RUNS:completion");
     return {
       id: Number(candidate.id),
       name: requiredString(candidate, "name", "CHECK_RUN"),
-      status: requiredString(candidate, "status", "CHECK_RUN"),
+      status,
       conclusion,
-      startedAt: candidate.started_at === null ? null : exactTimestamp(candidate.started_at, "CHECK_RUN"),
-      completedAt: candidate.completed_at === null ? null : exactTimestamp(candidate.completed_at, "CHECK_RUN")
+      startedAt,
+      completedAt
     };
-  });
+}
+
+function parseCheckRunsPage(value: unknown, expectedSha: string): { totalCount: number; checks: PublicCheckRun[] } {
+  if (!isRecord(value) || !Number.isSafeInteger(value.total_count) || Number(value.total_count) < 0 || !Array.isArray(value.check_runs) || value.check_runs.length > GITHUB_CHECK_RUNS_PER_PAGE) {
+    throw new Error("GITHUB_MALFORMED_CHECK_RUNS");
+  }
+  return { totalCount: Number(value.total_count), checks: value.check_runs.map((candidate) => parseCheckRun(candidate, expectedSha)) };
+}
+
+function checkRunRecency(left: PublicCheckRun, right: PublicCheckRun): number {
+  return left.startedAt.localeCompare(right.startedAt) || left.id - right.id;
+}
+
+function projectCheckRuns(parsed: PublicCheckRun[], expectedSha: string): PublicGitHubChecks {
   const latestByName = new Map<string, PublicCheckRun>();
-  for (const check of parsed.sort((left, right) => {
-    const timeOrder = (left.completedAt ?? left.startedAt ?? "").localeCompare(right.completedAt ?? right.startedAt ?? "");
-    return timeOrder || left.id - right.id;
-  })) latestByName.set(check.name, check);
+  for (const check of [...parsed].sort(checkRunRecency)) latestByName.set(check.name, check);
   const checks = [...latestByName.values()].sort((left, right) => left.name.localeCompare(right.name, "en"));
   const required = REQUIRED_EXACT_HEAD_CHECKS.map((name) => checks.find((check) => check.name === name) ?? null);
   const hasFailure = required.some((check) => check?.status === "completed" && check.conclusion !== "success");
@@ -293,8 +323,81 @@ function validSourceDate(value: string | null): string | null {
   return Number.isFinite(milliseconds) ? new Date(milliseconds).toISOString() : null;
 }
 
-async function readFixedGithubJson(endpoint: string, { fetchImpl, timeoutMs, retries }: { fetchImpl: FixedFetch; timeoutMs: number; retries: number }): Promise<{ value: unknown; observedAt: string | null }> {
-  if (!endpoint.startsWith(`${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`)) throw new Error("GITHUB_ENDPOINT_REJECTED");
+function parseGithubEndpoint(endpoint: string): URL {
+  let candidate: URL;
+  try { candidate = new URL(endpoint); } catch { throw new Error("GITHUB_ENDPOINT_REJECTED"); }
+  if (
+    candidate.origin !== GITHUB_ORIGIN ||
+    candidate.username ||
+    candidate.password ||
+    candidate.port ||
+    candidate.hash ||
+    candidate.pathname !== `/repos/${GITHUB_REPOSITORY}` &&
+    !candidate.pathname.startsWith(`/repos/${GITHUB_REPOSITORY}/`) &&
+    candidate.pathname !== `/repositories/${GITHUB_REPOSITORY_ID}` &&
+    !candidate.pathname.startsWith(`/repositories/${GITHUB_REPOSITORY_ID}/`)
+  ) throw new Error("GITHUB_ENDPOINT_REJECTED");
+  return candidate;
+}
+
+function checkRunsPageEndpoint(candidateCommit: string, page: number): string {
+  // The incomplete legacy form commits/${candidateCommit}/check-runs?per_page=100 is never requested.
+  return `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/commits/${candidateCommit}/check-runs?filter=all&per_page=${GITHUB_CHECK_RUNS_PER_PAGE}&page=${page}`;
+}
+
+function parseCheckRunsPageNumber(endpoint: string, expectedSha: string): number {
+  let candidate: URL;
+  try { candidate = parseGithubEndpoint(endpoint); } catch { throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-link-origin"); }
+  if (
+    candidate.pathname !== `/repos/${GITHUB_REPOSITORY}/commits/${expectedSha}/check-runs` &&
+    candidate.pathname !== `/repositories/${GITHUB_REPOSITORY_ID}/commits/${expectedSha}/check-runs`
+  ) {
+    throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-link-path");
+  }
+  const keys = [...candidate.searchParams.keys()];
+  if (
+    keys.length !== 3 ||
+    new Set(keys).size !== 3 ||
+    candidate.searchParams.getAll("filter").length !== 1 ||
+    candidate.searchParams.get("filter") !== "all" ||
+    candidate.searchParams.getAll("per_page").length !== 1 ||
+    candidate.searchParams.get("per_page") !== String(GITHUB_CHECK_RUNS_PER_PAGE) ||
+    candidate.searchParams.getAll("page").length !== 1 ||
+    !/^[1-9]\d*$/u.test(candidate.searchParams.get("page") ?? "")
+  ) throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-link-query");
+  const page = Number(candidate.searchParams.get("page"));
+  if (!Number.isSafeInteger(page)) throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-link-page");
+  return page;
+}
+
+function nextCheckRunsEndpoint(link: string | null, expectedSha: string, currentPage: number, totalCount: number): string | null {
+  if (link === null) return null;
+  const relations = new Map<string, { endpoint: string; page: number }>();
+  for (const entry of link.split(",")) {
+    const match = entry.trim().match(/^<([^<>]+)>;\s*rel="(next|prev|first|last)"$/u);
+    if (!match || relations.has(match[2])) throw new Error("GITHUB_MALFORMED_CHECK_RUNS_LINK");
+    const endpoint = match[1];
+    const page = parseCheckRunsPageNumber(endpoint, expectedSha);
+    relations.set(match[2], { endpoint, page });
+  }
+  const first = relations.get("first");
+  const previous = relations.get("prev");
+  const next = relations.get("next");
+  const last = relations.get("last");
+  const expectedLastPage = Math.max(1, Math.ceil(totalCount / GITHUB_CHECK_RUNS_PER_PAGE));
+  if (
+    (first && first.page !== 1) ||
+    (previous && previous.page !== currentPage - 1) ||
+    (next && next.page !== currentPage + 1) ||
+    (last && last.page !== expectedLastPage)
+  ) {
+    throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-link-sequence");
+  }
+  return next?.endpoint ?? null;
+}
+
+async function readFixedGithubJson(endpoint: string, { fetchImpl, timeoutMs, retries }: { fetchImpl: FixedFetch; timeoutMs: number; retries: number }): Promise<{ value: unknown; observedAt: string | null; link: string | null }> {
+  parseGithubEndpoint(endpoint);
   let lastFailure = "GITHUB_UNAVAILABLE";
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
@@ -322,7 +425,7 @@ async function readFixedGithubJson(endpoint: string, { fetchImpl, timeoutMs, ret
       if (new TextEncoder().encode(text).byteLength > MAX_GITHUB_RESPONSE_BYTES) throw new Error("GITHUB_RESPONSE_TOO_LARGE");
       let value: unknown;
       try { value = JSON.parse(text); } catch { throw new Error("GITHUB_MALFORMED_JSON"); }
-      return { value, observedAt: validSourceDate(response.headers.get("date")) };
+      return { value, observedAt: validSourceDate(response.headers.get("date")), link: response.headers.get("link") };
     } catch (error) {
       const message = error instanceof Error ? error.message : "GITHUB_UNAVAILABLE";
       if (message === "GITHUB_RATE_LIMITED" || message.includes("SOURCE_SUBSTITUTION") || message.includes("TOO_LARGE") || message.includes("MALFORMED")) throw error;
@@ -333,6 +436,52 @@ async function readFixedGithubJson(endpoint: string, { fetchImpl, timeoutMs, ret
   throw new Error(lastFailure);
 }
 
+async function readPaginatedCheckRuns({
+  candidateCommit,
+  fetchImpl,
+  timeoutMs,
+  retries,
+  endpoints,
+  observedTimes
+}: {
+  candidateCommit: string;
+  fetchImpl: FixedFetch;
+  timeoutMs: number;
+  retries: number;
+  endpoints: string[];
+  observedTimes: string[];
+}): Promise<PublicGitHubChecks> {
+  const byId = new Map<number, PublicCheckRun>();
+  let expectedTotal: number | null = null;
+  let endpoint = checkRunsPageEndpoint(candidateCommit, 1);
+  for (let page = 1; page <= MAX_GITHUB_CHECK_RUN_PAGES; page += 1) {
+    if (parseCheckRunsPageNumber(endpoint, candidateCommit) !== page) throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-page");
+    endpoints.push(endpoint);
+    const result = await readFixedGithubJson(endpoint, { fetchImpl, timeoutMs, retries });
+    if (!result.observedAt) throw new Error("GITHUB_SOURCE_TIME_UNAVAILABLE");
+    observedTimes.push(result.observedAt);
+    const parsed = parseCheckRunsPage(result.value, candidateCommit);
+    if (parsed.totalCount > MAX_GITHUB_CHECK_RUNS) throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+    if (expectedTotal === null) expectedTotal = parsed.totalCount;
+    else if (parsed.totalCount !== expectedTotal) throw new Error("GITHUB_CHECK_RUNS_TOTAL_DISAGREEMENT");
+    for (const check of parsed.checks) {
+      const prior = byId.get(check.id);
+      if (prior && JSON.stringify(prior) !== JSON.stringify(check)) throw new Error("GITHUB_SOURCE_CONTRADICTION:duplicate-check-run");
+      if (!prior) byId.set(check.id, check);
+    }
+    if (byId.size > expectedTotal) throw new Error("GITHUB_CHECK_RUNS_TOTAL_DISAGREEMENT");
+    const next = nextCheckRunsEndpoint(result.link, candidateCommit, page, parsed.totalCount);
+    if (byId.size === expectedTotal) {
+      if (next !== null) throw new Error("GITHUB_CHECK_RUNS_UNEXPECTED_NEXT_PAGE");
+      return projectCheckRuns([...byId.values()], candidateCommit);
+    }
+    if (next === null) throw new Error("GITHUB_CHECK_RUNS_PAGE_MISSING");
+    if (page === MAX_GITHUB_CHECK_RUN_PAGES) throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+    endpoint = next;
+  }
+  throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+}
+
 function githubEndpoints(candidateCommit: string) {
   if (!HEX_40.test(candidateCommit)) throw new Error("GITHUB_CANDIDATE_IDENTITY_REJECTED");
   return Object.freeze({
@@ -340,14 +489,19 @@ function githubEndpoints(candidateCommit: string) {
     main: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/branches/main`,
     pull34: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/34`,
     pull35: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35`,
-    exactHeadChecks: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/commits/${candidateCommit}/check-runs?per_page=100`
+    exactHeadChecks: checkRunsPageEndpoint(candidateCommit, 1)
   });
 }
 
 export async function observeGitHubTruth({ candidateCommit, fetchImpl = fetch as FixedFetch, timeoutMs = DEFAULT_GITHUB_TIMEOUT_MS, retries = DEFAULT_GITHUB_RETRIES }: { candidateCommit: string; fetchImpl?: FixedFetch; timeoutMs?: number; retries?: number }): Promise<GitHubLiveObservation> {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15_000 || !Number.isSafeInteger(retries) || retries < 0 || retries > 1) throw new Error("GITHUB_OBSERVATION_BOUNDARY_REJECTED");
   const endpoints = githubEndpoints(candidateCommit);
-  const outcomes = await Promise.all((Object.entries(endpoints) as Array<[GithubProjectionKey, string]>).map(async ([key, endpoint]) => {
+  const requestedEndpoints: string[] = [];
+  const checkObservedTimes: string[] = [];
+  const fixedOutcomes = await Promise.all((Object.entries(endpoints) as Array<[GithubProjectionKey, string]>)
+    .filter(([key]) => key !== "exactHeadChecks")
+    .map(async ([key, endpoint]) => {
+    requestedEndpoints.push(endpoint);
     try {
       const result = await readFixedGithubJson(endpoint, { fetchImpl, timeoutMs, retries });
       return { key, value: result.value, observedAt: result.observedAt, failure: result.observedAt ? null : `${key}:GITHUB_SOURCE_TIME_UNAVAILABLE` } as const;
@@ -355,6 +509,31 @@ export async function observeGitHubTruth({ candidateCommit, fetchImpl = fetch as
       return { key, value: null, observedAt: null, failure: `${key}:${error instanceof Error ? error.message : "GITHUB_UNAVAILABLE"}` } as const;
     }
   }));
+  let checkOutcome: { key: "exactHeadChecks"; value: PublicGitHubChecks | null; observedAt: string | null; failure: string | null };
+  try {
+    const value = await readPaginatedCheckRuns({
+      candidateCommit,
+      fetchImpl,
+      timeoutMs,
+      retries,
+      endpoints: requestedEndpoints,
+      observedTimes: checkObservedTimes
+    });
+    checkOutcome = {
+      key: "exactHeadChecks",
+      value,
+      observedAt: [...checkObservedTimes].sort().at(-1) ?? null,
+      failure: null
+    };
+  } catch (error) {
+    checkOutcome = {
+      key: "exactHeadChecks",
+      value: null,
+      observedAt: [...checkObservedTimes].sort().at(-1) ?? null,
+      failure: `exactHeadChecks:${error instanceof Error ? error.message : "GITHUB_UNAVAILABLE"}`
+    };
+  }
+  const outcomes = [...fixedOutcomes, checkOutcome];
   const failures: string[] = [];
   const values = new Map<GithubProjectionKey, unknown>();
   const observedTimes: string[] = [];
@@ -374,11 +553,14 @@ export async function observeGitHubTruth({ candidateCommit, fetchImpl = fetch as
   const main = repository ? parseProjection("main", (value) => parseBranch(value, repository.defaultBranch)) : null;
   const pull34 = parseProjection("pull34", (value) => parsePull(value, 34));
   const pull35 = parseProjection("pull35", (value) => parsePull(value, 35));
-  const exactHeadChecks = parseProjection("exactHeadChecks", (value) => parseCheckRuns(value, candidateCommit));
+  const exactHeadChecks = parseProjection("exactHeadChecks", (value) => value as PublicGitHubChecks);
   const successfulProjectionCount = [repository, main, pull34, pull35, exactHeadChecks].filter(Boolean).length;
   const complete = successfulProjectionCount === 5 && failures.length === 0;
-  const contradictory = failures.some((failure) => failure.includes("SOURCE_SUBSTITUTION"));
+  const contradictory = failures.some((failure) => failure.includes("SOURCE_SUBSTITUTION") || failure.includes("SOURCE_CONTRADICTION"));
   const status = complete ? "current" : contradictory ? "contradictory" : successfulProjectionCount > 0 ? "partial" : "unavailable";
+  const explicitBoundaryFailure = failures
+    .map((failure) => failure.split(":").slice(1).join(":"))
+    .find((failure) => failure === "GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
   return {
     sourceId: "github-public-api",
     sourceIdentity: "github:chrisdortch/first",
@@ -386,8 +568,8 @@ export async function observeGitHubTruth({ candidateCommit, fetchImpl = fetch as
     status,
     freshness: complete ? "current" : "unavailable",
     observedAt: observedTimes.sort().at(-1) ?? null,
-    errorCode: complete ? null : successfulProjectionCount > 0 ? "GITHUB_PARTIAL_FAILURE" : failures[0]?.split(":").slice(1).join(":") ?? "GITHUB_UNAVAILABLE",
-    endpoints: Object.values(endpoints),
+    errorCode: complete ? null : explicitBoundaryFailure ?? (successfulProjectionCount > 0 ? "GITHUB_PARTIAL_FAILURE" : failures[0]?.split(":").slice(1).join(":") ?? "GITHUB_UNAVAILABLE"),
+    endpoints: requestedEndpoints,
     main,
     pull34,
     pull35,
@@ -533,7 +715,7 @@ function githubContradictions(github: GitHubLiveObservation, build: BuildProvena
   if (github.status !== "current") contradictions.push("github-live-observation-unavailable");
   if (github.main?.sha !== EXPECTED_MAIN_COMMIT || github.main.protected !== true || github.main.defaultBranch !== "main") contradictions.push("protected-main-identity");
   if (github.pull34?.headSha !== EXPECTED_STACK_A_HEAD || github.pull34.headRef !== STACK_A_BRANCH || github.pull34.baseSha !== EXPECTED_STACK_A_BASE_COMMIT || github.pull34.baseRef !== "main" || github.pull34.headRepository !== GITHUB_REPOSITORY || github.pull34.baseRepository !== GITHUB_REPOSITORY || github.pull34.state !== "closed" || github.pull34.draft || !github.pull34.merged) contradictions.push("stack-a-pull-request");
-  if (github.pull35?.headSha !== build.commit || github.pull35.headRef !== STACK_B_BRANCH || github.pull35.baseSha !== EXPECTED_MAIN_COMMIT || github.pull35.baseRef !== "main" || github.pull35.headRepository !== GITHUB_REPOSITORY || github.pull35.baseRepository !== GITHUB_REPOSITORY || github.pull35.state !== "open" || !github.pull35.draft || github.pull35.merged || !github.pull35.mergeable) contradictions.push("stack-b-pull-request");
+  if (github.pull35?.headSha !== build.commit || github.pull35.headRef !== STACK_B_BRANCH || github.pull35.baseSha !== EXPECTED_MAIN_COMMIT || github.pull35.baseRef !== "main" || github.pull35.headRepository !== GITHUB_REPOSITORY || github.pull35.baseRepository !== GITHUB_REPOSITORY || github.pull35.state !== "open" || github.pull35.merged || !github.pull35.mergeable) contradictions.push("stack-b-pull-request");
   if (build.stackABase !== EXPECTED_MAIN_COMMIT || build.changedPathCount !== EXPECTED_STACK_B_CHANGED_PATH_COUNT || build.pathListSha256 !== EXPECTED_STACK_B_PATH_LIST_SHA256) contradictions.push("stack-b-source-provenance");
   if (github.exactHeadChecks?.sha !== build.commit || github.exactHeadChecks.state !== "success") contradictions.push("exact-head-checks");
   return contradictions;
