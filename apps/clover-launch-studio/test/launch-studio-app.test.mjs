@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac, hkdfSync } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -224,7 +225,10 @@ test("accept_retention_deletion", () => {
 test("accept_export_restore", () => {
   assert.match(source.storage, /exportSession/);
   assert.match(source.storage, /restoreSession/);
-  assert.match(source.storage, /clover-launch-studio-export-v1/);
+  assert.match(source.storage, /clover-launch-studio-export-v2/);
+  assert.match(source.storage, /hmac-sha256-hkdf-v1/);
+  assert.match(source.storage, /archiveSeal/);
+  assert.match(source.storage, /artifacts/);
   assert.match(source.config, /MAX_EXPORT_BYTES = 1024 \* 1024/);
   assert.match(source.restoreRoute, /MAX_RESTORE_REQUEST_BYTES/);
   assert.match(source.restoreRoute, /service\.restore\(sessionId, archive\)/);
@@ -395,7 +399,36 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     }), RequestRejectedError);
     assert.equal(appended.length, expectedEventTypes.length);
 
-    const keys = new ExplicitSyntheticKeyProvider(Buffer.alloc(32, 7));
+    const archiveKeyBytes = Buffer.alloc(32, 7);
+    const archiveKeyRef = "synthetic-local-key";
+    const archiveKeyVersion = 1;
+    const keys = new ExplicitSyntheticKeyProvider(archiveKeyBytes, archiveKeyRef, archiveKeyVersion);
+    const sealArchiveDocument = (document) => {
+      const unsigned = {
+        format: document.format,
+        session: document.session,
+        events: document.events,
+        progress: document.progress,
+        artifacts: document.artifacts
+      };
+      const derived = Buffer.from(hkdfSync(
+        "sha256",
+        archiveKeyBytes,
+        Buffer.from("clover-launch-studio:archive-seal:kdf:v2", "utf8"),
+        Buffer.from(`clover-launch-studio:archive-seal:key:v2\0${archiveKeyRef}\0${archiveKeyVersion}`, "utf8"),
+        32
+      ));
+      document.archiveSeal = {
+        algorithm: "hmac-sha256-hkdf-v1",
+        keyRef: archiveKeyRef,
+        keyVersion: archiveKeyVersion,
+        digest: createHmac("sha256", derived)
+          .update(Buffer.from("clover-launch-studio:archive-seal:data:v2\0", "utf8"))
+          .update(canonicalJson(unsigned), "utf8")
+          .digest("hex")
+      };
+      return Buffer.from(canonicalJson(document), "utf8");
+    };
     const creationStore = new InMemorySyntheticLaunchStudioStore(keys);
     const creationScope = ownerScope(identity);
     const creationKey = "lost-response-create-0001";
@@ -534,11 +567,11 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     const encryptionEntered = new Promise((resolve) => { signalEncryptionEntered = resolve; });
     const encryptionGate = new Promise((resolve) => { releaseEncryption = resolve; });
     const gatedMaterial = { keyRef: "synthetic-gated-key", version: 1, key: Buffer.alloc(32, 9) };
-    let currentKeyCalls = 0;
+    let gateNextCurrentKey = false;
     const gatedKeys = {
       current: async () => {
-        currentKeyCalls += 1;
-        if (currentKeyCalls === 2) {
+        if (gateNextCurrentKey) {
+          gateNextCurrentKey = false;
           signalEncryptionEntered();
           await encryptionGate;
         }
@@ -553,6 +586,7 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       "export race source",
       "export-race-create-0001"
     );
+    gateNextCurrentKey = true;
     const racingAppend = exportRaceStore.appendEvent(identity, exportRaceSession.sessionId, {
       type: "owner-feedback-recorded",
       expectedVersion: exportRaceSession.version,
@@ -675,16 +709,40 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.equal(growthSession.version, retryVersion + 1);
     const boundedArchive = await growthService.export(growthSession.sessionId);
     assert.equal(boundedArchive.byteLength <= MAX_EXPORT_BYTES, true);
-    await assert.rejects(growthStore.appendProgress(identity, growthSession.sessionId, {
+    let rejectedProgress = null;
+    let beforeRejectedProgress = boundedArchive;
+    let acceptedProgressCount = 0;
+    for (let offset = 0; offset < 32; offset += 1) {
+      beforeRejectedProgress = await growthService.export(growthSession.sessionId);
+      try {
+        await growthStore.appendProgress(identity, growthSession.sessionId, {
+          sessionId: growthSession.sessionId,
+          expectedSessionVersion: growthSession.version,
+          expectedLastEventId: growthSession.lastEventId,
+          expectedLastEventHash: growthSession.lastEventHash,
+          label: `Bounded progress ${offset}`,
+          state: "proposed",
+          evidenceRef: `${"e".repeat(4_000)}:${offset}`
+        });
+        acceptedProgressCount += 1;
+      } catch (error) {
+        rejectedProgress = error;
+        break;
+      }
+    }
+    assert.equal(rejectedProgress instanceof AppendOnlyViolationError, true);
+    assert.equal(acceptedProgressCount > 0, true);
+    assert.deepEqual(await growthService.export(growthSession.sessionId), beforeRejectedProgress);
+    const recoveredProgress = await growthStore.appendProgress(identity, growthSession.sessionId, {
       sessionId: growthSession.sessionId,
       expectedSessionVersion: growthSession.version,
       expectedLastEventId: growthSession.lastEventId,
       expectedLastEventHash: growthSession.lastEventHash,
-      label: "Oversized synthetic progress",
+      label: "Small progress after rejected oversize",
       state: "proposed",
-      evidenceRef: "e".repeat(MAX_EXPORT_BYTES)
-    }), AppendOnlyViolationError);
-    assert.deepEqual(await growthService.export(growthSession.sessionId), boundedArchive);
+      evidenceRef: "synthetic-small-progress-0001"
+    });
+    assert.equal(recoveredProgress.cursor, acceptedProgressCount + 1);
 
     const sourceProgressSnapshot = await sourceStore.getSession(identity, session.sessionId);
     await sourceStore.appendProgress(identity, session.sessionId, {
@@ -742,7 +800,7 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     delete unsignedUnknownEvent.canonicalHash;
     unknownTypeDocument.events[unknownEventOffset].canonicalHash = sha256(canonicalJson(unsignedUnknownEvent));
     unknownTypeDocument.session.lastEventHash = unknownTypeDocument.events[unknownEventOffset].canonicalHash;
-    const unknownTypeArchive = Buffer.from(canonicalJson(unknownTypeDocument), "utf8");
+    const unknownTypeArchive = sealArchiveDocument(unknownTypeDocument);
     const unknownTypeStore = new InMemorySyntheticLaunchStudioStore(keys);
     await assert.rejects(
       unknownTypeStore.restoreSession(identity, session.sessionId, unknownTypeArchive),
@@ -760,7 +818,7 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       delete unsigned.canonicalHash;
       document.events[offset].canonicalHash = sha256(canonicalJson(unsigned));
       document.session.lastEventHash = document.events[offset].canonicalHash;
-      return Buffer.from(canonicalJson(document), "utf8");
+      return sealArchiveDocument(document);
     };
     const assertRestoreRejectedWithoutMutation = async (candidateArchive, label, expectedSessionId = session.sessionId) => {
       const destination = new InMemorySyntheticLaunchStudioStore(keys);
@@ -783,7 +841,7 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     const topLevelSessionSubstitution = structuredClone(sourceDocument);
     topLevelSessionSubstitution.session.sessionId = substitutedTopLevelSessionId;
     await assertRestoreRejectedWithoutMutation(
-      Buffer.from(canonicalJson(topLevelSessionSubstitution), "utf8"),
+      sealArchiveDocument(topLevelSessionSubstitution),
       "top-level sessionId with untouched events",
       substitutedTopLevelSessionId
     );
@@ -811,14 +869,14 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     ]) {
       const document = structuredClone(sourceDocument);
       document.progress[0][field] = replacement;
-      await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(document), "utf8"), `progress ${field}`);
+      await assertRestoreRejectedWithoutMutation(sealArchiveDocument(document), `progress ${field}`);
     }
     const addedProgressField = structuredClone(sourceDocument);
     addedProgressField.progress[0].unexpected = false;
-    await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(addedProgressField), "utf8"), "progress field addition");
+    await assertRestoreRejectedWithoutMutation(sealArchiveDocument(addedProgressField), "progress field addition");
     const deletedProgressField = structuredClone(sourceDocument);
     delete deletedProgressField.progress[0].label;
-    await assertRestoreRejectedWithoutMutation(Buffer.from(canonicalJson(deletedProgressField), "utf8"), "progress field deletion");
+    await assertRestoreRejectedWithoutMutation(sealArchiveDocument(deletedProgressField), "progress field deletion");
 
     const reorderedProgressDocument = structuredClone(sourceDocument);
     reorderedProgressDocument.progress[0] = Object.fromEntries(Object.entries(reorderedProgressDocument.progress[0]).reverse());
@@ -840,7 +898,7 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       terminal: false
     };
     const compactProgress = Array.from({ length: 60_000 }, () => "1e20").join(",");
-    const compactArchive = Buffer.from(`{"format":"clover-launch-studio-export-v1","session":${JSON.stringify(canonicalOversizeSession)},"events":[],"progress":[${compactProgress}]}`, "utf8");
+    const compactArchive = Buffer.from(`{"format":"clover-launch-studio-export-v2","session":${JSON.stringify(canonicalOversizeSession)},"events":[],"progress":[${compactProgress}],"artifacts":[],"archiveSeal":{}}`, "utf8");
     assert.equal(compactArchive.byteLength < MAX_EXPORT_BYTES, true);
     assert.equal(Buffer.byteLength(canonicalJson(JSON.parse(compactArchive.toString("utf8"))), "utf8") > MAX_EXPORT_BYTES, true);
     const canonicalOversizeStore = new InMemorySyntheticLaunchStudioStore(keys);
@@ -882,7 +940,7 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.throws(() => decodeArchiveBase64url("!"), RequestRejectedError);
 
     const exactBoundaryDocument = {
-      format: "clover-launch-studio-export-v1",
+      format: "clover-launch-studio-export-v2",
       session: { sessionId: session.sessionId },
       padding: ""
     };
@@ -909,6 +967,318 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.equal(restoreCalls, 1);
     exportedArchive = oversizedArchive;
     await assert.rejects(boundaryService.export(session.sessionId), RequestRejectedError);
+  } finally {
+    rmSync(runtime.directory, { recursive: true, force: true });
+  }
+});
+
+test("complete v2 archives authenticate session metadata and every session artifact", async () => {
+  const runtime = await loadCompiledRuntime();
+  try {
+    const { MAX_EXPORT_BYTES, PROJECT_ID } = runtime.config;
+    const { ownerScope } = runtime.acl;
+    const { ExplicitSyntheticKeyProvider } = runtime.crypto;
+    const {
+      AppendOnlyViolationError,
+      InMemorySyntheticLaunchStudioStore,
+      SessionNotFoundError,
+      canonicalJson,
+      sha256
+    } = runtime.storage;
+    const identity = {
+      providerSubject: "synthetic-archive-owner",
+      participantId: `participant:${"7".repeat(64)}`,
+      projectId: PROJECT_ID,
+      authenticationMode: "synthetic"
+    };
+    const archiveKey = Buffer.alloc(32, 29);
+    const keyRef = "synthetic-archive-v2-key";
+    const keyVersion = 3;
+    const keys = new ExplicitSyntheticKeyProvider(archiveKey, keyRef, keyVersion);
+    const seal = (document) => {
+      const unsigned = {
+        format: document.format,
+        session: document.session,
+        events: document.events,
+        progress: document.progress,
+        artifacts: document.artifacts
+      };
+      const derived = Buffer.from(hkdfSync(
+        "sha256",
+        archiveKey,
+        Buffer.from("clover-launch-studio:archive-seal:kdf:v2", "utf8"),
+        Buffer.from(`clover-launch-studio:archive-seal:key:v2\0${keyRef}\0${keyVersion}`, "utf8"),
+        32
+      ));
+      document.archiveSeal = {
+        algorithm: "hmac-sha256-hkdf-v1",
+        keyRef,
+        keyVersion,
+        digest: createHmac("sha256", derived)
+          .update(Buffer.from("clover-launch-studio:archive-seal:data:v2\0", "utf8"))
+          .update(canonicalJson(unsigned), "utf8")
+          .digest("hex")
+      };
+      return Buffer.from(canonicalJson(document), "utf8");
+    };
+    const create = (store, transcript, idempotencyKey) =>
+      store.createSession(identity, ownerScope(identity), transcript, idempotencyKey);
+
+    const zeroSource = new InMemorySyntheticLaunchStudioStore(keys);
+    const zeroSession = await create(zeroSource, "zero-artifact archive", "archive-v2-zero-create-0001");
+    const zeroArchive = await zeroSource.exportSession(identity, zeroSession.sessionId);
+    const zeroDocument = JSON.parse(zeroArchive.toString("utf8"));
+    assert.deepEqual(Object.keys(zeroDocument).sort(), ["archiveSeal", "artifacts", "events", "format", "progress", "session"]);
+    assert.equal(zeroDocument.format, "clover-launch-studio-export-v2");
+    assert.deepEqual(zeroDocument.artifacts, []);
+    assert.deepEqual(Object.keys(zeroDocument.archiveSeal).sort(), ["algorithm", "digest", "keyRef", "keyVersion"]);
+    assert.equal(zeroDocument.archiveSeal.algorithm, "hmac-sha256-hkdf-v1");
+    assert.equal(zeroDocument.archiveSeal.keyRef, keyRef);
+    assert.equal(zeroDocument.archiveSeal.keyVersion, keyVersion);
+    assert.match(zeroDocument.archiveSeal.digest, /^[a-f0-9]{64}$/u);
+    assert.equal(zeroArchive.includes(archiveKey), false);
+    assert.deepEqual(await zeroSource.exportSession(identity, zeroSession.sessionId), zeroArchive);
+    const zeroDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await zeroDestination.restoreSession(identity, zeroSession.sessionId, zeroArchive);
+    assert.deepEqual(await zeroDestination.exportSession(identity, zeroSession.sessionId), zeroArchive);
+
+    const oneSource = new InMemorySyntheticLaunchStudioStore(keys);
+    const oneTranscript = "one-artifact archive";
+    const oneCreationKey = "archive-v2-one-create-0001";
+    const oneSession = await create(oneSource, oneTranscript, oneCreationKey);
+    const oneBytes = Buffer.from("exact restored artifact bytes", "utf8");
+    const oneArtifact = await oneSource.putArtifact(identity, oneSession.sessionId, oneBytes, "text/plain");
+    const oneArchive = await oneSource.exportSession(identity, oneSession.sessionId);
+    const oneDocument = JSON.parse(oneArchive.toString("utf8"));
+    assert.equal(oneDocument.artifacts.length, 1);
+    assert.equal(oneDocument.artifacts[0].mediaType, "text/plain");
+    assert.equal(oneDocument.artifacts[0].byteLength, oneBytes.byteLength);
+    const oneDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await oneDestination.restoreSession(identity, oneSession.sessionId, oneArchive);
+    assert.deepEqual(await oneDestination.readArtifact(identity, oneSession.sessionId, oneArtifact.artifactId), oneBytes);
+    assert.deepEqual(await oneDestination.exportSession(identity, oneSession.sessionId), oneArchive);
+    const restoredRetry = await oneDestination.createSession(identity, ownerScope(identity), oneTranscript, oneCreationKey);
+    assert.equal(restoredRetry.sessionId, oneSession.sessionId);
+    assert.equal((await oneDestination.readEvents(identity, oneSession.sessionId)).length, 1);
+    await assert.rejects(
+      oneDestination.createSession(identity, ownerScope(identity), "conflicting restored transcript", oneCreationKey),
+      AppendOnlyViolationError
+    );
+    assert.equal((await oneDestination.readEvents(identity, oneSession.sessionId)).length, 1);
+
+    const multiSource = new InMemorySyntheticLaunchStudioStore(keys);
+    const multiSession = await create(multiSource, "multiple-artifact archive", "archive-v2-multi-create-0001");
+    const artifactInputs = [
+      [Buffer.from("zeta artifact", "utf8"), "application/octet-stream"],
+      [Buffer.from("alpha artifact", "utf8"), "text/plain"],
+      [Buffer.from("middle artifact", "utf8"), "application/json"],
+      [Buffer.alloc(0), "application/octet-stream"]
+    ];
+    const multiArtifacts = [];
+    for (const [bytes, mediaType] of artifactInputs) {
+      multiArtifacts.push(await multiSource.putArtifact(identity, multiSession.sessionId, bytes, mediaType));
+    }
+    const multiArchive = await multiSource.exportSession(identity, multiSession.sessionId);
+    const multiDocument = JSON.parse(multiArchive.toString("utf8"));
+    assert.equal(multiDocument.artifacts.length, 4);
+    assert.deepEqual(
+      multiDocument.artifacts.map(({ artifactId }) => artifactId),
+      multiDocument.artifacts.map(({ artifactId }) => artifactId).toSorted((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))
+    );
+    const multiDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await multiDestination.restoreSession(identity, multiSession.sessionId, multiArchive);
+    for (const [offset, artifact] of multiArtifacts.entries()) {
+      assert.deepEqual(
+        await multiDestination.readArtifact(identity, multiSession.sessionId, artifact.artifactId),
+        artifactInputs[offset][0]
+      );
+    }
+    assert.deepEqual(await multiDestination.exportSession(identity, multiSession.sessionId), multiArchive);
+    const unrelatedSession = await create(multiDestination, "unrelated scope", "archive-v2-unrelated-create-0001");
+    await assert.rejects(
+      multiDestination.readArtifact(identity, unrelatedSession.sessionId, multiArtifacts[0].artifactId),
+      SessionNotFoundError
+    );
+
+    const sameBytes = Buffer.from("same bytes, separately restored", "utf8");
+    const sameSourceA = new InMemorySyntheticLaunchStudioStore(keys);
+    const sameSourceB = new InMemorySyntheticLaunchStudioStore(keys);
+    const sameSessionA = await create(sameSourceA, "same artifact A", "archive-v2-same-a-create-0001");
+    const sameSessionB = await create(sameSourceB, "same artifact B", "archive-v2-same-b-create-0001");
+    const sameArtifactA = await sameSourceA.putArtifact(identity, sameSessionA.sessionId, sameBytes, "text/plain");
+    const sameArtifactB = await sameSourceB.putArtifact(identity, sameSessionB.sessionId, sameBytes, "text/plain");
+    const sameSessionBOnlyBytes = Buffer.from("artifact present only in restored session B", "utf8");
+    const sameSessionBOnlyArtifact = await sameSourceB.putArtifact(
+      identity,
+      sameSessionB.sessionId,
+      sameSessionBOnlyBytes,
+      "application/octet-stream"
+    );
+    assert.equal(sameArtifactA.artifactId, sameArtifactB.artifactId);
+    const sameDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await sameDestination.restoreSession(identity, sameSessionA.sessionId, await sameSourceA.exportSession(identity, sameSessionA.sessionId));
+    await sameDestination.restoreSession(identity, sameSessionB.sessionId, await sameSourceB.exportSession(identity, sameSessionB.sessionId));
+    assert.deepEqual(await sameDestination.readArtifact(identity, sameSessionA.sessionId, sameArtifactA.artifactId), sameBytes);
+    assert.deepEqual(await sameDestination.readArtifact(identity, sameSessionB.sessionId, sameArtifactB.artifactId), sameBytes);
+    assert.deepEqual(
+      await sameDestination.readArtifact(identity, sameSessionB.sessionId, sameSessionBOnlyArtifact.artifactId),
+      sameSessionBOnlyBytes
+    );
+    await assert.rejects(
+      sameDestination.readArtifact(identity, sameSessionA.sessionId, sameSessionBOnlyArtifact.artifactId),
+      SessionNotFoundError
+    );
+    const otherIdentity = { ...identity, providerSubject: "other", participantId: `participant:${"8".repeat(64)}` };
+    await assert.rejects(
+      sameDestination.readArtifact(otherIdentity, sameSessionA.sessionId, sameArtifactA.artifactId),
+      runtime.acl.AccessDeniedError
+    );
+
+    const assertRejectedWithoutMutation = async (candidate, label, expectedSessionId = multiSession.sessionId) => {
+      const destination = new InMemorySyntheticLaunchStudioStore(keys);
+      const sentinel = await create(destination, `sentinel ${label}`, `archive-v2-sentinel-${sha256(label).slice(0, 24)}`);
+      const before = await destination.exportSession(identity, sentinel.sessionId);
+      await assert.rejects(destination.restoreSession(identity, expectedSessionId, candidate), undefined, label);
+      assert.deepEqual(await destination.exportSession(identity, sentinel.sessionId), before, label);
+      await assert.rejects(destination.getSession(identity, expectedSessionId), SessionNotFoundError, label);
+      await assert.rejects(
+        destination.readArtifact(identity, expectedSessionId, multiDocument.artifacts[0].artifactId),
+        SessionNotFoundError,
+        label
+      );
+    };
+    const resealedMutation = (mutate) => {
+      const document = structuredClone(multiDocument);
+      mutate(document);
+      return seal(document);
+    };
+
+    const artifactMutations = [
+      ["artifact sessionId", (document) => { document.artifacts[0].sessionId = `session:${"9".repeat(64)}`; }],
+      ["artifactId", (document) => { document.artifacts[0].artifactId = `artifact:${"a".repeat(64)}`; }],
+      ["artifact mediaType", (document) => { document.artifacts[0].mediaType = "text/html"; }],
+      ["artifact byteLength", (document) => { document.artifacts[0].byteLength += 1; }],
+      ["artifact ciphertext", (document) => {
+        const ciphertext = document.artifacts[0].encryptedPayload.ciphertext;
+        document.artifacts[0].encryptedPayload.ciphertext = `${ciphertext[0] === "A" ? "B" : "A"}${ciphertext.slice(1)}`;
+      }],
+      ["artifact keyRef", (document) => { document.artifacts[0].encryptedPayload.keyRef = "substituted-key"; }],
+      ["artifact keyVersion", (document) => { document.artifacts[0].encryptedPayload.keyVersion += 1; }],
+      ["artifact encrypted field deletion", (document) => { delete document.artifacts[0].encryptedPayload.authTag; }],
+      ["artifact field addition", (document) => { document.artifacts[0].scope = "forbidden"; }]
+    ];
+    for (const [label, mutate] of artifactMutations) {
+      await assertRejectedWithoutMutation(resealedMutation(mutate), label);
+    }
+    await assertRejectedWithoutMutation(resealedMutation((document) => { document.artifacts.reverse(); }), "artifact order");
+    await assertRejectedWithoutMutation(resealedMutation((document) => {
+      document.artifacts.splice(1, 0, structuredClone(document.artifacts[0]));
+    }), "duplicate artifact");
+    const omittedArtifact = structuredClone(multiDocument);
+    omittedArtifact.artifacts.pop();
+    await assertRejectedWithoutMutation(Buffer.from(canonicalJson(omittedArtifact), "utf8"), "omitted artifact with stale seal");
+
+    const sessionMutations = [
+      ["session terminal", (document) => { document.session.terminal = true; }],
+      ["session createdAt", (document) => { document.session.createdAt = "2026-08-29T00:00:00.000Z"; }],
+      ["session updatedAt", (document) => { document.session.updatedAt = "2026-08-29T00:00:01.000Z"; }],
+      ["session malformed timestamp", (document) => { document.session.updatedAt = "not-a-time"; }],
+      ["session version", (document) => { document.session.version += 1; }],
+      ["session lastEventId", (document) => { document.session.lastEventId = `event:${"b".repeat(64)}`; }],
+      ["session lastEventHash", (document) => { document.session.lastEventHash = "c".repeat(64); }],
+      ["session workspaceId", (document) => { document.session.workspaceId = "workspace:substituted"; }],
+      ["session projectId", (document) => { document.session.projectId = "project:substituted"; }],
+      ["session participantId", (document) => { document.session.participantId = `participant:${"d".repeat(64)}`; }],
+      ["session field addition", (document) => { document.session.authority = true; }],
+      ["session field deletion", (document) => { delete document.session.updatedAt; }]
+    ];
+    for (const [label, mutate] of sessionMutations) {
+      await assertRejectedWithoutMutation(resealedMutation(mutate), label);
+    }
+    const substitutedSessionId = `session:${"e".repeat(64)}`;
+    await assertRejectedWithoutMutation(
+      resealedMutation((document) => { document.session.sessionId = substitutedSessionId; }),
+      "session sessionId",
+      substitutedSessionId
+    );
+
+    for (const [label, mutate] of [
+      ["seal algorithm", (document) => { document.archiveSeal.algorithm = "sha256"; }],
+      ["seal keyRef", (document) => { document.archiveSeal.keyRef = "substituted-key"; }],
+      ["seal keyVersion", (document) => { document.archiveSeal.keyVersion += 1; }],
+      ["seal digest", (document) => { document.archiveSeal.digest = "0".repeat(64); }],
+      ["seal field addition", (document) => { document.archiveSeal.extra = false; }],
+      ["seal field deletion", (document) => { delete document.archiveSeal.digest; }]
+    ]) {
+      const document = structuredClone(multiDocument);
+      mutate(document);
+      await assertRejectedWithoutMutation(Buffer.from(canonicalJson(document), "utf8"), label);
+    }
+    const staleSealDocument = structuredClone(multiDocument);
+    staleSealDocument.session.terminal = true;
+    await assertRejectedWithoutMutation(Buffer.from(canonicalJson(staleSealDocument), "utf8"), "complete document with stale seal");
+    const unkeyedSealDocument = structuredClone(multiDocument);
+    const unkeyedUnsigned = structuredClone(unkeyedSealDocument);
+    delete unkeyedUnsigned.archiveSeal;
+    unkeyedSealDocument.archiveSeal.digest = sha256(canonicalJson(unkeyedUnsigned));
+    await assertRejectedWithoutMutation(Buffer.from(canonicalJson(unkeyedSealDocument), "utf8"), "attacker-recomputed unkeyed seal");
+    const extraTopLevel = structuredClone(multiDocument);
+    extraTopLevel.authority = false;
+    await assertRejectedWithoutMutation(seal(extraTopLevel), "top-level field addition");
+    const missingTopLevel = structuredClone(multiDocument);
+    delete missingTopLevel.artifacts;
+    await assertRejectedWithoutMutation(Buffer.from(canonicalJson(missingTopLevel), "utf8"), "top-level field deletion");
+    const unsupported = structuredClone(multiDocument);
+    unsupported.format = "clover-launch-studio-export-v1";
+    await assertRejectedWithoutMutation(Buffer.from(canonicalJson(unsupported), "utf8"), "unsupported archive format");
+    const duplicateKeySource = multiArchive.toString("utf8").replace(
+      '"format":"clover-launch-studio-export-v2"',
+      '"format":"clover-launch-studio-export-v2","\\u0066ormat":"clover-launch-studio-export-v2"'
+    );
+    await assertRejectedWithoutMutation(Buffer.from(duplicateKeySource, "utf8"), "duplicate decoded JSON key");
+    const duplicateSealKeySource = multiArchive.toString("utf8").replace(
+      /"digest":"([a-f0-9]{64})"/u,
+      '"digest":"$1","\\u0064igest":"$1"'
+    );
+    await assertRejectedWithoutMutation(Buffer.from(duplicateSealKeySource, "utf8"), "duplicate decoded seal field");
+
+    const reordered = Object.fromEntries(Object.entries(structuredClone(multiDocument)).reverse());
+    reordered.session = Object.fromEntries(Object.entries(reordered.session).reverse());
+    reordered.artifacts = reordered.artifacts.map((artifact) => Object.fromEntries(Object.entries(artifact).reverse()));
+    const reorderedArchive = Buffer.from(JSON.stringify(reordered), "utf8");
+    assert.notDeepEqual(reorderedArchive, multiArchive);
+    const reorderedDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await reorderedDestination.restoreSession(identity, multiSession.sessionId, reorderedArchive);
+    assert.deepEqual(await reorderedDestination.exportSession(identity, multiSession.sessionId), multiArchive);
+
+    const chronologyStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const chronologySession = await create(chronologyStore, "chronology source", "archive-v2-chronology-create-0001");
+    await assert.rejects(chronologyStore.appendEvent(identity, chronologySession.sessionId, {
+      type: "owner-feedback-recorded",
+      expectedVersion: chronologySession.version,
+      predecessorEventId: chronologySession.lastEventId,
+      predecessorHash: chronologySession.lastEventHash,
+      idempotencyKey: "archive-v2-past-event-0001",
+      payload: { reviewedText: "past" },
+      createdAt: new Date(Date.parse(chronologySession.updatedAt) - 1).toISOString()
+    }), AppendOnlyViolationError);
+    assert.equal((await chronologyStore.getSession(identity, chronologySession.sessionId)).version, 1);
+
+    const boundaryStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const boundarySession = await create(boundaryStore, "artifact boundary", "archive-v2-boundary-create-0001");
+    const oversizedBytes = Buffer.alloc(MAX_EXPORT_BYTES, 0xa5);
+    const oversizedArtifactId = `artifact:${sha256(oversizedBytes)}`;
+    await assert.rejects(
+      boundaryStore.putArtifact(identity, boundarySession.sessionId, oversizedBytes, "application/octet-stream"),
+      AppendOnlyViolationError
+    );
+    await assert.rejects(
+      boundaryStore.readArtifact(identity, boundarySession.sessionId, oversizedArtifactId),
+      SessionNotFoundError
+    );
+    const smallerBytes = Buffer.from("smaller mutation survives rejected oversize", "utf8");
+    const smallerArtifact = await boundaryStore.putArtifact(identity, boundarySession.sessionId, smallerBytes, "text/plain");
+    assert.deepEqual(await boundaryStore.readArtifact(identity, boundarySession.sessionId, smallerArtifact.artifactId), smallerBytes);
   } finally {
     rmSync(runtime.directory, { recursive: true, force: true });
   }

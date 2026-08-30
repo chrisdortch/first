@@ -13,6 +13,7 @@ import {
 import { prepareProposalOnlyHandoff } from "./handoff-codex-adapter";
 import {
   InMemorySyntheticLaunchStudioStore,
+  LAUNCH_ARCHIVE_FORMAT,
   isLaunchEventType,
   type AppendEventInput,
   type LaunchEventType,
@@ -105,7 +106,7 @@ function requireArchiveSessionId(archive: Uint8Array): string {
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new RequestRejectedError();
   const document = parsed as { format?: unknown; session?: unknown };
-  if (document.format !== "clover-launch-studio-export-v1" || !document.session || typeof document.session !== "object" || Array.isArray(document.session)) {
+  if (document.format !== LAUNCH_ARCHIVE_FORMAT || !document.session || typeof document.session !== "object" || Array.isArray(document.session)) {
     throw new RequestRejectedError();
   }
   return requireString((document.session as { sessionId?: unknown }).sessionId);
