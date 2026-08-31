@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   const build = readBuildProvenance();
-  const github = await observeGitHubTruth({ candidateCommit: build.commit });
+  const github = await observeGitHubTruth({ candidateCommit: build.commit, signal: request.signal });
   const deployment = observeDeploymentSelf({
     build,
     environmentReader: () => projectVercelRuntimeEnvironment(getEnv(), process.env),

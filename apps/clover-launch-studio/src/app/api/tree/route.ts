@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   const requestObservedAt = new Date().toISOString();
   const immutableRecords = getTreeProgramSnapshot();
   const build = readBuildProvenance();
-  const github = await observeGitHubTruth({ candidateCommit: build.commit });
+  const github = await observeGitHubTruth({ candidateCommit: build.commit, signal: request.signal });
   const deploymentSelf = observeDeploymentSelf({
     build,
     environmentReader: () => projectVercelRuntimeEnvironment(getEnv(), process.env),

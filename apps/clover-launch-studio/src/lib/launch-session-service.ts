@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { authenticateOwner, type OwnerIdentity } from "./auth";
 import { ownerScope } from "./acl";
 import { ExplicitSyntheticKeyProvider } from "./crypto";
@@ -15,6 +14,7 @@ import {
   InMemorySyntheticLaunchStudioStore,
   LAUNCH_ARCHIVE_FORMAT,
   isLaunchEventType,
+  parseJsonWithoutDuplicateKeys,
   type AppendEventInput,
   type LaunchEventType,
   type LaunchStudioStore,
@@ -39,12 +39,51 @@ export function registerLaunchStudioStore(store: LaunchStudioStore) {
   runtime.__cloverLaunchStudioPorts = { store };
 }
 
+async function readBoundedRequestBody(request: Request, maximumBytes: number): Promise<Buffer> {
+  const body = request.body;
+  if (body === null) return Buffer.alloc(0);
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  let failed = false;
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  const onAbort = () => cancel();
+  request.signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    if (request.signal.aborted) throw new RequestRejectedError();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (request.signal.aborted) throw new RequestRejectedError();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > maximumBytes) throw new RequestRejectedError();
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), byteLength);
+  } catch {
+    failed = true;
+    cancel();
+    throw new RequestRejectedError();
+  } finally {
+    request.signal.removeEventListener("abort", onAbort);
+    if (failed || request.signal.aborted) cancel();
+    try { reader.releaseLock(); } catch { /* A cancelled reader may already be detached. */ }
+  }
+}
+
+function rejectRequestBody(request: Request): never {
+  if (request.body !== null) {
+    try { void request.body.cancel().catch(() => undefined); } catch { /* A substituted request body may already be locked. */ }
+  }
+  throw new RequestRejectedError();
+}
+
 function store(): LaunchStudioStore {
   const configured = runtime.__cloverLaunchStudioPorts?.store;
   if (configured) return configured;
   const config = readRuntimeConfig();
-  if (config.authMode !== "synthetic") throw new RequestRejectedError();
-  const generated = new InMemorySyntheticLaunchStudioStore(new ExplicitSyntheticKeyProvider(randomBytes(32)));
+  if (config.authMode !== "synthetic" || !config.syntheticArchiveKey) throw new RequestRejectedError();
+  const generated = new InMemorySyntheticLaunchStudioStore(new ExplicitSyntheticKeyProvider(config.syntheticArchiveKey));
   runtime.__cloverLaunchStudioPorts = { store: generated };
   return generated;
 }
@@ -54,18 +93,17 @@ export async function exactJson(
   allowedKeys: readonly string[],
   maximumBytes = MAX_REQUEST_BYTES
 ): Promise<Record<string, unknown>> {
-  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) throw new RequestRejectedError();
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) return rejectRequestBody(request);
   const allowedKeySignature = [...new Set(allowedKeys)].sort().join("\0");
   const effectiveMaximumBytes = maximumBytes === MAX_REQUEST_BYTES && TRANSCRIPT_REQUEST_KEY_SETS.has(allowedKeySignature)
     ? MAX_TRANSCRIPT_REQUEST_BYTES
     : maximumBytes;
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (!Number.isSafeInteger(declared) || declared < 0 || declared > effectiveMaximumBytes) throw new RequestRejectedError();
-  const bytes = Buffer.from(await request.arrayBuffer());
-  if (bytes.byteLength > effectiveMaximumBytes) throw new RequestRejectedError();
+  if (!Number.isSafeInteger(declared) || declared < 0 || declared > effectiveMaximumBytes) return rejectRequestBody(request);
+  const bytes = await readBoundedRequestBody(request, effectiveMaximumBytes);
   let value: unknown;
   try {
-    value = JSON.parse(bytes.toString("utf8")) as unknown;
+    value = parseJsonWithoutDuplicateKeys(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   } catch {
     throw new RequestRejectedError();
   }
@@ -100,7 +138,7 @@ export function decodeArchiveBase64url(value: unknown): Buffer {
 function requireArchiveSessionId(archive: Uint8Array): string {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(archive).toString("utf8")) as unknown;
+    parsed = parseJsonWithoutDuplicateKeys(new TextDecoder("utf-8", { fatal: true }).decode(archive));
   } catch {
     throw new RequestRejectedError();
   }

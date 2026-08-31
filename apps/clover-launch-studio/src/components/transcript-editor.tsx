@@ -8,18 +8,34 @@ type TranscriptEditorProps = {
   disabled?: boolean;
 };
 
+type TranscriptDigestState =
+  | { inputIdentity: string; status: "ready"; digest: string }
+  | { inputIdentity: string; status: "unavailable"; digest: null }
+  | { inputIdentity: null; status: "calculating"; digest: null };
+
 export function TranscriptEditor({ value, onChange, disabled = false }: TranscriptEditorProps) {
   const bytes = useMemo(() => new TextEncoder().encode(value), [value]);
-  const [digest, setDigest] = useState("not-sealed");
+  const [digestState, setDigestState] = useState<TranscriptDigestState>({ inputIdentity: null, status: "calculating", digest: null });
+  const digestStatus = digestState.inputIdentity !== value ? "calculating" : digestState.status;
+  const digest = digestStatus === "ready" && digestState.status === "ready" ? digestState.digest : digestStatus;
 
   useEffect(() => {
     let active = true;
-    void crypto.subtle.digest("SHA-256", bytes).then((buffer) => {
-      if (!active) return;
-      setDigest(Array.from(new Uint8Array(buffer), (part) => part.toString(16).padStart(2, "0")).join(""));
-    });
+    const inputIdentity = value;
+    void Promise.resolve()
+      .then(() => crypto.subtle.digest("SHA-256", bytes))
+      .then((buffer) => {
+        if (!active) return;
+        const nextDigest = Array.from(new Uint8Array(buffer), (part) => part.toString(16).padStart(2, "0")).join("");
+        if (!/^[a-f0-9]{64}$/u.test(nextDigest)) throw new Error("transcript-digest-invalid");
+        setDigestState({ inputIdentity, status: "ready", digest: nextDigest });
+      })
+      .catch(() => {
+        if (!active) return;
+        setDigestState({ inputIdentity, status: "unavailable", digest: null });
+      });
     return () => { active = false; };
-  }, [bytes]);
+  }, [bytes, value]);
 
   return (
     <div className="transcript">

@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
+  existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -17,15 +22,24 @@ import test from "node:test";
 import { getEnv } from "@vercel/functions";
 import {
   EXPECTED_MAIN_COMMIT,
+  EXPECTED_MAIN_RULESET_ID,
+  EXPECTED_MAIN_TREE,
+  EXPECTED_MASTER_WORKFLOW_ID,
+  EXPECTED_MASTER_WORKFLOW_NAME,
+  EXPECTED_MASTER_WORKFLOW_PATH,
   EXPECTED_STACK_A_BASE_COMMIT,
   EXPECTED_STACK_A_HEAD,
   EXPECTED_STACK_B_CHANGED_PATH_COUNT,
   EXPECTED_STACK_B_PATH_LIST_SHA256,
+  GITHUB_CACHE_REVALIDATE_SECONDS,
+  GITHUB_REVALIDATE_SECONDS,
   GITHUB_ORIGIN,
   GITHUB_REPOSITORY,
   GITHUB_REPOSITORY_ID,
   MAX_GITHUB_CHECK_RUN_PAGES,
   MAX_GITHUB_CHECK_RUNS,
+  MAX_GITHUB_RESPONSE_BYTES,
+  MAX_GITHUB_WORKFLOW_RUNS,
   NO_ATTESTATION_COMPARISON,
   REQUIRED_EXACT_HEAD_CHECKS,
   STACK_A_BRANCH,
@@ -33,22 +47,40 @@ import {
   computeTruthReadiness,
   observeDeploymentSelf,
   observeGitHubTruth,
+  parseDeploymentSelfObservation,
+  parseGitHubLiveObservation,
   projectVercelRuntimeEnvironment,
   reconcileTreeTruth
 } from "../src/lib/live-truth.ts";
 import {
   ATTESTATION_OUTPUT_PATH,
+  DEPLOYMENT_INPUT_MANIFEST_FILE,
+  FINAL_ARCHIVE_FILE,
   STACK_A_BASE,
+  VERCEL_BUILD_COMMAND,
+  VERCEL_CLI_INTEGRITY,
+  VERCEL_CLI_VERSION,
+  VERCEL_PROJECT_ID,
+  VERCEL_PROJECT_NAME,
+  VERCEL_TEAM_ID,
+  VERCEL_TEAM_NAME,
+  VERCEL_TEAM_SLUG,
   buildOutputManifest,
   canonicalJson,
+  canonicalVercelBuildProjectSettings,
   createDeploymentAttestation,
+  createProviderDeploymentReceipt,
+  deterministicOutputArchive,
   deriveSourceManifestEntries,
   parseSourceChanges,
-  deriveSourceProvenance
+  deriveSourceProvenance,
+  restoreDeterministicOutputArchive,
+  verifyDeploymentInputEvidence
 } from "../scripts/clover-deployment-attestation.mjs";
 import { compareDeploymentAttestation, parseBuildProvenance } from "../src/lib/provenance.ts";
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+const sha1 = (value) => createHash("sha1").update(value).digest("hex");
 const hex40 = (character) => character.repeat(40);
 const hex64 = (character) => character.repeat(64);
 const candidateCommit = hex40("a");
@@ -59,10 +91,49 @@ const runtimeRequestUrl = "https://clover-tree-command-center-abc.vercel.app/api
 const mergedStackAHead = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
 const mergedStackABase = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
 const integratedPathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
+const defaultGithubSourceTime = new Date(Math.floor(Date.now() / 1_000) * 1_000).toISOString();
+const defaultGithubSourceDate = new Date(defaultGithubSourceTime).toUTCString();
+const masterWorkflowRunId = 900_001;
 
-const build = parseBuildProvenance({
-  documentType: "clover-tree-build-provenance",
-  schemaVersion: "0.3.0",
+function masterWorkflowRunFixture({
+  id = masterWorkflowRunId,
+  headSha = candidateCommit,
+  path = EXPECTED_MASTER_WORKFLOW_PATH,
+  name = EXPECTED_MASTER_WORKFLOW_NAME,
+  event = "pull_request",
+  status = "completed",
+  conclusion = status === "completed" ? "success" : null,
+  startedAt = "2026-08-29T16:31:00.000Z"
+} = {}) {
+  return {
+    id,
+    name,
+    head_branch: STACK_B_BRANCH,
+    head_sha: headSha,
+    path,
+    event,
+    status,
+    conclusion,
+    workflow_id: EXPECTED_MASTER_WORKFLOW_ID,
+    url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${id}`,
+    html_url: `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${id}`,
+    pull_requests: [{
+      url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35`,
+      number: 35,
+      head: { ref: STACK_B_BRANCH, sha: headSha, repo: { id: GITHUB_REPOSITORY_ID, url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`, name: "first" } },
+      base: { ref: "main", sha: EXPECTED_MAIN_COMMIT, repo: { id: GITHUB_REPOSITORY_ID, url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`, name: "first" } }
+    }],
+    created_at: startedAt,
+    updated_at: status === "completed" ? new Date(Date.parse(startedAt) + 30_000).toISOString() : startedAt,
+    run_attempt: 1,
+    run_started_at: startedAt,
+    workflow_url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}`,
+    repository: { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY },
+    head_repository: { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY }
+  };
+}
+
+const buildSource = {
   commit: candidateCommit,
   tree: candidateTree,
   parent: candidateParent,
@@ -80,12 +151,33 @@ const build = parseBuildProvenance({
   nextVersion: "16.3.3",
   buildMode: "vercel-prebuilt-preview",
   buildCommand: "npm run build",
-  buildOutputCommand: "vercel build --yes",
-  buildInvocationId: `clover-build:${hex64("6")}`,
+  buildOutputCommand: VERCEL_BUILD_COMMAND,
+  buildOutputToolPackage: "vercel",
+  buildOutputToolVersion: VERCEL_CLI_VERSION,
+  buildOutputToolIntegrity: VERCEL_CLI_INTEGRITY,
+  buildProjectSettingsSha256: sha256(`${canonicalJson(canonicalVercelBuildProjectSettings())}\n`)
+};
+const build = parseBuildProvenance({
+  documentType: "clover-tree-build-provenance",
+  schemaVersion: "0.3.0",
+  ...buildSource,
+  buildInvocationId: `clover-build:${sha256(`${canonicalJson(buildSource)}\n`)}`,
   publicSanitized: true,
   privateDataAccessed: false,
   consequentialAuthorityGranted: false
 });
+const buildWith = (overrides = {}) => {
+  const source = { ...buildSource, ...overrides };
+  return parseBuildProvenance({
+    documentType: "clover-tree-build-provenance",
+    schemaVersion: "0.3.0",
+    ...source,
+    buildInvocationId: `clover-build:${sha256(`${canonicalJson(source)}\n`)}`,
+    publicSanitized: true,
+    privateDataAccessed: false,
+    consequentialAuthorityGranted: false
+  });
+};
 
 const baseline = {
   index: {
@@ -102,7 +194,7 @@ const baseline = {
 function githubFixture(endpoint) {
   if (endpoint === `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`) return { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY, default_branch: "main" };
   if (endpoint.endsWith("/branches/main")) {
-    return { name: "main", protected: true, commit: { sha: EXPECTED_MAIN_COMMIT, commit: { tree: { sha: hex40("d") } } } };
+    return { name: "main", protected: true, commit: { sha: EXPECTED_MAIN_COMMIT, commit: { tree: { sha: EXPECTED_MAIN_TREE } } } };
   }
   if (endpoint.endsWith("/pulls/34")) {
     return {
@@ -118,20 +210,39 @@ function githubFixture(endpoint) {
       base: { sha: EXPECTED_MAIN_COMMIT, ref: "main", repo: { full_name: GITHUB_REPOSITORY } }
     };
   }
+  if (endpoint.endsWith(`/rulesets/${EXPECTED_MAIN_RULESET_ID}`)) {
+    return {
+      id: EXPECTED_MAIN_RULESET_ID,
+      name: "Clover Required Main Protection",
+      target: "branch",
+      source_type: "Repository",
+      source: GITHUB_REPOSITORY,
+      enforcement: "active",
+      conditions: { ref_name: { exclude: [], include: ["refs/heads/main"] } },
+      rules: [
+        { type: "deletion" },
+        { type: "non_fast_forward" },
+        { type: "pull_request", parameters: { required_approving_review_count: 0, dismiss_stale_reviews_on_push: true, required_reviewers: [], require_code_owner_review: false, require_last_push_approval: false, required_review_thread_resolution: true, require_extra_approval_for_unattributed_changes: false, allowed_merge_methods: ["merge", "squash", "rebase"] } },
+        { type: "required_status_checks", parameters: { strict_required_status_checks_policy: true, do_not_enforce_on_create: false, required_status_checks: [{ context: "Clover required main gate (Node 22)", integration_id: 15368 }, { context: "Clover required main gate (Node 24)", integration_id: 15368 }] } }
+      ]
+    };
+  }
+  if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) return { total_count: 1, workflow_runs: [masterWorkflowRunFixture()] };
   if (endpoint.includes(`/commits/${candidateCommit}/check-runs`)) {
-    const check_runs = REQUIRED_EXACT_HEAD_CHECKS.map((name, index) => ({ id: index + 1, name, head_sha: candidateCommit, status: "completed", conclusion: "success", started_at: "2026-08-29T16:31:00Z", completed_at: `2026-08-29T16:32:0${index}Z` }));
+    const check_runs = REQUIRED_EXACT_HEAD_CHECKS.map((name, index) => checkRun({ id: index + 1, name }));
     return { total_count: check_runs.length, check_runs };
   }
   throw new Error(`unexpected fixture endpoint ${endpoint}`);
 }
 
-function githubFetch({ sourceDate = "Sat, 29 Aug 2026 17:00:00 GMT", mutate = (value) => value } = {}) {
+function githubFetch({ sourceDate = defaultGithubSourceDate, mutate = (value) => value } = {}) {
   const calls = [];
   const implementation = async (endpoint, options) => {
     calls.push({ endpoint, options });
     const body = JSON.stringify(mutate(structuredClone(githubFixture(endpoint)), endpoint));
     const headers = new Headers({ "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
-    if (sourceDate) headers.set("date", sourceDate);
+    const responseDate = typeof sourceDate === "function" ? sourceDate(endpoint) : sourceDate;
+    if (responseDate) headers.set("date", responseDate);
     const response = new Response(body, { status: 200, headers });
     Object.defineProperty(response, "url", { value: endpoint });
     return response;
@@ -146,9 +257,10 @@ function checkRun({
   status = "completed",
   conclusion = status === "completed" ? "success" : null,
   startedAt = new Date(Date.UTC(2026, 7, 29, 16, 31, 0) + id * 1_000).toISOString(),
-  completedAt = status === "completed" ? new Date(Date.parse(startedAt) + 500).toISOString() : null
+  completedAt = status === "completed" ? new Date(Date.parse(startedAt) + 500).toISOString() : null,
+  runId = name === "validate" ? masterWorkflowRunId : 100_000 + id
 }) {
-  return { id, name, head_sha: headSha, status, conclusion, started_at: startedAt, completed_at: completedAt };
+  return { id, name, head_sha: headSha, status, conclusion, started_at: startedAt, completed_at: completedAt, app: { id: 15368, slug: "github-actions" }, details_url: `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}/job/${id}` };
 }
 
 function githubPageEndpoint(page, commit = candidateCommit, canonicalRepository = false) {
@@ -156,13 +268,14 @@ function githubPageEndpoint(page, commit = candidateCommit, canonicalRepository 
   return `${GITHUB_ORIGIN}/${repositoryPath}/commits/${commit}/check-runs?filter=all&per_page=100&page=${page}`;
 }
 
-function githubPaginationFetch({ pages, totalCount, linkForPage, responseForPage, sourceDate = "Sat, 29 Aug 2026 17:00:00 GMT" }) {
+function githubPaginationFetch({ pages, totalCount, linkForPage, responseForPage, sourceDate = defaultGithubSourceDate }) {
   const calls = [];
   const implementation = async (endpoint, options) => {
     calls.push({ endpoint, options });
     if (!endpoint.includes(`/commits/${candidateCommit}/check-runs`)) {
       const body = JSON.stringify(githubFixture(endpoint));
-      const headers = new Headers({ date: sourceDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
+      const responseDate = typeof sourceDate === "function" ? sourceDate(endpoint) : sourceDate;
+      const headers = new Headers({ date: responseDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
       const response = new Response(body, { status: 200, headers });
       Object.defineProperty(response, "url", { value: endpoint });
       return response;
@@ -174,7 +287,8 @@ function githubPaginationFetch({ pages, totalCount, linkForPage, responseForPage
     }
     const check_runs = structuredClone(pages[page - 1] ?? []);
     const body = JSON.stringify({ total_count: typeof totalCount === "function" ? totalCount(page) : totalCount, check_runs });
-    const headers = new Headers({ date: sourceDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
+    const responseDate = typeof sourceDate === "function" ? sourceDate(endpoint) : sourceDate;
+    const headers = new Headers({ date: responseDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
     const link = linkForPage ? linkForPage(page) : page < pages.length
       ? `<${githubPageEndpoint(page + 1, candidateCommit, true)}>; rel="next", <${githubPageEndpoint(pages.length, candidateCommit, true)}>; rel="last"`
       : page > 1
@@ -253,29 +367,224 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
   const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
   assert.equal(observation.status, "current");
   assert.equal(observation.freshness, "current");
-  assert.equal(observation.observedAt, "2026-08-29T17:00:00.000Z");
+  assert.equal(observation.observedAt, defaultGithubSourceTime);
   assert.equal(observation.exactHeadChecks?.state, "success");
+  assert.equal(observation.ruleset?.bypassActorsStatus, "external-verification-required");
+  assert.equal(observation.ruleset?.bypassActorCount, null);
   assert.deepEqual(observation.exactHeadChecks?.requiredNames, REQUIRED_EXACT_HEAD_CHECKS);
-  assert.equal(fixture.calls.length, 5);
+  assert.equal(fixture.calls.length, 7);
   for (const { endpoint, options } of fixture.calls) {
-    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1)$)`, "u"));
+    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|rulesets/${EXPECTED_MAIN_RULESET_ID}|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1|actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs\\?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1)$)`, "u"));
     assert.equal(options.method, "GET");
     assert.equal(options.redirect, "error");
     assert.equal(options.credentials, "omit");
     assert.equal(options.cache, "force-cache");
-    assert.deepEqual(options.next, { revalidate: 60 });
+    assert.deepEqual(options.next, { revalidate: GITHUB_CACHE_REVALIDATE_SECONDS });
     assert.equal(new Headers(options.headers).has("authorization"), false);
   }
+});
+
+test("GitHub freshness uses the oldest relevant upstream Date and rejects expired or future source time", async () => {
+  const now = Date.parse("2026-08-30T05:00:00.000Z");
+  const date = (offsetMs) => new Date(now + offsetMs).toUTCString();
+  const current = githubFetch({ sourceDate: date(-10_000) });
+  let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: current.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "current");
+  assert.equal(observation.freshness, "current");
+  assert.equal(observation.observedAt, new Date(now - 10_000).toISOString());
+
+  const expiredAgeMs = GITHUB_REVALIDATE_SECONDS * 1_000 + 1_000;
+  const mixedAge = githubFetch({ sourceDate: (endpoint) => endpoint.endsWith("/branches/main") ? date(-expiredAgeMs) : date(-1_000) });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: mixedAge.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "partial");
+  assert.equal(observation.freshness, "stale");
+  assert.equal(observation.observedAt, new Date(now - expiredAgeMs).toISOString());
+  assert.equal(observation.errorCode, "GITHUB_SOURCE_STALE");
+
+  const exactlyExpired = githubFetch({ sourceDate: date(-GITHUB_REVALIDATE_SECONDS * 1_000) });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: exactlyExpired.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "partial");
+  assert.equal(observation.freshness, "stale");
+  assert.equal(observation.errorCode, "GITHUB_SOURCE_STALE");
+
+  const future = githubFetch({ sourceDate: (endpoint) => endpoint.endsWith("/pulls/35") ? date(6_000) : date(-1_000) });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: future.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "contradictory");
+  assert.equal(observation.freshness, "unavailable");
+  assert.equal(observation.errorCode, "GITHUB_SOURCE_CONTRADICTION:FUTURE");
+
+  const pageOne = Array.from({ length: 100 }, (_, index) => checkRun({ id: 1_000 + index }));
+  const pageTwo = REQUIRED_EXACT_HEAD_CHECKS.map((name, index) => checkRun({ id: 2_000 + index, name }));
+  const futurePage = githubPaginationFetch({
+    pages: [pageOne, pageTwo],
+    totalCount: pageOne.length + pageTwo.length,
+    sourceDate: (endpoint) => new URL(endpoint).searchParams.get("page") === "2" ? date(6_000) : date(-1_000)
+  });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: futurePage.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "contradictory");
+  assert.equal(observation.freshness, "unavailable");
+  assert.equal(observation.errorCode, "GITHUB_SOURCE_CONTRADICTION:FUTURE");
+});
+
+test("strict public DTO parsing rejects endpoint, issuer and deployment substitutions", async () => {
+  const fixture = githubFetch();
+  const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+  assert.deepEqual(parseGitHubLiveObservation(structuredClone(github)), github);
+  for (const mutate of [
+    (candidate) => { candidate.endpoints[0] = "https://api.github.com/repos/chrisdortch/other"; },
+    (candidate) => { candidate.exactHeadChecks.checks[0].appId = 1; },
+    (candidate) => { candidate.exactHeadChecks.checks[0].detailsUrl = "https://github.com/chrisdortch/first/actions/runs/1"; },
+    (candidate) => { candidate.exactHeadChecks.requiredNames = candidate.exactHeadChecks.requiredNames.slice(0, -1); },
+    (candidate) => { candidate.errorCode = "substituted-current-error"; },
+    (candidate) => { candidate.extra = false; }
+  ]) {
+    const substituted = structuredClone(github);
+    mutate(substituted);
+    assert.throws(() => parseGitHubLiveObservation(substituted));
+  }
+
+  const currentWithoutSourceTime = structuredClone(github);
+  currentWithoutSourceTime.observedAt = null;
+  assert.throws(() => parseGitHubLiveObservation(currentWithoutSourceTime), /LIVE_READBACK_GITHUB_CURRENT_WITHOUT_SOURCE_TIME/u);
+
+  const tooManyCheckPages = structuredClone(github);
+  for (let page = 2; page <= MAX_GITHUB_CHECK_RUN_PAGES + 1; page += 1) {
+    tooManyCheckPages.endpoints.push(githubPageEndpoint(page, tooManyCheckPages.exactHeadChecks.sha, true));
+  }
+  assert.throws(() => parseGitHubLiveObservation(tooManyCheckPages), /LIVE_READBACK_CHECK_PAGES_CEILING_EXCEEDED/u);
+
+  const projectedCheckCandidate = (count) => {
+    const candidate = structuredClone(github);
+    const additionalCheckCount = count - candidate.exactHeadChecks.checks.length;
+    assert.ok(additionalCheckCount >= 0);
+    candidate.exactHeadChecks.checks.push(...Array.from({ length: additionalCheckCount }, (_, index) => ({
+      ...candidate.exactHeadChecks.checks[0],
+      id: 10_000 + index,
+      name: `substituted-projected-check-${index}`,
+      detailsUrl: `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${20_000 + index}/job/${30_000 + index}`
+    })));
+    assert.equal(candidate.exactHeadChecks.checks.length, count);
+    return candidate;
+  };
+  const feasibleOnePage = projectedCheckCandidate(100);
+  assert.equal(parseGitHubLiveObservation(feasibleOnePage).exactHeadChecks.checks.length, 100);
+  assert.throws(() => parseGitHubLiveObservation(projectedCheckCandidate(101)), /LIVE_READBACK_CHECK_PAGE_CAPACITY_EXCEEDED/u);
+
+  const tooManyProjectedChecks = projectedCheckCandidate(MAX_GITHUB_CHECK_RUNS + 1);
+  assert.equal(tooManyProjectedChecks.exactHeadChecks.checks.length, MAX_GITHUB_CHECK_RUNS + 1);
+  assert.throws(() => parseGitHubLiveObservation(tooManyProjectedChecks), /LIVE_READBACK_CHECK_RUNS_CEILING_EXCEEDED/u);
+
+  const deployment = deploymentObservation();
+  assert.deepEqual(parseDeploymentSelfObservation(structuredClone(deployment)), deployment);
+  for (const mutate of [
+    (candidate) => { candidate.projectId = "prj_substituted"; },
+    (candidate) => { candidate.requestHostname = "substituted.vercel.app"; },
+    (candidate) => { candidate.gitCommitSha = "not-a-sha"; },
+    (candidate) => { candidate.sourceBindingMode = "build-provenance-and-build-payload-attestation"; },
+    (candidate) => { candidate.observationMethod = "unavailable"; },
+    (candidate) => { candidate.errorCode = "substituted-current-error"; },
+    (candidate) => { candidate.region = "invalid region"; },
+    (candidate) => { candidate.externalProviderIdentity.aliases = []; }
+  ]) {
+    const substituted = structuredClone(deployment);
+    mutate(substituted);
+    assert.throws(() => parseDeploymentSelfObservation(substituted));
+  }
+});
+
+test("exact main tree, ruleset, Core, Master and trusted check issuer all gate acceptance", async () => {
+  const cases = [
+    ["main tree", (value, endpoint) => { if (endpoint.endsWith("/branches/main")) value.commit.commit.tree.sha = hex40("f"); }],
+    ["ruleset review resolution", (value, endpoint) => { if (endpoint.includes("/rulesets/")) value.rules.find(({ type }) => type === "pull_request").parameters.required_review_thread_resolution = false; }],
+    ["ruleset status integration", (value, endpoint) => { if (endpoint.includes("/rulesets/")) value.rules.find(({ type }) => type === "required_status_checks").parameters.required_status_checks[0].integration_id = 1; }],
+    ["Core Node 22 failure", (value, endpoint) => { if (endpoint.includes("/check-runs")) value.check_runs.find(({ name }) => name === "Boundary and schema validation (22)").conclusion = "failure"; }],
+    ["Core Node 24 failure", (value, endpoint) => { if (endpoint.includes("/check-runs")) value.check_runs.find(({ name }) => name === "Boundary and schema validation (24)").conclusion = "failure"; }],
+    ["Master failure", (value, endpoint) => { if (endpoint.includes("/check-runs")) value.check_runs.find(({ name }) => name === "validate").conclusion = "failure"; }],
+    ["issuer substitution", (value, endpoint) => { if (endpoint.includes("/check-runs")) value.check_runs.find(({ name }) => name === "Tree browser and accessibility").app.id = 1; }]
+  ];
+  const attestation = await compareDeploymentAttestation(build, sealedAttestation());
+  for (const [label, mutate] of cases) {
+    const fixture = githubFetch({ mutate: (value, endpoint) => { mutate(value, endpoint); return value; } });
+    const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    const reconciled = reconcileTreeTruth({ baseline, build, github, deployment: deploymentObservation(), attestation });
+    assert.equal(reconciled.currentActionCard.action, "HOLD", label);
+  }
+});
+
+test("the generic validate check is bound to the exact Master workflow run", async (t) => {
+  await t.test("a newer unrelated validate success cannot mask the exact Master failure", async () => {
+    const fixture = githubFetch({
+      mutate: (value, endpoint) => {
+        if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) {
+          value.workflow_runs[0].conclusion = "failure";
+        }
+        if (endpoint.includes("/check-runs")) {
+          const master = value.check_runs.find(({ name }) => name === "validate");
+          master.conclusion = "failure";
+          value.check_runs.push(checkRun({ id: 99_001, name: "validate", runId: masterWorkflowRunId + 500, startedAt: "2026-08-29T18:00:00.000Z" }));
+          value.total_count = value.check_runs.length;
+        }
+        return value;
+      }
+    });
+    const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "failure");
+    assert.equal(observation.exactHeadChecks?.masterWorkflowRun.id, masterWorkflowRunId);
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "validate")?.detailsUrl.includes(`/runs/${masterWorkflowRunId}/`), true);
+  });
+
+  await t.test("the newest exact Master rerun and its exact check are selected", async () => {
+    const nextRunId = masterWorkflowRunId + 1;
+    const fixture = githubFetch({
+      mutate: (value, endpoint) => {
+        if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) {
+          value.workflow_runs[0].conclusion = "failure";
+          value.workflow_runs.push(masterWorkflowRunFixture({ id: nextRunId, startedAt: "2026-08-29T17:00:00.000Z" }));
+          value.total_count = value.workflow_runs.length;
+        }
+        if (endpoint.includes("/check-runs")) {
+          value.check_runs.find(({ name }) => name === "validate").conclusion = "failure";
+          value.check_runs.push(checkRun({ id: 99_002, name: "validate", runId: nextRunId, startedAt: "2026-08-29T17:00:00.000Z" }));
+          value.total_count = value.check_runs.length;
+        }
+        return value;
+      }
+    });
+    const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.equal(observation.exactHeadChecks?.masterWorkflowRun.id, nextRunId);
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "validate")?.detailsUrl.includes(`/runs/${nextRunId}/`), true);
+  });
+
+  await t.test("missing, substituted, mismatched and over-ceiling Master evidence fails closed", async () => {
+    const mutations = [
+      ["missing", (value, endpoint) => { if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) { value.total_count = 0; value.workflow_runs = []; } }],
+      ["path", (value, endpoint) => { if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) value.workflow_runs[0].path = ".github/workflows/validate-clover-data-standard.yml"; }],
+      ["head", (value, endpoint) => { if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) value.workflow_runs[0].head_sha = "f".repeat(40); }],
+      ["event", (value, endpoint) => { if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) value.workflow_runs[0].event = "workflow_dispatch"; }],
+      ["run id", (value, endpoint) => { if (endpoint.includes("/check-runs")) value.check_runs.find(({ name }) => name === "validate").details_url = `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${masterWorkflowRunId + 9}/job/8`; }],
+      ["ceiling", (value, endpoint) => { if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) value.total_count = MAX_GITHUB_WORKFLOW_RUNS + 1; }]
+    ];
+    for (const [label, mutate] of mutations) {
+      const fixture = githubFetch({ mutate: (value, endpoint) => { mutate(value, endpoint); return value; } });
+      const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+      assert.notEqual(observation.exactHeadChecks?.state, "success", label);
+      if (label !== "run id") assert.notEqual(observation.status, "current", label);
+    }
+  });
 });
 
 test("GitHub check-run pagination is complete, bounded, source-locked and rerun-aware", async (t) => {
   const requiredRuns = (startId = 1) => REQUIRED_EXACT_HEAD_CHECKS.map((name, offset) => checkRun({ id: startId + offset, name }));
   const auxiliaryRuns = (startId, count) => Array.from({ length: count }, (_, offset) => checkRun({ id: startId + offset }));
+  const requiredCount = REQUIRED_EXACT_HEAD_CHECKS.length;
 
   await t.test("fewer than 100 and exactly 100 complete on one page", async () => {
-    const fewer = githubPaginationFetch({ pages: [requiredRuns()], totalCount: 5 });
+    const fewer = githubPaginationFetch({ pages: [requiredRuns()], totalCount: requiredCount });
     assert.equal((await observeGitHubTruth({ candidateCommit, fetchImpl: fewer.implementation, retries: 0 })).status, "current");
-    const exactly = githubPaginationFetch({ pages: [[...requiredRuns(), ...auxiliaryRuns(6, 95)]], totalCount: 100 });
+    const exactly = githubPaginationFetch({ pages: [[...requiredRuns(), ...auxiliaryRuns(1_000, 100 - requiredCount)]], totalCount: 100 });
     const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: exactly.implementation, retries: 0 });
     assert.equal(observation.status, "current");
     assert.equal(observation.exactHeadChecks?.state, "success");
@@ -284,8 +593,9 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
 
   await t.test("101 runs include a required check found only on page two", async () => {
     const required = requiredRuns();
+    const firstPageRequired = required.slice(0, -1);
     const fixture = githubPaginationFetch({
-      pages: [[...required.slice(0, 4), ...auxiliaryRuns(6, 96)], [required[4]]],
+      pages: [[...firstPageRequired, ...auxiliaryRuns(1_000, 100 - firstPageRequired.length)], [required.at(-1)]],
       totalCount: 101
     });
     const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
@@ -296,10 +606,10 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
 
   await t.test("250 runs aggregate across three pages with required names distributed", async () => {
     const required = requiredRuns(900);
-    const all = auxiliaryRuns(1, 245);
-    all.splice(20, 0, required[0]);
-    all.splice(140, 0, required[1], required[2]);
-    all.push(required[3], required[4]);
+    const all = auxiliaryRuns(1, 250 - required.length);
+    all.splice(20, 0, ...required.slice(0, 3));
+    all.splice(140, 0, ...required.slice(3, 6));
+    all.push(...required.slice(6));
     const fixture = githubPaginationFetch({ pages: [all.slice(0, 100), all.slice(100, 200), all.slice(200)], totalCount: 250 });
     const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "current");
@@ -324,11 +634,11 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
       startedAt: "2026-08-29T17:00:00.000Z",
       completedAt: "2026-08-29T17:01:00.000Z"
     });
-    let fixture = githubPaginationFetch({ pages: [[...base.slice(1), olderFailure, newerSuccess]], totalCount: 6 });
+    let fixture = githubPaginationFetch({ pages: [[...base.slice(1), olderFailure, newerSuccess]], totalCount: base.length + 1 });
     let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.exactHeadChecks?.state, "success");
     const newerFailure = { ...newerSuccess, id: 12, conclusion: "failure" };
-    fixture = githubPaginationFetch({ pages: [[...base.slice(1), olderFailure, newerFailure]], totalCount: 6 });
+    fixture = githubPaginationFetch({ pages: [[...base.slice(1), olderFailure, newerFailure]], totalCount: base.length + 1 });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.exactHeadChecks?.state, "failure");
     const newestPending = checkRun({
@@ -339,13 +649,13 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
       startedAt: "2026-08-29T17:30:00.000Z",
       completedAt: null
     });
-    fixture = githubPaginationFetch({ pages: [[...base.slice(1), newerSuccess, newestPending]], totalCount: 6 });
+    fixture = githubPaginationFetch({ pages: [[...base.slice(1), newerSuccess, newestPending]], totalCount: base.length + 1 });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.exactHeadChecks?.state, "pending");
 
     const sameStartSuccess = checkRun({ id: 20, name: target, conclusion: "success", startedAt: "2026-08-29T18:00:00.000Z" });
     const sameStartFailure = checkRun({ id: 21, name: target, conclusion: "failure", startedAt: "2026-08-29T18:00:00.000Z" });
-    fixture = githubPaginationFetch({ pages: [[...base.slice(1), sameStartSuccess, sameStartFailure]], totalCount: 6 });
+    fixture = githubPaginationFetch({ pages: [[...base.slice(1), sameStartSuccess, sameStartFailure]], totalCount: base.length + 1 });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.exactHeadChecks?.state, "failure");
   });
@@ -359,7 +669,7 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
       mutate(runs[0]);
       const fixture = githubPaginationFetch({ pages: [runs], totalCount: runs.length });
       const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
-      assert.equal(observation.status, "partial");
+      assert.equal(observation.status, "contradictory");
       assert.equal(observation.exactHeadChecks, null);
       assert.match(observation.failures.join("\n"), /GITHUB_MALFORMED_CHECK_RUN/u);
     }
@@ -367,8 +677,8 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
 
   await t.test("identical duplicate IDs deduplicate and contradictory duplicates fail closed", async () => {
     const required = requiredRuns(1);
-    const firstPage = [...required, ...auxiliaryRuns(6, 95)];
-    const final = checkRun({ id: 101 });
+    const firstPage = [...required, ...auxiliaryRuns(1_000, 100 - required.length)];
+    const final = checkRun({ id: 2_000 });
     let fixture = githubPaginationFetch({ pages: [firstPage, [structuredClone(firstPage[0]), final]], totalCount: 101 });
     let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "current");
@@ -380,15 +690,15 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
   });
 
   await t.test("later-page head substitution is contradictory", async () => {
-    const first = [...requiredRuns(), ...auxiliaryRuns(6, 95)];
-    const fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 101, headSha: hex40("f") })]], totalCount: 101 });
+    const first = [...requiredRuns(), ...auxiliaryRuns(1_000, 100 - requiredCount)];
+    const fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 2_000, headSha: hex40("f") })]], totalCount: 101 });
     const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "contradictory");
     assert.match(observation.failures.join("\n"), /check-run-sha/u);
   });
 
   await t.test("malformed and substituted next links never leave the exact endpoint", async () => {
-    const first = [...requiredRuns(), ...auxiliaryRuns(6, 95)];
+    const first = [...requiredRuns(), ...auxiliaryRuns(1_000, 100 - requiredCount)];
     const links = [
       ["cross origin", `<https://attacker.example/repos/${GITHUB_REPOSITORY}/commits/${candidateCommit}/check-runs?filter=all&per_page=100&page=2>; rel="next"`, "contradictory"],
       ["repository path", `<${GITHUB_ORIGIN}/repos/attacker/first/commits/${candidateCommit}/check-runs?filter=all&per_page=100&page=2>; rel="next"`, "contradictory"],
@@ -399,11 +709,11 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
       ["repeated page", `<${githubPageEndpoint(1)}>; rel="next"`, "contradictory"],
       ["last page before next", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(1)}>; rel="last"`, "contradictory"],
       ["inflated last page", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(3)}>; rel="last"`, "contradictory"],
-      ["malformed", `${githubPageEndpoint(2)}; rel="next"`, "partial"],
-      ["duplicate next", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(2)}>; rel="next"`, "partial"]
+      ["malformed", `${githubPageEndpoint(2)}; rel="next"`, "contradictory"],
+      ["duplicate next", `<${githubPageEndpoint(2)}>; rel="next", <${githubPageEndpoint(2)}>; rel="next"`, "contradictory"]
     ];
     for (const [label, link, expectedStatus] of links) {
-      const fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 101 })]], totalCount: 101, linkForPage: (page) => page === 1 ? link : null });
+      const fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 2_000 })]], totalCount: 101, linkForPage: (page) => page === 1 ? link : null });
       const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
       assert.equal(observation.status, expectedStatus, label);
       assert.equal(fixture.calls.some(({ endpoint }) => endpoint === githubPageEndpoint(2)), false, label);
@@ -411,19 +721,19 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
   });
 
   await t.test("missing pages, count drift, later failures and finite ceilings remain partial HOLD", async () => {
-    const first = [...requiredRuns(), ...auxiliaryRuns(6, 95)];
+    const first = [...requiredRuns(), ...auxiliaryRuns(1_000, 100 - requiredCount)];
     let fixture = githubPaginationFetch({ pages: [first], totalCount: 101, linkForPage: () => null });
     let observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "partial");
     assert.match(observation.failures.join("\n"), /CHECK_RUNS_PAGE_MISSING/u);
 
-    fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 101 })]], totalCount: (page) => page === 1 ? 101 : 102 });
+    fixture = githubPaginationFetch({ pages: [first, [checkRun({ id: 2_000 })]], totalCount: (page) => page === 1 ? 101 : 102 });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "partial");
     assert.match(observation.failures.join("\n"), /TOTAL_DISAGREEMENT/u);
 
     fixture = githubPaginationFetch({
-      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      pages: [first, [checkRun({ id: 2_000 })]], totalCount: 101,
       responseForPage: async (page, _endpoint, options) => page === 2
         ? new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }))
         : null
@@ -433,8 +743,13 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
     assert.match(observation.failures.join("\n"), /GITHUB_TIMEOUT/u);
 
     fixture = githubPaginationFetch({
-      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
-      responseForPage: async (page) => page === 2 ? new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } }) : null
+      pages: [first, [checkRun({ id: 2_000 })]], totalCount: 101,
+      responseForPage: async (page, endpoint) => {
+        if (page !== 2) return null;
+        const response = new Response("{}", { status: 403, headers: { "content-type": "application/json", "x-ratelimit-remaining": "0" } });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      }
     });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "partial");
@@ -442,11 +757,14 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
 
     let pageTwoAttempts = 0;
     fixture = githubPaginationFetch({
-      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
-      responseForPage: async (page) => {
+      pages: [first, [checkRun({ id: 2_000 })]], totalCount: 101,
+      responseForPage: async (page, endpoint) => {
         if (page !== 2) return null;
         pageTwoAttempts += 1;
-        return pageTwoAttempts === 1 ? new Response("temporary", { status: 503 }) : null;
+        if (pageTwoAttempts !== 1) return null;
+        const response = new Response("temporary", { status: 503, headers: { "content-type": "application/json" } });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
       }
     });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 1 });
@@ -454,20 +772,23 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
     assert.equal(pageTwoAttempts, 2);
 
     fixture = githubPaginationFetch({
-      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
-      responseForPage: async (page) => page === 2
-        ? new Response("{}", { status: 200, headers: { "content-length": "300000", date: "Sat, 29 Aug 2026 17:00:00 GMT" } })
-        : null
+      pages: [first, [checkRun({ id: 2_000 })]], totalCount: 101,
+      responseForPage: async (page, endpoint) => {
+        if (page !== 2) return null;
+        const response = new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-length": "300000", date: defaultGithubSourceDate } });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      }
     });
     observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "partial");
     assert.match(observation.failures.join("\n"), /GITHUB_RESPONSE_TOO_LARGE/u);
 
     fixture = githubPaginationFetch({
-      pages: [first, [checkRun({ id: 101 })]], totalCount: 101,
+      pages: [first, [checkRun({ id: 2_000 })]], totalCount: 101,
       responseForPage: async (page, endpoint) => {
         if (page !== 2) return null;
-        const body = JSON.stringify({ total_count: 101, check_runs: [checkRun({ id: 101 })] });
+        const body = JSON.stringify({ total_count: 101, check_runs: [checkRun({ id: 2_000 })] });
         const response = new Response(body, { status: 200, headers: { "content-type": "application/json" } });
         Object.defineProperty(response, "url", { value: endpoint });
         return response;
@@ -497,12 +818,13 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
   await t.test("a complete paginated result produces an available Action Card in draft or ready state", async () => {
     const required = requiredRuns();
     for (const draft of [true, false]) {
-      const fixture = githubPaginationFetch({ pages: [[...required.slice(0, 4), ...auxiliaryRuns(6, 96)], [required[4]]], totalCount: 101 });
+      const firstPageRequired = required.slice(0, -1);
+      const fixture = githubPaginationFetch({ pages: [[...firstPageRequired, ...auxiliaryRuns(1_000, 100 - firstPageRequired.length)], [required.at(-1)]], totalCount: 101 });
       const baseFetch = fixture.implementation;
       const fetchImpl = async (endpoint, options) => {
         if (!endpoint.endsWith("/pulls/35")) return baseFetch(endpoint, options);
         const body = JSON.stringify({ ...githubFixture(endpoint), draft });
-        const response = new Response(body, { status: 200, headers: { date: "Sat, 29 Aug 2026 17:00:00 GMT" } });
+        const response = new Response(body, { status: 200, headers: { "content-type": "application/json", date: defaultGithubSourceDate } });
         Object.defineProperty(response, "url", { value: endpoint });
         return response;
       };
@@ -530,14 +852,17 @@ test("request time never upgrades missing GitHub source freshness", async () => 
 
 test("GitHub rate limits, substitution, malformed payload, oversize and timeout fail closed", async (t) => {
   await t.test("rate limit", async () => {
-    const response = new Response("{}", { status: 403, headers: { "x-ratelimit-remaining": "0" } });
-    const result = await observeGitHubTruth({ candidateCommit, fetchImpl: async () => response, retries: 0 });
+    const result = await observeGitHubTruth({ candidateCommit, fetchImpl: async (endpoint) => {
+      const response = new Response("{}", { status: 403, headers: { "content-type": "application/json", "x-ratelimit-remaining": "0" } });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    }, retries: 0 });
     assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_RATE_LIMITED")), true);
   });
   await t.test("source substitution", async () => {
     const replacement = async (endpoint) => {
       const body = JSON.stringify(githubFixture(endpoint));
-      const response = new Response(body, { status: 200, headers: { date: "Sat, 29 Aug 2026 17:00:00 GMT" } });
+      const response = new Response(body, { status: 200, headers: { date: defaultGithubSourceDate } });
       Object.defineProperty(response, "url", { value: `${GITHUB_ORIGIN}/repos/attacker/substituted` });
       return response;
     };
@@ -560,15 +885,86 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
         mutate: (value, endpoint) => endpoint.endsWith("/pulls/34") ? { ...value, ...substitution } : value
       });
       const result = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
-      assert.equal(result.status, "partial");
+      assert.equal(result.status, "contradictory");
       assert.equal(result.pull34, null);
       assert.equal(result.failures.some((failure) => /pull34:GITHUB_MALFORMED_PR34/u.test(failure)), true);
     }
   });
   await t.test("oversize", async () => {
-    const response = new Response("{}", { status: 200, headers: { "content-length": String(300_000) } });
-    const result = await observeGitHubTruth({ candidateCommit, fetchImpl: async () => response, retries: 0 });
+    const result = await observeGitHubTruth({ candidateCommit, fetchImpl: async (endpoint) => {
+      const response = new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-length": String(300_000) } });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    }, retries: 0 });
     assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_RESPONSE_TOO_LARGE")), true);
+  });
+  await t.test("every pre-read rejection cancels its source body without awaiting a nonsettling cancel", async () => {
+    const cases = [
+      ["url", { status: 200, url: `${GITHUB_ORIGIN}/repos/attacker/substituted`, headers: { "content-type": "application/json" } }],
+      ["ordinary 4xx", { status: 404, headers: { "content-type": "application/json" } }],
+      ["rate limit", { status: 403, headers: { "content-type": "application/json", "x-ratelimit-remaining": "0" } }],
+      ["media type", { status: 200, headers: { "content-type": "text/plain" } }],
+      ["declared length", { status: 200, headers: { "content-type": "application/json", "content-length": String(MAX_GITHUB_RESPONSE_BYTES + 1) } }]
+    ];
+    for (const [label, configuration] of cases) {
+      let cancellations = 0;
+      const implementation = async (endpoint) => {
+        const body = new ReadableStream({
+          start(controller) { controller.enqueue(Buffer.from("{}")); },
+          cancel() {
+            cancellations += 1;
+            return new Promise(() => {});
+          }
+        });
+        const response = new Response(body, { status: configuration.status, headers: configuration.headers });
+        Object.defineProperty(response, "url", { value: configuration.url ?? endpoint });
+        return response;
+      };
+      const result = await observeGitHubTruth({ candidateCommit, fetchImpl: implementation, retries: 0 });
+      assert.notEqual(result.status, "current", label);
+      assert.equal(cancellations, 7, label);
+    }
+  });
+  await t.test("chunked oversize and invalid UTF-8 fail closed with a bounded body", async () => {
+    let cancellations = 0;
+    const oversized = async (endpoint) => {
+      const response = new Response(new ReadableStream({
+        start(controller) { controller.enqueue(Buffer.alloc(MAX_GITHUB_RESPONSE_BYTES + 1, 0x20)); },
+        cancel() {
+          cancellations += 1;
+          return new Promise(() => {});
+        }
+      }), { status: 200, headers: { "content-type": "application/json", date: defaultGithubSourceDate } });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    };
+    let result = await observeGitHubTruth({ candidateCommit, fetchImpl: oversized, retries: 0 });
+    assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_RESPONSE_TOO_LARGE")), true);
+    assert.equal(cancellations, 7);
+
+    const invalidUtf8 = async (endpoint) => {
+      const response = new Response(Uint8Array.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0x80, 0x22, 0x7d]), {
+        status: 200,
+        headers: { "content-type": "application/json", date: defaultGithubSourceDate }
+      });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    };
+    result = await observeGitHubTruth({ candidateCommit, fetchImpl: invalidUtf8, retries: 0 });
+    assert.equal(result.status, "contradictory");
+    assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_MALFORMED_UTF8")), true);
+
+    const duplicateIdentity = async (endpoint) => {
+      const response = new Response(`{"id":${GITHUB_REPOSITORY_ID},"id":${GITHUB_REPOSITORY_ID + 1}}`, {
+        status: 200,
+        headers: { "content-type": "application/json", date: defaultGithubSourceDate }
+      });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    };
+    result = await observeGitHubTruth({ candidateCommit, fetchImpl: duplicateIdentity, retries: 0 });
+    assert.equal(result.status, "contradictory");
+    assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_MALFORMED_JSON")), true);
   });
   await t.test("timeout", async () => {
     const stalled = (_endpoint, { signal }) => new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
@@ -577,19 +973,107 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
   });
 });
 
+test("caller cancellation, deadline races, retry backoff and retry budgets preserve the first boundary cause", async (t) => {
+  await t.test("already-aborted caller starts no provider request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    const result = await observeGitHubTruth({
+      candidateCommit,
+      signal: controller.signal,
+      retries: 1,
+      fetchImpl: async () => { calls += 1; throw new Error("must-not-run"); }
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.errorCode, "GITHUB_CALLER_ABORTED");
+  });
+
+  await t.test("caller abort during fetch is immutable even if cleanup crosses the deadline", async () => {
+    const caller = new AbortController();
+    let logicalTime = 0;
+    let calls = 0;
+    const fetchImpl = async (_endpoint, { signal }) => new Promise((_resolve, reject) => {
+      calls += 1;
+      signal.addEventListener("abort", () => {
+        logicalTime = 2_000;
+        reject(new Error("aborted"));
+      }, { once: true });
+    });
+    const pending = observeGitHubTruth({ candidateCommit, fetchImpl, signal: caller.signal, retries: 0, deadlineMs: 1_000, clock: () => logicalTime });
+    await new Promise((resolve) => setImmediate(resolve));
+    caller.abort();
+    const result = await pending;
+    assert.equal(calls, 5);
+    assert.equal(result.errorCode, "GITHUB_CALLER_ABORTED");
+  });
+
+  await t.test("deadline-first remains deadline even when caller follows", async () => {
+    const caller = new AbortController();
+    let calls = 0;
+    const fetchImpl = async (_endpoint, { signal }) => new Promise((_resolve, reject) => {
+      calls += 1;
+      signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+    const pending = observeGitHubTruth({ candidateCommit, fetchImpl, signal: caller.signal, retries: 0, deadlineMs: 5 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    caller.abort();
+    const result = await pending;
+    assert.equal(calls, 5);
+    assert.equal(result.errorCode, "GITHUB_DEADLINE_EXCEEDED");
+  });
+
+  await t.test("caller abort during retry backoff starts no retry", async () => {
+    const caller = new AbortController();
+    let calls = 0;
+    const fetchImpl = async (endpoint) => {
+      calls += 1;
+      const response = new Response("temporary", { status: 503, headers: { "content-type": "application/json" } });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    };
+    const pending = observeGitHubTruth({ candidateCommit, fetchImpl, signal: caller.signal, retries: 1, timeoutMs: 100, deadlineMs: 1_000 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    caller.abort();
+    const result = await pending;
+    assert.equal(calls, 5);
+    assert.equal(result.errorCode, "GITHUB_CALLER_ABORTED");
+  });
+
+  await t.test("a scheduler jump after backoff prevents a shortened retry", async () => {
+    let logicalTime = 0;
+    let calls = 0;
+    const fetchImpl = async (endpoint) => {
+      calls += 1;
+      const response = new Response("temporary", { status: 503, headers: { "content-type": "application/json" } });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    };
+    const pending = observeGitHubTruth({ candidateCommit, fetchImpl, retries: 1, timeoutMs: 100, deadlineMs: 1_000, clock: () => logicalTime });
+    setTimeout(() => { logicalTime = 950; }, 20);
+    const result = await pending;
+    assert.equal(calls, 7);
+    assert.equal(result.errorCode, "GITHUB_DEADLINE_EXCEEDED");
+  });
+});
+
 test("one failed GitHub endpoint preserves successful projections and marks the overlay partial", async () => {
   const fixture = githubFetch();
-  const partialFetch = async (endpoint, options) => endpoint.endsWith("/pulls/34")
-    ? new Response("unavailable", { status: 503 })
-    : fixture.implementation(endpoint, options);
+  const partialFetch = async (endpoint, options) => {
+    if (!endpoint.endsWith("/pulls/34")) return fixture.implementation(endpoint, options);
+    const response = new Response("unavailable", { status: 503, headers: { "content-type": "application/json" } });
+    Object.defineProperty(response, "url", { value: endpoint });
+    return response;
+  };
   const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: partialFetch, retries: 0 });
   assert.equal(observation.status, "partial");
-  assert.equal(observation.freshness, "unavailable");
+  assert.equal(observation.freshness, "current");
+  assert.equal(observation.evidenceCompleteness, "partial");
+  assert.deepEqual(observation.missingEvidence, ["pull34"]);
   assert.equal(observation.pull34, null);
   assert.equal(observation.main?.sha, EXPECTED_MAIN_COMMIT);
   assert.equal(observation.pull35?.headSha, candidateCommit);
   assert.equal(observation.exactHeadChecks?.state, "success");
-  assert.equal(observation.errorCode, "GITHUB_PARTIAL_FAILURE");
+  assert.equal(observation.errorCode, "GITHUB_HTTP_503");
 });
 
 test("PR head and base drift remain visible and block the current Action Card", async () => {
@@ -643,7 +1127,7 @@ test("mutually resealed Stack B provenance substitutions remain non-acceptable",
     { pathListSha256: hex64("9") }
   ];
   for (const substitution of substitutions) {
-    const substitutedBuild = parseBuildProvenance({ ...build, ...substitution });
+    const substitutedBuild = buildWith(substitution);
     const attestation = await compareDeploymentAttestation(substitutedBuild, sealedAttestation({}, substitutedBuild));
     assert.equal(attestation.status, "verified");
     const reconciled = reconcileTreeTruth({ baseline, build: substitutedBuild, github, deployment, attestation });
@@ -679,7 +1163,7 @@ test("prebuilt runtime identity accepts only the exact source-bound preview cont
     const observation = deploymentObservation(previewEnvironment({ VERCEL_GIT_COMMIT_SHA: undefined }));
     assert.equal(observation.status, "current");
     assert.equal(observation.gitCommitSha, null);
-    assert.equal(observation.sourceBindingMode, "build-provenance-and-output-attestation");
+    assert.equal(observation.sourceBindingMode, "build-provenance-and-build-payload-attestation");
     assert.equal(observation.failures.includes("deployment-source-identity"), false);
   });
   await t.test("present exact Git SHA stays source-bound", () => {
@@ -739,7 +1223,7 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
   const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
   const deployment = deploymentObservation();
   const unavailable = computeTruthReadiness({ github, deployment, attestation: NO_ATTESTATION_COMPARISON }, build);
-  assert.equal(unavailable.deploymentAttestationStatus, "unavailable");
+  assert.equal(unavailable.buildPayloadAttestationStatus, "unavailable");
   assert.equal(reconcileTreeTruth({ baseline, build, github, deployment, attestation: NO_ATTESTATION_COMPARISON }).currentActionCard.action, "HOLD");
 
   const comparison = await compareDeploymentAttestation(build, sealedAttestation());
@@ -751,14 +1235,14 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
     treePreviewRuntimeObserved: true,
     runtimeDeploymentIdentityStatus: "verified",
     liveGithubOverlayStatus: "current",
-    deploymentAttestationStatus: "verified",
-    externalProviderVerificationRequired: true,
+    buildPayloadAttestationStatus: "verified",
     ownerConsoleGroundingRequired: true,
     privateOwnerAuthenticationConfigured: false,
     durablePrivateStorageConfigured: false,
     realParticipantRuntimeConfigured: false,
     realProviderExecutionConfigured: false,
-    productionAuthorized: false
+    productionAuthorized: false,
+    finalDeploymentInputVerificationStatus: "external-provider-receipt-required"
   });
   const action = reconcileTreeTruth({ baseline, build, github, deployment, attestation: comparison }).currentActionCard;
   assert.equal(action.action, "ACCEPT SOURCE-GROUNDED TREE PREVIEW");
@@ -928,20 +1412,236 @@ test("source provenance binds deleted base objects and preserves current candida
 
 function writeRawBuildOutput(outputRoot, checkoutRoot) {
   rmSync(outputRoot, { recursive: true, force: true });
+  const cliRoot = path.join(checkoutRoot, "node_modules", "vercel");
+  mkdirSync(path.join(cliRoot, "dist"), { recursive: true });
+  writeFileSync(path.join(cliRoot, "dist/vc.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  writeFileSync(path.join(cliRoot, "package.json"), JSON.stringify({ name: "vercel", version: VERCEL_CLI_VERSION, bin: { vc: "./dist/vc.js", vercel: "./dist/vc.js" } }));
+  writeFileSync(path.join(checkoutRoot, "package-lock.json"), JSON.stringify({ packages: { "node_modules/vercel": { version: VERCEL_CLI_VERSION, integrity: VERCEL_CLI_INTEGRITY } } }));
   mkdirSync(path.join(outputRoot, "diagnostics"), { recursive: true });
   mkdirSync(path.join(outputRoot, "functions/index.func/apps/clover-launch-studio"), { recursive: true });
   mkdirSync(path.join(outputRoot, "static/assets"), { recursive: true });
-  writeFileSync(path.join(outputRoot, "builds.json"), JSON.stringify({ target: "preview", argv: ["/usr/local/bin/node", `${checkoutRoot}/node_modules/vercel/dist/index.js`], builds: [] }));
-  writeFileSync(path.join(outputRoot, "diagnostics/cli_traces.json"), JSON.stringify({ cwd: checkoutRoot, cli: `${checkoutRoot}/node_modules/vercel/dist/index.js` }));
+  writeFileSync(path.join(outputRoot, "builds.json"), JSON.stringify({ target: "preview", argv: ["/usr/local/bin/node", `${checkoutRoot}/node_modules/vercel/dist/vc.js`, "build", "--yes"], cliVersion: VERCEL_CLI_VERSION, builds: [] }));
+  writeFileSync(path.join(outputRoot, "diagnostics/cli_traces.json"), JSON.stringify({ cwd: checkoutRoot, cli: `${checkoutRoot}/node_modules/vercel/dist/vc.js` }));
   const configuration = { outputFileTracingRoot: checkoutRoot, repoRoot: checkoutRoot, turbopack: { root: checkoutRoot }, unrelated: "preserved" };
   writeFileSync(path.join(outputRoot, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs"), `const conf = ${JSON.stringify(configuration)};\nvar nextServer = true;\n`);
   writeFileSync(path.join(outputRoot, "static/assets/app.js"), "console.log('public-sanitized');\n");
+  symlinkSync("assets/app.js", path.join(outputRoot, "static/current.js"));
+}
+
+function rawTreeIdentity(root) {
+  const entries = [];
+  const visit = (directory, prefix = "") => {
+    for (const name of readdirSync(directory).sort((left, right) => Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8")))) {
+      const absolutePath = path.join(directory, name);
+      const relativePath = prefix ? `${prefix}/${name}` : name;
+      const stat = lstatSync(absolutePath);
+      if (stat.isSymbolicLink()) {
+        entries.push({ path: relativePath, type: "symlink", mode: stat.mode & 0o7777, target: readlinkSync(absolutePath) });
+      } else if (stat.isDirectory()) {
+        entries.push({ path: relativePath, type: "directory", mode: stat.mode & 0o7777 });
+        visit(absolutePath, relativePath);
+      } else {
+        const bytes = readFileSync(absolutePath);
+        entries.push({ path: relativePath, type: "file", mode: stat.mode & 0o7777, bytes: bytes.length, sha256: sha256(bytes) });
+      }
+    }
+  };
+  visit(root);
+  return entries;
+}
+
+function providerUrl(version, route, query = []) {
+  const encodedRoute = route.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  const suffix = query.length === 0 ? "" : `?${query.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&")}`;
+  return `https://api.vercel.com/${version}/${encodedRoute}${suffix}`;
+}
+
+const providerReceiptNow = new Date("2026-08-29T20:00:03.000Z");
+
+function providerRequest(method, url, response, observedAt = "2026-08-29T20:00:00.000Z") {
+  const bytes = Buffer.from(`${canonicalJson(response)}\n`, "utf8");
+  return {
+    method,
+    url,
+    status: 200,
+    redirected: false,
+    observedAt,
+    responseMediaTypeEssence: "application/json",
+    responseCharset: null,
+    responseOtherMediaTypeParameters: [],
+    responseHashDomain: "canonical-sanitized-json-v1",
+    responseProjectionBytes: bytes.length,
+    responseProjectionSha256: sha256(bytes)
+  };
+}
+
+function providerDeploymentFixture(outputRoot, sealed) {
+  const deploymentId = "dpl_ExactPreview123";
+  const deploymentResponse = {
+    id: deploymentId,
+    name: VERCEL_PROJECT_NAME,
+    url: "clover-tree-command-center-exact-preview.vercel.app",
+    type: "LAMBDAS",
+    state: "READY",
+    status: "READY",
+    readyState: "READY",
+    target: null,
+    alias: [],
+    automaticAliases: [],
+    project: { id: VERCEL_PROJECT_ID, name: VERCEL_PROJECT_NAME, framework: "nextjs" },
+    team: { id: VERCEL_TEAM_ID, name: VERCEL_TEAM_NAME, slug: VERCEL_TEAM_SLUG },
+    meta: {
+      gitCommitRef: STACK_B_BRANCH,
+      gitCommitSha: sealed.sourceProvenance.commit,
+      gitRemoteUrl: "https://github.com/chrisdortch/first.git",
+      gitRootDirectory: "apps/clover-launch-studio"
+    },
+    source: "cli",
+    prebuilt: true,
+    nodeVersion: "24.x",
+    userConfiguredDeploymentId: sealed.sourceProvenance.runtimeDeploymentKey
+  };
+  const outputDirectory = { name: "output", type: "directory", mode: 0o40555, children: [] };
+  const directoryByPath = new Map([["", outputDirectory]]);
+  const ensureDirectory = (directoryPath) => {
+    if (directoryByPath.has(directoryPath)) return directoryByPath.get(directoryPath);
+    const segments = directoryPath.split("/");
+    const name = segments.pop();
+    const parentPath = segments.join("/");
+    const parent = ensureDirectory(parentPath);
+    const directory = { name, type: "directory", mode: 0o40555, children: [] };
+    parent.children.push(directory);
+    directoryByPath.set(directoryPath, directory);
+    return directory;
+  };
+  const contents = [];
+  const entries = [
+    ...sealed.deploymentInputManifest.files.map((entry) => ({ type: "file", ...entry })),
+    ...sealed.deploymentInputManifest.symlinks.map((entry) => ({ type: "symlink", ...entry }))
+  ];
+  for (const entry of entries) {
+    const segments = entry.path.split("/");
+    const name = segments.pop();
+    const parent = ensureDirectory(segments.join("/"));
+    const bytes = entry.type === "file"
+      ? readFileSync(path.join(outputRoot, ...entry.path.split("/")))
+      : Buffer.from(readlinkSync(path.join(outputRoot, ...entry.path.split("/"))), "utf8");
+    const uid = sha1(bytes);
+    parent.children.push({ name, type: entry.type, mode: (entry.type === "file" ? 0o100000 : 0o120000) | Number.parseInt(entry.mode, 8), uid });
+    const response = { data: bytes.toString("base64") };
+    const providerPath = `src/.vercel/output/${entry.path}`;
+    contents.push({
+      path: providerPath,
+      uid,
+      request: providerRequest("GET", providerUrl("v8", `deployments/${deploymentId}/files/${uid}`, [["path", providerPath], ["teamId", VERCEL_TEAM_ID]]), response),
+      response
+    });
+  }
+  const sortDirectory = (directory) => {
+    directory.children.sort((left, right) => Buffer.compare(Buffer.from(left.name, "utf8"), Buffer.from(right.name, "utf8")));
+    for (const child of directory.children.filter(({ type }) => type === "directory")) sortDirectory(child);
+  };
+  sortDirectory(outputDirectory);
+  const ignoredBytes = Buffer.from("provider-generated-runtime\n", "utf8");
+  const fileTreeResponse = [{
+    name: "src",
+    type: "directory",
+    mode: 0o40555,
+    children: [
+      { name: ".vercel", type: "directory", mode: 0o40555, children: [outputDirectory] },
+      { name: "out", type: "directory", mode: 0o40555, children: [{ name: "provider-runtime.txt", type: "file", mode: 0o100644, uid: sha1(ignoredBytes) }] }
+    ]
+  }];
+  const baselineResponse = {
+    projectId: VERCEL_PROJECT_ID,
+    teamId: VERCEL_TEAM_ID,
+    providerProjectUpdatedAt: 1_787_944_731_108,
+    bypassCount: 0,
+    ssoProtection: { deploymentType: "all_except_custom_domains" },
+    passwordProtectionEnabled: false,
+    gitForkProtection: true,
+    skewProtectionMaxAge: 43_200
+  };
+  const createdEntry = { createdAt: 1_787_944_800_000, createdByPresent: true, scope: "automation-bypass" };
+  const createResponseProjection = { createdEntry, responseEntryCount: 1 };
+  const revokeResponse = { protectionBypass: {} };
+  const projectReadUrl = providerUrl("v9", `projects/${VERCEL_PROJECT_ID}`, [["teamId", VERCEL_TEAM_ID]]);
+  const bypassUrl = providerUrl("v1", `projects/${VERCEL_PROJECT_ID}/protection-bypass`, [["teamId", VERCEL_TEAM_ID]]);
+  return {
+    deployment: {
+      request: providerRequest("GET", providerUrl("v13", `deployments/${deploymentId}`, [["teamId", VERCEL_TEAM_ID]]), deploymentResponse),
+      response: deploymentResponse
+    },
+    deploymentInvocation: {
+      argv: [
+        "npx", "--yes", `vercel@${VERCEL_CLI_VERSION}`, "deploy", "--prebuilt", "--yes", "--skip-domain",
+        "--meta", `gitCommitSha=${sealed.sourceProvenance.commit}`,
+        "--meta", `gitCommitRef=${STACK_B_BRANCH}`,
+        "--meta", "gitRemoteUrl=https://github.com/chrisdortch/first.git",
+        "--meta", "gitRootDirectory=apps/clover-launch-studio"
+      ],
+      workingDirectory: "frozen-workspace-root",
+      outputRelativePath: ".vercel/output",
+      projectLinkSha256: sealed.sourceProvenance.buildProjectSettingsSha256,
+      toolPackage: "vercel",
+      toolVersion: VERCEL_CLI_VERSION,
+      toolIntegrity: VERCEL_CLI_INTEGRITY
+    },
+    fileTree: {
+      request: providerRequest("GET", providerUrl("v6", `deployments/${deploymentId}/files`, [["teamId", VERCEL_TEAM_ID]]), fileTreeResponse),
+      response: fileTreeResponse
+    },
+    contents,
+    protection: {
+      deploymentId,
+      baseline: {
+        observedAt: "2026-08-29T20:00:00.000Z",
+        request: providerRequest("GET", projectReadUrl, baselineResponse),
+        response: baselineResponse
+      },
+      create: {
+        action: "create",
+        eventId: "bypass:create:0001",
+        observedAt: "2026-08-29T20:00:01.000Z",
+        bypassCountBefore: 0,
+        bypassCountAfter: 1,
+        operation: "create-one-automation-bypass",
+        request: providerRequest("PATCH", bypassUrl, createResponseProjection, "2026-08-29T20:00:01.000Z"),
+        requestSemantics: { scope: "automation-bypass", suppliedValue: false, valueSource: "provider-generated" },
+        createdEntry,
+        responseEntryCount: 1
+      },
+      revoke: {
+        action: "revoke",
+        eventId: "bypass:revoke:0001",
+        observedAt: "2026-08-29T20:00:02.000Z",
+        bypassCountBefore: 1,
+        bypassCountAfter: 0,
+        operation: "revoke-exact-automation-bypass-without-regeneration",
+        request: providerRequest("PATCH", bypassUrl, revokeResponse, "2026-08-29T20:00:02.000Z"),
+        requestSemantics: { exactCreatedBypass: true, regenerate: false },
+        response: revokeResponse
+      },
+      bypassCountSequence: [0, 1, 0],
+      regenerationDisabled: true,
+      shareUrlCreated: false,
+      vercelCurlUsed: false,
+      bypassValueDisclosed: false,
+      bypassValuePersisted: false,
+      bypassValueUploaded: false,
+      bypassValueAttached: false,
+      bypassValueScreenshotted: false,
+      ownerLoginRequested: false,
+      postRevocationAuthenticatedRequestCount: 0
+    }
+  };
 }
 
 test("generated preview output normalization, manifest, attestation and archive are deterministic", () => {
   const root = mkdtempSync(path.join(tmpdir(), "clover-output-attestation-"));
   const output = path.join(root, "output");
   const evidence = path.join(root, "evidence");
+  const secondEvidence = path.join(root, "evidence-second");
   try {
     const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
     writeRawBuildOutput(output, checkoutRoot);
@@ -965,7 +1665,7 @@ test("generated preview output normalization, manifest, attestation and archive 
     assert.deepEqual(buildOutputManifest(path.join(restore, "output")), buildOutputManifest(output));
 
     writeRawBuildOutput(output, checkoutRoot);
-    const second = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build });
+    const second = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: secondEvidence, sourceProvenance: build });
     assert.deepEqual({
       attestation: second.attestationRawSha256,
       manifest: second.manifestRawSha256,
@@ -973,6 +1673,418 @@ test("generated preview output normalization, manifest, attestation and archive 
       archive: second.archiveSha256,
       bytes: second.archiveBytes
     }, identities);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("output sealing rejects malformed normalization inputs and restores the exact pre-operation tree", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-output-transaction-"));
+  try {
+    const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
+    const cases = [
+      ["builds invalid UTF-8", "builds.json", Buffer.from([0x7b, 0x22, 0x80, 0x22, 0x7d]), /CLOVER_BUILDS_JSON_INVALID_UTF8/u],
+      ["metadata invalid UTF-8", "diagnostics/cli_traces.json", Buffer.from([0x7b, 0x22, 0x80, 0x22, 0x7d]), /CLOVER_NORMALIZATION:diagnostics\/cli_traces\.json_INVALID_UTF8/u],
+      ["launcher invalid UTF-8", "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs", Buffer.from([0x63, 0x6f, 0x80]), /CLOVER_NORMALIZATION:functions\//u]
+    ];
+    for (const [name, relativePath, bytes, expected] of cases) {
+      await t.test(name, () => {
+        const output = path.join(root, name.replaceAll(" ", "-"));
+        const evidence = `${output}-evidence`;
+        const frozen = `${output}-frozen`;
+        writeRawBuildOutput(output, checkoutRoot);
+        writeFileSync(path.join(output, ...relativePath.split("/")), bytes);
+        const before = rawTreeIdentity(output);
+        assert.throws(() => createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, frozenOutputRoot: frozen, sourceProvenance: build }), expected);
+        assert.deepEqual(rawTreeIdentity(output), before);
+        assert.equal(existsSync(evidence), false);
+        assert.equal(existsSync(frozen), false);
+        assert.equal(existsSync(path.join(output, ATTESTATION_OUTPUT_PATH)), false);
+      });
+    }
+
+    await t.test("duplicate generated JSON key", () => {
+      const output = path.join(root, "duplicate-json");
+      const evidence = `${output}-evidence`;
+      writeRawBuildOutput(output, checkoutRoot);
+      const buildsPath = path.join(output, "builds.json");
+      const duplicate = readFileSync(buildsPath, "utf8").replace('{"target":"preview"', '{"target":"preview","target":"preview"');
+      writeFileSync(buildsPath, duplicate);
+      const before = rawTreeIdentity(output);
+      assert.throws(() => createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_BUILDS_JSON_REJECTED/u);
+      assert.deepEqual(rawTreeIdentity(output), before);
+      assert.equal(existsSync(evidence), false);
+    });
+
+    await t.test("late public-output failure restores normalization and cleans transaction outputs", () => {
+      const output = path.join(root, "late-failure");
+      const evidence = `${output}-evidence`;
+      const frozen = `${output}-frozen`;
+      writeRawBuildOutput(output, checkoutRoot);
+      writeFileSync(path.join(output, "static/leak.txt"), "/github/workspace/private-checkout\n");
+      const before = rawTreeIdentity(output);
+      assert.throws(() => createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, frozenOutputRoot: frozen, sourceProvenance: build }), /CLOVER_PUBLIC_OUTPUT_REJECTED/u);
+      assert.deepEqual(rawTreeIdentity(output), before);
+      assert.equal(existsSync(evidence), false);
+      assert.equal(existsSync(frozen), false);
+      assert.equal(existsSync(path.join(output, "static/__clover")), false);
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("provider receipt binds the exact immutable deployment, bytes and protection lifecycle", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-provider-receipt-"));
+  try {
+    const output = path.join(root, "output");
+    const evidence = path.join(root, "evidence");
+    const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
+    writeRawBuildOutput(output, checkoutRoot);
+    const sealed = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build });
+    const verifiedEvidence = {
+      sourceProvenance: build,
+      payloadManifest: sealed.outputManifest,
+      attestation: sealed.attestation,
+      deploymentInputManifest: sealed.deploymentInputManifest,
+      archiveManifest: sealed.archiveManifest
+    };
+    const provider = providerDeploymentFixture(output, verifiedEvidence);
+    const receipt = createProviderDeploymentReceipt({ providerDeployment: provider, verifiedEvidence, now: providerReceiptNow });
+    assert.equal(receipt.deploymentId, provider.deployment.response.id);
+    assert.equal(receipt.deploymentInputRootSha256, sealed.deploymentInputManifest.deploymentInputRootSha256);
+    assert.equal(receipt.archiveSha256, sealed.archiveManifest.archiveSha256);
+    assert.equal(receipt.providerContentReadCount, sealed.deploymentInputManifest.finalRegularFileCount + sealed.deploymentInputManifest.finalSymlinkCount);
+    assert.equal(receipt.automationBypassLifecycle, "0->1->0");
+    assert.equal(receipt.finalAutomationBypassCount, 0);
+    assert.equal(receipt.regenerationDisabled, true);
+    assert.equal(receipt.postRevocationAuthenticatedRequestCount, 0);
+    assert.equal(receipt.ssoProtectionPreserved, true);
+    assert.equal(receipt.publicSanitized, true);
+    assert.equal(receipt.generatedAt, providerReceiptNow.toISOString());
+    assert.equal(receipt.providerObservationEarliestAt, "2026-08-29T20:00:00.000Z");
+    assert.equal(receipt.providerObservationLatestAt, "2026-08-29T20:00:02.000Z");
+    assert.equal(receipt.providerObservationSpanMilliseconds, 2_000);
+    assert.equal(receipt.providerObservationCount, 5 + receipt.providerContentReadCount);
+    assert.equal(receipt.privateDataAccessed, false);
+    assert.equal(receipt.secretsIncluded, false);
+    assert.equal(receipt.consequentialAuthorityGranted, false);
+    assert.match(receipt.receiptSelfHash, /^[0-9a-f]{64}$/u);
+    const explicitUtf8 = structuredClone(provider);
+    explicitUtf8.deployment.request.responseCharset = "utf-8";
+    assert.equal(createProviderDeploymentReceipt({ providerDeployment: explicitUtf8, verifiedEvidence, now: providerReceiptNow }).deploymentId, receipt.deploymentId);
+
+    const reject = (mutate, expected) => {
+      const candidate = structuredClone(provider);
+      mutate(candidate);
+      assert.throws(() => createProviderDeploymentReceipt({ providerDeployment: candidate, verifiedEvidence, now: providerReceiptNow }), expected);
+    };
+    const providerOutput = (candidate) => candidate.fileTree.response[0].children.find(({ name }) => name === ".vercel").children.find(({ name }) => name === "output");
+    const findProviderNode = (candidate, outputPath) => outputPath.split("/").reduce((directory, segment) => directory.children.find(({ name }) => name === segment), providerOutput(candidate));
+    const rebindFileTree = (candidate) => {
+      candidate.fileTree.request = providerRequest("GET", candidate.fileTree.request.url, candidate.fileTree.response);
+    };
+    const rebindContent = (candidate, content) => {
+      content.request = providerRequest("GET", providerUrl("v8", `deployments/${candidate.deployment.response.id}/files/${content.uid}`, [["path", content.path], ["teamId", VERCEL_TEAM_ID]]), content.response);
+    };
+    const rebindBaseline = (candidate) => {
+      candidate.protection.baseline.request = providerRequest("GET", candidate.protection.baseline.request.url, candidate.protection.baseline.response);
+    };
+    reject((candidate) => { candidate.deployment.request.url += "&substituted=1"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.redirected = true; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.responseMediaTypeEssence = "text/plain"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.responseCharset = "iso-8859-1"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.responseOtherMediaTypeParameters = ["profile=private"]; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.responseProjectionBytes += 1; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.responseProjectionSha256 = hex64("f"); }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T19:29:59.000Z"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T20:00:08.001Z"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T20:00:02.500Z"; }, /CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.contents[0].request.observedAt = "2026-08-29T20:00:02.500Z"; }, /CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED/u);
+    reject((candidate) => {
+      candidate.protection.baseline.observedAt = "2026-08-29T19:30:03.000Z";
+      candidate.protection.baseline.request.observedAt = candidate.protection.baseline.observedAt;
+      candidate.contents[0].request.observedAt = "2026-08-29T20:00:07.000Z";
+    }, /CLOVER_PROVIDER_OBSERVATION_WINDOW_REJECTED/u);
+    reject((candidate) => { candidate.protection.create.request.observedAt = "2026-08-29T20:00:00.999Z"; }, /CLOVER_PROVIDER_PROTECTION_CREATE_TIME_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.project.id = "prj_substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.team.slug = "substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.target = "production"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.alias.push("production.example"); }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.meta.gitRemoteUrl = "/Users/private/repository"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.meta.gitCommitSha = hex40("f"); }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.meta.gitCommitRef = "HEAD"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.id = "dpl_Substituted"; }, /CLOVER_PROVIDER_PROTECTION_REJECTED|CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.url = "attacker.example"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.name = "substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.project.name = "substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.project.framework = "other"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.team.name = "Private account"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deploymentInvocation.argv.splice(6, 1); }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u);
+    reject((candidate) => { candidate.fileTree.request.url += "&substituted=1"; }, /CLOVER_PROVIDER_FILE_TREE_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.fileTree.response[0].children.pop(); candidate.fileTree.request = providerRequest("GET", candidate.fileTree.request.url, candidate.fileTree.response); }, /CLOVER_PROVIDER_FILE_TREE_REJECTED/u);
+    reject((candidate) => { candidate.contents.pop(); }, /CLOVER_PROVIDER_UID_REJECTED|CLOVER_PROVIDER_CONTENT_INVENTORY_REJECTED/u);
+    reject((candidate) => { candidate.contents[0].request.url += "&substituted=1"; }, /CLOVER_PROVIDER_CONTENT_REQUEST_REJECTED/u);
+    reject((candidate) => {
+      candidate.contents[0].response.data = Buffer.from("substituted", "utf8").toString("base64");
+      candidate.contents[0].request = providerRequest("GET", candidate.contents[0].request.url, candidate.contents[0].response);
+    }, /CLOVER_PROVIDER_UID_REJECTED/u);
+    reject((candidate) => {
+      const original = candidate.contents[0];
+      const segments = original.path.slice("src/.vercel/output/".length).split("/");
+      const originalNode = findProviderNode(candidate, segments.join("/"));
+      originalNode.mode = (originalNode.mode & 0o170000) | (originalNode.mode & 0o7777) ^ 0o20;
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH/u);
+    reject((candidate) => {
+      const original = candidate.contents[0];
+      findProviderNode(candidate, original.path.slice("src/.vercel/output/".length)).mode += 0x10_0000;
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_FILE_MODE_REJECTED/u);
+    reject((candidate) => {
+      const original = candidate.contents[0];
+      findProviderNode(candidate, original.path.slice("src/.vercel/output/".length)).mode = -1;
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_FILE_MODE_REJECTED/u);
+    reject((candidate) => {
+      const providerOut = candidate.fileTree.response[0].children.find(({ name }) => name === "out");
+      providerOut.children[0].mode += 0x10_0000;
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_IGNORED_FILE_REJECTED/u);
+    reject((candidate) => {
+      const original = candidate.contents[0];
+      const node = findProviderNode(candidate, original.path.slice("src/.vercel/output/".length));
+      node.uid = hex40("f");
+      original.uid = node.uid;
+      rebindContent(candidate, original);
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_UID_REJECTED/u);
+    reject((candidate) => {
+      const outputNode = providerOutput(candidate);
+      const bytes = Buffer.from("extra\n", "utf8");
+      const uid = sha1(bytes);
+      outputNode.children.push({ name: "extra.txt", type: "file", mode: 0o100644, uid });
+      const response = { data: bytes.toString("base64") };
+      const content = { path: "src/.vercel/output/extra.txt", uid, request: null, response };
+      rebindContent(candidate, content);
+      candidate.contents.push(content);
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH/u);
+    reject((candidate) => {
+      const outputNode = providerOutput(candidate);
+      const removed = outputNode.children.find(({ type }) => type !== "directory");
+      outputNode.children = outputNode.children.filter((entry) => entry !== removed);
+      candidate.contents = candidate.contents.filter(({ path: providerPath }) => !providerPath.endsWith(`/${removed.name}`));
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH/u);
+    reject((candidate) => {
+      const outputNode = providerOutput(candidate);
+      outputNode.children.push(structuredClone(outputNode.children[0]));
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED/u);
+    reject((candidate) => {
+      const extra = structuredClone(candidate.contents[0]);
+      extra.path = "src/.vercel/output/unlisted.txt";
+      rebindContent(candidate, extra);
+      candidate.contents.push(extra);
+    }, /CLOVER_PROVIDER_CONTENT_INVENTORY_REJECTED/u);
+    const symlinkContentIndex = provider.contents.findIndex(({ path: providerPath }) => providerPath.endsWith("/static/current.js"));
+    assert.notEqual(symlinkContentIndex, -1);
+    reject((candidate) => {
+      const content = candidate.contents[symlinkContentIndex];
+      const bytes = Buffer.from("assets/substituted.js", "utf8");
+      const oldUid = content.uid;
+      content.uid = sha1(bytes);
+      content.response.data = bytes.toString("base64");
+      const node = findProviderNode(candidate, content.path.slice("src/.vercel/output/".length));
+      assert.equal(node.uid, oldUid);
+      node.uid = content.uid;
+      rebindContent(candidate, content);
+      rebindFileTree(candidate);
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH/u);
+    reject((candidate) => { candidate.protection.bypassCountSequence = [0, 1, 1]; }, /CLOVER_PROVIDER_PROTECTION_REJECTED/u);
+    reject((candidate) => { candidate.protection.revoke.requestSemantics.regenerate = true; }, /CLOVER_PROVIDER_PROTECTION_REVOKE_REQUEST_SEMANTICS_REJECTED/u);
+    reject((candidate) => { candidate.protection.revoke.response.protectionBypass.persisted = { scope: "automation-bypass" }; }, /CLOVER_PROVIDER_PROTECTION_REVOKE_RESPONSE_BYPASS_REJECTED/u);
+    reject((candidate) => { candidate.protection.postRevocationAuthenticatedRequestCount = 1; }, /CLOVER_PROVIDER_PROTECTION_REJECTED/u);
+    reject((candidate) => { candidate.protection.create.createdEntry.createdBy = "acct_private"; }, /CLOVER_PROVIDER_PROTECTION_CREATE_CREATED_ENTRY_REJECTED/u);
+    for (const [field, value] of [
+      ["bypassCount", 1], ["passwordProtectionEnabled", true], ["gitForkProtection", false], ["skewProtectionMaxAge", 1]
+    ]) reject((candidate) => { candidate.protection.baseline.response[field] = value; rebindBaseline(candidate); }, /CLOVER_PROVIDER_PROTECTION_BASELINE_REJECTED/u);
+    reject((candidate) => { candidate.protection.baseline.response.ssoProtection.deploymentType = "none"; rebindBaseline(candidate); }, /CLOVER_PROVIDER_PROTECTION_BASELINE_REJECTED/u);
+    reject((candidate) => { candidate.protection.create.responseEntryCount = 2; }, /CLOVER_PROVIDER_PROTECTION_CREATE_CREATED_ENTRY_REJECTED/u);
+    reject((candidate) => { candidate.protection.create.createdEntry.scope = "integration"; }, /CLOVER_PROVIDER_PROTECTION_CREATE_CREATED_ENTRY_REJECTED/u);
+    for (const field of [
+      "shareUrlCreated", "vercelCurlUsed", "bypassValueDisclosed", "bypassValuePersisted", "bypassValueUploaded",
+      "bypassValueAttached", "bypassValueScreenshotted", "ownerLoginRequested"
+    ]) reject((candidate) => { candidate.protection[field] = true; }, /CLOVER_PROVIDER_PROTECTION_REJECTED/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function withRewrittenTarHeader(archive, headerOffset, mutate) {
+  const candidate = Buffer.from(archive);
+  const header = candidate.subarray(headerOffset, headerOffset + 512);
+  mutate(header);
+  header.fill(0x20, 148, 156);
+  const checksum = header.reduce((sum, byte) => sum + byte, 0);
+  header.write(checksum.toString(8).padStart(6, "0"), 148, 6, "ascii");
+  header[154] = 0;
+  header[155] = 0x20;
+  return candidate;
+}
+
+function tarRecordOffsets(archive) {
+  const offsets = [];
+  let offset = 0;
+  while (offset + 512 <= archive.length && !archive.subarray(offset, offset + 512).every((byte) => byte === 0)) {
+    offsets.push(offset);
+    const sizeText = archive.subarray(offset + 124, offset + 136).toString("ascii").replace(/[\0 ]+$/u, "");
+    const size = Number.parseInt(sizeText, 8);
+    offset += 512 + size + (512 - size % 512) % 512;
+  }
+  return offsets;
+}
+
+test("frozen archive and external evidence verification reject substitutions without partial restore", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-archive-adversarial-"));
+  try {
+    const output = path.join(root, "output");
+    const evidence = path.join(root, "evidence");
+    const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
+    const canonicalRoot = checkoutRoot;
+    writeRawBuildOutput(output, checkoutRoot);
+    const sealed = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build });
+    const archive = deterministicOutputArchive(output);
+    assert.deepEqual(archive, readFileSync(path.join(evidence, FINAL_ARCHIVE_FILE)));
+    assert.equal(verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }).archiveManifest.archiveSha256, sealed.archiveSha256);
+
+    const rejectsWithoutDestination = (name, candidate, expected) => t.test(name, () => {
+      const destination = path.join(canonicalRoot, `restore-${name.replaceAll(" ", "-")}`);
+      assert.throws(() => restoreDeterministicOutputArchive(candidate, destination), expected);
+      assert.equal(existsSync(destination), false);
+    });
+    await rejectsWithoutDestination("checksum", (() => { const candidate = Buffer.from(archive); candidate[0] ^= 1; return candidate; })(), /CLOVER_ARCHIVE_CHECKSUM_REJECTED/u);
+    await rejectsWithoutDestination("trailing block", Buffer.concat([archive, Buffer.alloc(512)]), /CLOVER_ARCHIVE_TERMINATOR_REJECTED/u);
+    await rejectsWithoutDestination("invalid UTF-8 path", withRewrittenTarHeader(archive, 0, (header) => { header[7] = 0x80; }), /CLOVER_ARCHIVE_PATH_REJECTED/u);
+    await rejectsWithoutDestination("unsafe mode", withRewrittenTarHeader(archive, 0, (header) => {
+      header.fill(0, 100, 108);
+      header.write("000000", 100, 6, "ascii");
+      header[106] = 0;
+      header[107] = 0x20;
+    }), /CLOVER_ARCHIVE_MODE_REJECTED/u);
+    const recordOffsets = tarRecordOffsets(archive);
+    assert.equal(recordOffsets.length >= 3, true);
+    const reordered = Buffer.concat([
+      archive.subarray(recordOffsets[1], recordOffsets[2]),
+      archive.subarray(recordOffsets[0], recordOffsets[1]),
+      archive.subarray(recordOffsets[2])
+    ]);
+    await rejectsWithoutDestination("noncanonical order", reordered, /CLOVER_ARCHIVE_ORDER_REJECTED/u);
+    await rejectsWithoutDestination("noncanonical header field", withRewrittenTarHeader(archive, 0, (header) => {
+      header.fill(0, 108, 116);
+      header.write("0000001", 108, 7, "ascii");
+    }), /CLOVER_ARCHIVE_HEADER_REJECTED/u);
+    const symlinkOffset = tarRecordOffsets(archive).find((offset) => archive[offset + 156] === "2".charCodeAt(0));
+    assert.notEqual(symlinkOffset, undefined);
+    await rejectsWithoutDestination("empty symlink", withRewrittenTarHeader(archive, symlinkOffset, (header) => { header.fill(0, 157, 257); }), /CLOVER_ARCHIVE_LINK_REJECTED/u);
+    await rejectsWithoutDestination("traversing symlink", withRewrittenTarHeader(archive, symlinkOffset, (header) => {
+      header.fill(0, 157, 257);
+      header.write("../../outside", 157, "utf8");
+    }), /CLOVER_ARCHIVE_LINK_REJECTED/u);
+
+    await t.test("symlinked restore parent", () => {
+      const outside = path.join(canonicalRoot, "outside");
+      const sentinel = path.join(outside, "sentinel.txt");
+      mkdirSync(outside);
+      writeFileSync(sentinel, "preserve\n");
+      const link = path.join(canonicalRoot, "restore-link");
+      symlinkSync(outside, link);
+      assert.throws(() => restoreDeterministicOutputArchive(archive, path.join(link, "restored")), /CLOVER_ARCHIVE_RESTORE_DESTINATION_REJECTED/u);
+      assert.equal(readFileSync(sentinel, "utf8"), "preserve\n");
+      assert.equal(existsSync(path.join(outside, "restored")), false);
+    });
+
+    await t.test("post-seal output mutation", () => {
+      const mutationPath = path.join(output, "static/assets/post-seal.js");
+      writeFileSync(mutationPath, "substituted\n");
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_PAYLOAD_MANIFEST_MUTATION_REJECTED/u);
+      unlinkSync(mutationPath);
+    });
+    await t.test("post-seal omitted file", () => {
+      const omittedPath = path.join(output, "static/assets/app.js");
+      const original = readFileSync(omittedPath);
+      const originalMode = lstatSync(omittedPath).mode & 0o7777;
+      unlinkSync(omittedPath);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_(?:OUTPUT_SYMLINK|PAYLOAD_MANIFEST_MUTATION)_REJECTED/u);
+      writeFileSync(omittedPath, original, { mode: originalMode });
+      chmodSync(omittedPath, originalMode);
+    });
+    await t.test("post-seal file mode mutation", () => {
+      const mutationPath = path.join(output, "static/assets/app.js");
+      const originalMode = lstatSync(mutationPath).mode & 0o7777;
+      chmodSync(mutationPath, 0o600);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_OUTPUT_FILE_MODE_REJECTED/u);
+      chmodSync(mutationPath, originalMode);
+    });
+    await t.test("post-seal symlink target mutation", () => {
+      const mutationPath = path.join(output, "static/current.js");
+      const originalTarget = readlinkSync(mutationPath);
+      unlinkSync(mutationPath);
+      symlinkSync("../builds.json", mutationPath);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_PAYLOAD_MANIFEST_MUTATION_REJECTED/u);
+      unlinkSync(mutationPath);
+      symlinkSync(originalTarget, mutationPath);
+    });
+    await t.test("attestation byte substitution", () => {
+      const attestationPath = path.join(output, ATTESTATION_OUTPUT_PATH);
+      const original = readFileSync(attestationPath);
+      writeFileSync(attestationPath, Buffer.concat([original.subarray(0, -2), Buffer.from([0x80, 0x0a])]));
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_ATTESTATION_FILE_REJECTED/u);
+      writeFileSync(attestationPath, original);
+    });
+    await t.test("resealed nested attestation extension", () => {
+      const attestationPath = path.join(output, ATTESTATION_OUTPUT_PATH);
+      const original = readFileSync(attestationPath);
+      const document = JSON.parse(original.toString("utf8"));
+      document.source.unboundClaim = "substituted";
+      const body = structuredClone(document);
+      delete body.attestationHash;
+      document.attestationHash = sha256(`${canonicalJson(body)}\n`);
+      writeFileSync(attestationPath, `${canonicalJson(document)}\n`);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_ATTESTATION_SOURCE_REJECTED/u);
+      writeFileSync(attestationPath, original);
+    });
+    await t.test("resealed normalization classification substitution", () => {
+      const attestationPath = path.join(output, ATTESTATION_OUTPUT_PATH);
+      const original = readFileSync(attestationPath);
+      const document = JSON.parse(original.toString("utf8"));
+      document.normalization[0].classification = "next-launcher-runtime-root";
+      const body = structuredClone(document);
+      delete body.attestationHash;
+      document.attestationHash = sha256(`${canonicalJson(body)}\n`);
+      writeFileSync(attestationPath, `${canonicalJson(document)}\n`);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_ATTESTATION_NORMALIZATION_REJECTED/u);
+      writeFileSync(attestationPath, original);
+    });
+    await t.test("canonical manifest substitution", () => {
+      const manifestPath = path.join(evidence, DEPLOYMENT_INPUT_MANIFEST_FILE);
+      const original = readFileSync(manifestPath);
+      const document = JSON.parse(original.toString("utf8"));
+      document.publicSanitized = false;
+      writeFileSync(manifestPath, `${canonicalJson(document)}\n`);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_DEPLOYMENT_INPUT_MUTATION_REJECTED/u);
+      writeFileSync(manifestPath, original);
+    });
+    await t.test("archive byte substitution", () => {
+      const archivePath = path.join(evidence, FINAL_ARCHIVE_FILE);
+      const original = readFileSync(archivePath);
+      const substituted = Buffer.from(original);
+      substituted[512] ^= 1;
+      writeFileSync(archivePath, substituted);
+      assert.throws(() => verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }), /CLOVER_ARCHIVE_SUBSTITUTION_REJECTED/u);
+      writeFileSync(archivePath, original);
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

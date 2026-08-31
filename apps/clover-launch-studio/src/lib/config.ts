@@ -41,6 +41,7 @@ export type RuntimeConfig = {
   providerAudience: string | null;
   syntheticOwnerSubject: string | null;
   syntheticBearerToken: string | null;
+  syntheticArchiveKey: Buffer | null;
   csrfSecret: string;
 };
 
@@ -55,6 +56,19 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name]?.trim();
   if (!value) throw new ConfigurationError();
   return value;
+}
+
+function optionalSyntheticArchiveKey(env: NodeJS.ProcessEnv, authMode: AuthMode): Buffer | null {
+  const encoded = env.CLOVER_LAUNCH_STUDIO_SYNTHETIC_ARCHIVE_KEY_BASE64URL;
+  if (authMode !== "synthetic") {
+    if (encoded !== undefined) throw new ConfigurationError();
+    return null;
+  }
+  if (encoded === undefined) return null;
+  if (!/^[A-Za-z0-9_-]{43}$/u.test(encoded)) throw new ConfigurationError();
+  const key = Buffer.from(encoded, "base64url");
+  if (key.byteLength !== 32 || key.toString("base64url") !== encoded) throw new ConfigurationError();
+  return key;
 }
 
 export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
@@ -73,6 +87,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     providerAudience: authMode === "provider" ? required(env, "CLOVER_LAUNCH_STUDIO_AUTH_AUDIENCE") : null,
     syntheticOwnerSubject: authMode === "synthetic" ? required(env, "CLOVER_LAUNCH_STUDIO_SYNTHETIC_SUBJECT") : null,
     syntheticBearerToken: authMode === "synthetic" ? required(env, "CLOVER_LAUNCH_STUDIO_SYNTHETIC_TOKEN") : null,
+    syntheticArchiveKey: optionalSyntheticArchiveKey(env, authMode),
     csrfSecret: required(env, "CLOVER_LAUNCH_STUDIO_CSRF_SECRET")
   };
 }
@@ -82,7 +97,8 @@ export function publicReadiness(dimensions: {
   treeProgramBaselineLoaded: true;
   treePreviewRuntimeObserved: boolean;
   liveGithubOverlayStatus: "current" | "stale" | "unavailable" | "unknown";
-  deploymentAttestationStatus: "verified" | "unavailable" | "invalid" | "inconsistent";
+  buildPayloadAttestationStatus: "verified" | "unavailable" | "invalid" | "inconsistent";
+  finalDeploymentInputVerificationStatus: "external-provider-receipt-required";
   ownerConsoleGroundingRequired: true;
   privateOwnerAuthenticationConfigured: false;
   durablePrivateStorageConfigured: false;

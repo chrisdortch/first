@@ -129,7 +129,7 @@ function exactKeys(value: unknown, keys: readonly string[]): value is Record<str
     Object.keys(value as Record<string, unknown>).sort().join("\0") === [...keys].sort().join("\0");
 }
 
-function parseJsonWithoutDuplicateKeys(source: string): unknown {
+export function parseJsonWithoutDuplicateKeys(source: string): unknown {
   let offset = 0;
   const whitespace = () => { while (/[\u0009\u000a\u000d\u0020]/u.test(source[offset] ?? "")) offset += 1; };
   const parseString = (): string => {

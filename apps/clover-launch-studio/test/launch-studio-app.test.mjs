@@ -16,6 +16,7 @@ const source = {
   config: read("src/lib/config.ts"),
   crypto: read("src/lib/crypto.ts"),
   handoff: read("src/lib/handoff-codex-adapter.ts"),
+  healthRoute: read("src/app/api/health/route.ts"),
   routes: [
     "src/app/api/sessions/route.ts",
     "src/app/api/sessions/[sessionId]/route.ts",
@@ -28,6 +29,7 @@ const source = {
   service: read("src/lib/launch-session-service.ts"),
   storage: read("src/lib/storage.ts"),
   transcript: read("src/components/transcript-editor.tsx"),
+  treeRoute: read("src/app/api/tree/route.ts"),
   package: read("package.json")
 };
 
@@ -326,6 +328,12 @@ test("accept_export_restore", () => {
   assert.match(source.storage, /parsed\.session\.sessionId !== expectedSessionId/);
 });
 
+test("deployment-input scripts bind the app-local Vercel output and external frozen evidence locations", () => {
+  const packageDocument = JSON.parse(source.package);
+  assert.match(packageDocument.scripts["attest:output"], /--output \.vercel\/output --evidence \.\.\/\.\.\/\.vercel\/clover-attestation-evidence --frozen-output \.\.\/\.\.\/\.vercel\/clover-frozen-deployment$/u);
+  assert.match(packageDocument.scripts["attest:verify-output"], /--output \.\.\/\.\.\/\.vercel\/clover-frozen-deployment\/\.vercel\/output --evidence \.\.\/\.\.\/\.vercel\/clover-attestation-evidence$/u);
+});
+
 test("transcript request ceiling accepts every valid 48 KiB transcript without widening generic requests", async () => {
   const runtime = await loadCompiledRuntime();
   try {
@@ -417,11 +425,59 @@ test("transcript request ceiling accepts every valid 48 KiB transcript without w
     await assert.rejects(parse({ operation: "create", reviewedText: "allowed", extra: true }, createKeys), RequestRejectedError);
     const malformed = Buffer.from('{"operation":"create","reviewedText":', "utf8");
     await assert.rejects(exactJson(requestFor(malformed), createKeys), RequestRejectedError);
+    const duplicateOperation = Buffer.from('{"operation":"create","operation":"restore","reviewedText":"exact"}', "utf8");
+    await assert.rejects(exactJson(requestFor(duplicateOperation), createKeys), RequestRejectedError);
+    const invalidUtf8 = Buffer.concat([Buffer.from('{"operation":"create","reviewedText":"', "utf8"), Buffer.from([0x80]), Buffer.from('"}', "utf8")]);
+    await assert.rejects(exactJson(requestFor(invalidUtf8), createKeys), RequestRejectedError);
     const genericOversize = Buffer.from(JSON.stringify({ payload: "x".repeat(MAX_REQUEST_BYTES) }), "utf8");
     assert.equal(genericOversize.byteLength > MAX_REQUEST_BYTES, true);
     assert.equal(genericOversize.byteLength < MAX_TRANSCRIPT_REQUEST_BYTES, true);
     await assert.rejects(exactJson(requestFor(genericOversize), ["payload"]), RequestRejectedError);
     await assert.rejects(exactJson(requestFor(Buffer.from("{}", "utf8"), MAX_TRANSCRIPT_REQUEST_BYTES + 1), createKeys), RequestRejectedError);
+
+    const chunkedRequest = (chunks, onCancel, signal, headers) => new Request("http://127.0.0.1/api/sessions", {
+      method: "POST",
+      headers,
+      body: new ReadableStream({
+        pull(controller) {
+          const chunk = chunks.shift();
+          if (chunk) controller.enqueue(chunk);
+          else controller.close();
+        },
+        cancel() {
+          onCancel();
+          return new Promise(() => {});
+        }
+      }),
+      signal,
+      duplex: "half"
+    });
+    let genericCancelled = 0;
+    await assert.rejects(exactJson(chunkedRequest([
+      Buffer.alloc(Math.ceil(MAX_REQUEST_BYTES / 2), 0x20),
+      Buffer.alloc(Math.ceil(MAX_REQUEST_BYTES / 2) + 2, 0x20)
+    ], () => { genericCancelled += 1; }), ["payload"]), RequestRejectedError);
+    assert.equal(genericCancelled, 1);
+    let transcriptCancelled = 0;
+    await assert.rejects(exactJson(chunkedRequest([
+      Buffer.alloc(Math.ceil(MAX_TRANSCRIPT_REQUEST_BYTES / 2), 0x20),
+      Buffer.alloc(Math.ceil(MAX_TRANSCRIPT_REQUEST_BYTES / 2) + 2, 0x20)
+    ], () => { transcriptCancelled += 1; }), createKeys), RequestRejectedError);
+    assert.equal(transcriptCancelled, 1);
+    const abortController = new AbortController();
+    abortController.abort();
+    let abortedCancelled = 0;
+    await assert.rejects(exactJson(chunkedRequest([Buffer.from("{}")], () => { abortedCancelled += 1; }, abortController.signal), createKeys), RequestRejectedError);
+    assert.equal(abortedCancelled, 1);
+    let declaredCancelled = 0;
+    const invalidDeclared = chunkedRequest([Buffer.from("{}")], () => { declaredCancelled += 1; }, undefined, { "content-length": "not-a-number" });
+    await assert.rejects(exactJson(invalidDeclared, createKeys), RequestRejectedError);
+    assert.equal(declaredCancelled, 1);
+
+    assert.deepEqual(
+      { ...await parse({ operation: "create", reviewedText: "subsequent exact body" }, createKeys) },
+      { operation: "create", reviewedText: "subsequent exact body" }
+    );
   } finally {
     rmSync(runtime.directory, { recursive: true, force: true });
   }
@@ -1642,6 +1698,165 @@ test("complete v2 archives authenticate session metadata and every session artif
   }
 });
 
+test("stable configured synthetic key survives a clean runtime restart and fails closed for a different or invalid key", async () => {
+  const runtimes = [];
+  const environmentKeys = [
+    "NODE_ENV",
+    "CLOVER_LAUNCH_STUDIO_AUTH_MODE",
+    "CLOVER_LAUNCH_STUDIO_ORIGIN",
+    "CLOVER_LAUNCH_STUDIO_SYNTHETIC_SUBJECT",
+    "CLOVER_LAUNCH_STUDIO_SYNTHETIC_TOKEN",
+    "CLOVER_LAUNCH_STUDIO_SYNTHETIC_ARCHIVE_KEY_BASE64URL",
+    "CLOVER_LAUNCH_STUDIO_CSRF_SECRET"
+  ];
+  const originalEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
+  const keyK = Buffer.alloc(32, 41);
+  const encodedKeyK = keyK.toString("base64url");
+  const origin = "https://synthetic-owner.example";
+  const subject = "synthetic-restart-owner";
+  const token = "synthetic-restart-token";
+  const csrfSecret = "synthetic-restart-csrf";
+  const configure = (archiveKey) => {
+    Object.assign(process.env, {
+      NODE_ENV: "test",
+      CLOVER_LAUNCH_STUDIO_AUTH_MODE: "synthetic",
+      CLOVER_LAUNCH_STUDIO_ORIGIN: origin,
+      CLOVER_LAUNCH_STUDIO_SYNTHETIC_SUBJECT: subject,
+      CLOVER_LAUNCH_STUDIO_SYNTHETIC_TOKEN: token,
+      CLOVER_LAUNCH_STUDIO_CSRF_SECRET: csrfSecret
+    });
+    if (archiveKey === undefined) delete process.env.CLOVER_LAUNCH_STUDIO_SYNTHETIC_ARCHIVE_KEY_BASE64URL;
+    else process.env.CLOVER_LAUNCH_STUDIO_SYNTHETIC_ARCHIVE_KEY_BASE64URL = archiveKey;
+  };
+  const request = () => new Request(`${origin}/api/sessions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Origin: origin,
+      "X-Clover-Csrf": createHmac("sha256", csrfSecret).update(subject, "utf8").digest("hex")
+    }
+  });
+  const discardRuntimeState = () => { delete globalThis.__cloverLaunchStudioPorts; };
+  try {
+    assert.equal(encodedKeyK.length, 43);
+    configure(encodedKeyK);
+    discardRuntimeState();
+    const runtimeA = await loadCompiledRuntime();
+    runtimes.push(runtimeA);
+    const serviceA = await runtimeA.service.serviceFor(request(), true);
+    const reviewedText = "stable synthetic restart archive";
+    const creationKey = "stable-restart-create-0001";
+    const session = await serviceA.create(reviewedText, creationKey);
+    const eventInput = {
+      type: "understanding-reviewed",
+      expectedVersion: session.version,
+      predecessorEventId: session.lastEventId,
+      predecessorHash: session.lastEventHash,
+      idempotencyKey: "stable-restart-event-0001",
+      payload: { exact: true, privateDataAccessed: false }
+    };
+    const event = await serviceA.append(session.sessionId, eventInput);
+    const afterEvent = await serviceA.get(session.sessionId);
+    const progress = await serviceA.repository.appendProgress(serviceA.identity, session.sessionId, {
+      sessionId: session.sessionId,
+      expectedSessionVersion: afterEvent.version,
+      expectedLastEventId: afterEvent.lastEventId,
+      expectedLastEventHash: afterEvent.lastEventHash,
+      label: "Stable restart proof",
+      state: "complete",
+      evidenceRef: "synthetic-stable-restart-evidence"
+    });
+    const artifactBytes = Buffer.from("stable restart artifact bytes", "utf8");
+    const artifact = await serviceA.repository.putArtifact(serviceA.identity, session.sessionId, artifactBytes, "text/plain");
+    const eventsA = await serviceA.repository.readEvents(serviceA.identity, session.sessionId);
+    const archiveA = await serviceA.export(session.sessionId);
+    const documentA = JSON.parse(archiveA.toString("utf8"));
+    assert.equal(documentA.archiveSeal.keyRef, "synthetic-local-key");
+    assert.equal(documentA.archiveSeal.keyVersion, 1);
+    assert.equal(archiveA.includes(keyK), false);
+    assert.equal(archiveA.includes(encodedKeyK), false);
+
+    discardRuntimeState();
+    configure(encodedKeyK);
+    const runtimeB = await loadCompiledRuntime();
+    runtimes.push(runtimeB);
+    const serviceB = await runtimeB.service.serviceFor(request(), true);
+    const restored = await serviceB.restore(session.sessionId, archiveA);
+    assert.equal(restored.sessionId, session.sessionId);
+    assert.deepEqual(await serviceB.get(session.sessionId), afterEvent);
+    assert.deepEqual(await serviceB.repository.readEvents(serviceB.identity, session.sessionId), eventsA);
+    assert.deepEqual(await serviceB.repository.readArtifact(serviceB.identity, session.sessionId, artifact.artifactId), artifactBytes);
+    const archiveB = await serviceB.export(session.sessionId);
+    assert.deepEqual(archiveB, archiveA);
+    const restoredCreationRetry = Object.fromEntries(Object.entries(afterEvent).filter(([key]) => key !== "providerSubject"));
+    assert.deepEqual(await serviceB.create(reviewedText, creationKey), restoredCreationRetry);
+    assert.deepEqual(await serviceB.append(session.sessionId, eventInput), event);
+    assert.deepEqual(await serviceB.export(session.sessionId), archiveA);
+    assert.equal(documentA.progress.some((item) => item.progressId === progress.progressId), true);
+
+    discardRuntimeState();
+    configure(Buffer.alloc(32, 42).toString("base64url"));
+    const runtimeC = await loadCompiledRuntime();
+    runtimes.push(runtimeC);
+    const serviceC = await runtimeC.service.serviceFor(request(), true);
+    await assert.rejects(serviceC.restore(session.sessionId, archiveA));
+    await assert.rejects(serviceC.get(session.sessionId));
+
+    const invalidKeys = [
+      ["missing", undefined],
+      ["empty", ""],
+      ["padded", `${encodedKeyK}=`],
+      ["malformed", "!".repeat(43)],
+      ["whitespace", ` ${encodedKeyK}`],
+      ["31 bytes", Buffer.alloc(31, 1).toString("base64url")],
+      ["33 bytes", Buffer.alloc(33, 1).toString("base64url")]
+    ];
+    for (const [label, invalidKey] of invalidKeys) {
+      discardRuntimeState();
+      configure(invalidKey);
+      const invalidRuntime = await loadCompiledRuntime();
+      runtimes.push(invalidRuntime);
+      await assert.rejects(invalidRuntime.service.serviceFor(request(), true), undefined, label);
+      assert.equal(globalThis.__cloverLaunchStudioPorts, undefined, label);
+    }
+
+    assert.throws(() => runtimes[0].config.readRuntimeConfig({
+      NODE_ENV: "production",
+      CLOVER_LAUNCH_STUDIO_AUTH_MODE: "provider",
+      CLOVER_LAUNCH_STUDIO_ORIGIN: origin,
+      CLOVER_LAUNCH_STUDIO_AUTH_ISSUER: "https://issuer.example",
+      CLOVER_LAUNCH_STUDIO_AUTH_AUDIENCE: "owner",
+      CLOVER_LAUNCH_STUDIO_CSRF_SECRET: csrfSecret,
+      CLOVER_LAUNCH_STUDIO_SYNTHETIC_ARCHIVE_KEY_BASE64URL: "not-provider-key-material"
+    }));
+    const providerConfig = runtimes[0].config.readRuntimeConfig({
+      NODE_ENV: "production",
+      CLOVER_LAUNCH_STUDIO_AUTH_MODE: "provider",
+      CLOVER_LAUNCH_STUDIO_ORIGIN: origin,
+      CLOVER_LAUNCH_STUDIO_AUTH_ISSUER: "https://issuer.example",
+      CLOVER_LAUNCH_STUDIO_AUTH_AUDIENCE: "owner",
+      CLOVER_LAUNCH_STUDIO_CSRF_SECRET: csrfSecret
+    });
+    assert.equal(providerConfig.syntheticArchiveKey, null);
+    assert.throws(() => runtimes[0].config.readRuntimeConfig({
+      NODE_ENV: "production",
+      CLOVER_LAUNCH_STUDIO_AUTH_MODE: "synthetic",
+      CLOVER_LAUNCH_STUDIO_ORIGIN: origin,
+      CLOVER_LAUNCH_STUDIO_SYNTHETIC_SUBJECT: subject,
+      CLOVER_LAUNCH_STUDIO_SYNTHETIC_TOKEN: token,
+      CLOVER_LAUNCH_STUDIO_CSRF_SECRET: csrfSecret,
+      CLOVER_LAUNCH_STUDIO_SYNTHETIC_ARCHIVE_KEY_BASE64URL: encodedKeyK
+    }));
+  } finally {
+    discardRuntimeState();
+    for (const key of environmentKeys) {
+      if (originalEnvironment[key] === undefined) delete process.env[key];
+      else process.env[key] = originalEnvironment[key];
+    }
+    for (const runtime of runtimes) rmSync(runtime.directory, { recursive: true, force: true });
+  }
+});
+
 test("accept_memory_separation", () => {
   assert.match(source.config, /personalChatGptMemoryIngested: false/);
   assert.doesNotMatch(source.storage, /chatgpt.*memory/i);
@@ -1698,6 +1913,15 @@ test("accept_local_node_matrix", () => {
 
 test("accept_workflow_integrity", () => {
   assert.equal(readdirSync(root).includes(".github"), false);
+});
+
+test("tree and health routes propagate the exact caller AbortSignal into live observation", () => {
+  for (const [name, route] of [["tree", source.treeRoute], ["health", source.healthRoute]]) {
+    assert.match(route, /export async function GET\(request: Request\)/u, name);
+    assert.match(route, /observeGitHubTruth\(\{ candidateCommit: build\.commit, signal: request\.signal \}\)/u, name);
+    assert.equal(route.match(/request\.signal/gu)?.length, 1, name);
+    assert.doesNotMatch(route, /new AbortController|signal:\s*(?:undefined|null)/u, name);
+  }
 });
 
 test("accept_privacy_authority", () => {
