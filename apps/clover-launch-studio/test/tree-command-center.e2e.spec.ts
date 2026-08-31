@@ -1,9 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import { expect, test, type Locator, type Page, type Route, type TestInfo } from "@playwright/test";
@@ -21,22 +22,31 @@ export const MIN_MEANINGFUL_CONTRAST_RATIO = 6.31;
 const accessibilityEvidenceSchema = "clover-tree-accessibility-evidence-v1";
 const gateScanAttemptSidecarSchema = "clover-tree-gate-scan-attempt-closure-v2";
 const accessibilityEvidenceDirectory = path.join(process.cwd(), "test-results", "clover-tree-accessibility");
-const localSourceClosureReceiptSchema = "clover-tree-local-source-closure-receipt-v1";
+const localSourceClosureReceiptSchema = "clover-tree-local-source-closure-receipt-v2";
 const localSourceClosureReceiptDirectory = path.join(process.cwd(), "test-results", "clover-tree-local-source-closure");
 const exactLocalReceiptTestTitles = [
   "all views and material states close Axe findings with visible keyboard entry and exit",
   "source expiry schedules one refresh, holds while unresolved, recovers, and cleans the prior timer on reload"
 ] as const;
+const exactSourceEvidenceMatrixTestTitle = "source-evidence ancestry matrix is chain-depth neutral and context closed";
 const exactRepository = "chrisdortch/first";
-const exactMainCommit = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
-const exactMainTree = "d0ac615a9f038c62fa6c0b1296312920b0dceb4d";
-const exactCandidateBaseCommit = "c44d5bfbe56b4bb3b0b2ee27352f1f06bb74214a";
-const exactCandidateBaseTree = "9c7b613827dee3541e81387af6c445fb6f3e53a6";
-const exactCandidateBaseParent = "b790ca32899981fb3f8536c6278601e2a392cd59";
-const exactCandidateDeltaPathCount = 16;
-const exactCandidateDeltaPathListSha256 = "9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba";
-const exactIntegratedSourcePathCount = 72;
-const exactIntegratedSourcePathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
+const exactProtectedMainCommit = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
+const exactProtectedMainTree = "d0ac615a9f038c62fa6c0b1296312920b0dceb4d";
+const exactSourceClosureBaselineCommit = "c44d5bfbe56b4bb3b0b2ee27352f1f06bb74214a";
+const exactSourceClosureBaselineTree = "9c7b613827dee3541e81387af6c445fb6f3e53a6";
+const exactSourceClosureBaselineParent = "b790ca32899981fb3f8536c6278601e2a392cd59";
+const exactSourceClosureCommit = "07342cc825f4240ac87de79fcea661b9817c5c34";
+const exactSourceClosureTree = "3aa5bac7ea1696987cebb2c24ee03c1fa765c91d";
+const exactSourceClosureParent = exactSourceClosureBaselineCommit;
+const exactSourceClosureDeltaPathCount = 16;
+const exactSourceClosureDeltaPathListSha256 = "9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba";
+const exactIntegratedPrPathCount = 72;
+const exactIntegratedPrPathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
+const exactCiEvidenceCorrectionPathListSha256 = "3bf6eb010674c0a9b9bbcad44c636b5bf01e2c5762eb7319a1e5aa2bb5f6a07b";
+const exactCiEvidenceCorrectionPaths = [
+  ".github/workflows/validate-clover-tree-command-center.yml",
+  "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
+] as const;
 const exactAuthorizedBoundaryPathListSha256 = "bcc3f4c93d2e74400602f3b688e69714d1550b22ff8edf7de0049f2f0bf793a0";
 const exactAuthorizedBoundaryPaths = [
   ".github/workflows/validate-clover-tree-command-center.yml",
@@ -848,7 +858,7 @@ type ExactLocalPostArtifactGenerationProof = {
   canonicalSha256: string;
 };
 type ExactGateLocalReportingArtifactBindingBody = {
-  schemaVersion: "clover-tree-local-source-closure-receipt-v1";
+  schemaVersion: "clover-tree-local-source-closure-receipt-v2";
   receiptRelativePath: string;
   testState: ExactTestState;
   closure: {
@@ -1123,7 +1133,7 @@ async function captureBranchFocusScrollTuple(page: Page) {
 }
 
 function sourceHead() {
-  const head = process.env.CLOVER_TREE_HEAD ?? execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const head = process.env.CLOVER_TREE_HEAD ?? exactGitText(["rev-parse", "HEAD^{commit}"]);
   if (!/^[0-9a-f]{40}$/u.test(head)) throw new Error(`Invalid Clover Tree source head: ${head}`);
   return head;
 }
@@ -1132,139 +1142,547 @@ function sha256(bytes: string | Buffer) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-const exactRepositoryRoot = path.resolve(process.cwd(), "../..");
+function compareExactPaths(left: string, right: string) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
 
-function exactGitText(args: string[]) {
+function exactSortedPaths(paths: readonly string[]) {
+  return [...paths].sort(compareExactPaths);
+}
+
+function exactSafeGitPath(value: string) {
+  return value.length > 0 && value === value.normalize("NFC") && !path.isAbsolute(value)
+    && !value.includes("\\") && !/[\0\r\n]/u.test(value) && !value.split("/").includes("..");
+}
+
+function exactGitTextAt(repositoryRoot: string, args: string[]) {
   return execFileSync("git", args, {
-    cwd: exactRepositoryRoot,
+    cwd: repositoryRoot,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024
   }).trimEnd();
 }
 
-function exactGitBytes(args: string[]) {
+function exactGitBytesAt(repositoryRoot: string, args: string[]) {
   return execFileSync("git", args, {
-    cwd: exactRepositoryRoot,
+    cwd: repositoryRoot,
     encoding: null,
     maxBuffer: 64 * 1024 * 1024
   }) as Buffer;
+}
+
+const exactRepositoryRoot = (() => {
+  const githubActions = process.env.GITHUB_ACTIONS === "true";
+  const derived = githubActions ? process.env.GITHUB_WORKSPACE : path.resolve(process.cwd(), "../..");
+  if (!derived || derived !== derived.normalize("NFC") || !path.isAbsolute(derived) || path.resolve(derived) !== derived) {
+    throw new Error("Exact repository root input is missing, relative or noncanonical");
+  }
+  const inputStat = lstatSync(derived);
+  const repositoryRoot = realpathSync(derived);
+  if (!inputStat.isDirectory() || inputStat.isSymbolicLink() || repositoryRoot !== derived) {
+    throw new Error("Exact repository root is not one canonical real directory");
+  }
+  const discovered = exactGitTextAt(repositoryRoot, ["rev-parse", "--show-toplevel"]);
+  if (path.resolve(discovered) !== discovered || realpathSync(discovered) !== repositoryRoot || discovered !== repositoryRoot) {
+    throw new Error("Git repository root discovery disagrees with the exact repository root");
+  }
+  return repositoryRoot;
+})();
+
+function exactGitText(args: string[]) {
+  return exactGitTextAt(exactRepositoryRoot, args);
+}
+
+function exactGitBytes(args: string[]) {
+  return exactGitBytesAt(exactRepositoryRoot, args);
 }
 
 function exactPathListSha256(paths: readonly string[]) {
   return sha256(`${paths.join("\n")}\n`);
 }
 
-function exactGitFileEvidence(commit: string, file: string, mode: string, blob: string) {
+function exactGitFileEvidenceAt(repositoryRoot: string, commit: string, file: string, mode: string, blob: string) {
   if (!/^[0-9a-f]{40}$/u.test(commit) || !/^[0-9a-f]{40}$/u.test(blob)
-    || !/^100644$/u.test(mode) || file.startsWith("/") || file.includes("\0") || file.includes("\n")) {
+    || mode !== "100644" || !exactSafeGitPath(file)) {
     throw new Error(`Invalid exact Git file evidence for ${file}`);
   }
-  const bytes = exactGitBytes(["show", `${commit}:${file}`]);
+  const bytes = exactGitBytesAt(repositoryRoot, ["show", `${commit}:${file}`]);
   const computedBlob = createHash("sha1").update(`blob ${bytes.byteLength}\0`).update(bytes).digest("hex");
-  if (computedBlob !== blob || exactGitText(["rev-parse", `${commit}:${file}`]) !== blob) {
+  if (computedBlob !== blob || exactGitTextAt(repositoryRoot, ["rev-parse", "--verify", `${commit}:${file}`]) !== blob) {
     throw new Error(`Git blob mismatch for ${file}`);
   }
   return { mode, blob, byteCount: bytes.byteLength, sha256: sha256(bytes) };
 }
 
+function exactRawDiffEntriesAt(repositoryRoot: string, base: string, head: string, allowedStatuses: readonly string[]) {
+  const raw = exactGitBytesAt(repositoryRoot, [
+    "diff", "--raw", "--no-abbrev", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", base, head, "--"
+  ]);
+  if (raw.length === 0) return [];
+  if (raw.at(-1) !== 0) throw new Error("Exact raw Git diff is not NUL terminated");
+  const fields: Buffer[] = [];
+  let offset = 0;
+  for (let index = 0; index < raw.length; index += 1) {
+    if (raw[index] === 0) {
+      fields.push(raw.subarray(offset, index));
+      offset = index + 1;
+    }
+  }
+  if (offset !== raw.length || fields.length % 2 !== 0 || fields.some((field) => field.length === 0)) {
+    throw new Error("Exact raw Git diff has an ambiguous record shape");
+  }
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const entries = [];
+  for (let index = 0; index < fields.length; index += 2) {
+    const metadata = fields[index]!.toString("ascii");
+    const match = /^:(\d{6}) (\d{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([A-Z])$/u.exec(metadata);
+    const file = decoder.decode(fields[index + 1]);
+    if (!match || !exactSafeGitPath(file) || !allowedStatuses.includes(match[5]!)) {
+      throw new Error(`Unexpected exact Git delta record for ${file}`);
+    }
+    const [, baseMode, currentMode, baseBlob, currentBlob, status] = match;
+    if (currentMode !== "100644" || (status === "M" ? baseMode !== "100644" : baseMode !== "000000")) {
+      throw new Error(`Exact Git delta mode mismatch for ${file}`);
+    }
+    entries.push({
+      path: file,
+      status,
+      base: status === "M" ? exactGitFileEvidenceAt(repositoryRoot, base, file, baseMode!, baseBlob!) : null,
+      current: exactGitFileEvidenceAt(repositoryRoot, head, file, currentMode!, currentBlob!)
+    });
+  }
+  return entries.sort((left, right) => compareExactPaths(left.path, right.path));
+}
+
+function exactDeltaEvidenceAt(
+  repositoryRoot: string,
+  base: string,
+  head: string,
+  expectedPaths: readonly string[],
+  label: string
+) {
+  const entries = exactRawDiffEntriesAt(repositoryRoot, base, head, ["M"]);
+  const paths = entries.map(({ path: file }) => file);
+  const expected = exactSortedPaths(expectedPaths);
+  if (canonicalJson(paths) !== canonicalJson(expected) || exactPathListSha256(paths) !== exactPathListSha256(expected)) {
+    throw new Error(`${label} exact path boundary mismatch`);
+  }
+  const body = { baseCommit: base, headCommit: head, pathCount: paths.length, pathListSha256: exactPathListSha256(paths), paths, entries };
+  const binaryPatch = exactGitBytesAt(repositoryRoot, [
+    "diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", base, head, "--"
+  ]);
+  return {
+    ...body,
+    manifestSha256: sha256(`${canonicalJson(body)}\n`),
+    binaryPatchFormat: exactBinaryPatchFormat,
+    binaryPatchByteCount: binaryPatch.byteLength,
+    binaryPatchSha256: sha256(binaryPatch)
+  };
+}
+
+function exactCommitParentsAt(repositoryRoot: string, commit: string) {
+  const fields = exactGitTextAt(repositoryRoot, ["rev-list", "--parents", "-n", "1", `${commit}^{commit}`]).split(" ");
+  if (fields[0] !== commit || fields.some((value) => !/^[0-9a-f]{40}$/u.test(value))) {
+    throw new Error("Exact commit parent record is malformed");
+  }
+  return fields.slice(1);
+}
+
+function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: string, head: string, options?: {
+  allowedDepths?: readonly number[];
+  expectedHead?: string;
+  claimedImmediateParent?: string;
+  authorizedPaths?: readonly string[];
+}) {
+  const authorizedPaths = exactSortedPaths(options?.authorizedPaths ?? exactCiEvidenceCorrectionPaths);
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", sourceClosureCommit, head], { cwd: repositoryRoot, stdio: "ignore" });
+  } catch {
+    throw new Error("Completed source-closure commit is not an ancestor of the current candidate");
+  }
+  if (options?.expectedHead !== undefined && options.expectedHead !== head) {
+    throw new Error("Exact PR head environment does not match the current candidate");
+  }
+  const firstParentText = exactGitTextAt(repositoryRoot, ["rev-list", "--first-parent", "--reverse", `${sourceClosureCommit}..${head}`]);
+  const correctionCommitIds = firstParentText === "" ? [] : firstParentText.split("\n");
+  const ancestryText = exactGitTextAt(repositoryRoot, ["rev-list", "--ancestry-path", "--reverse", `${sourceClosureCommit}..${head}`]);
+  const ancestryCommitIds = ancestryText === "" ? [] : ancestryText.split("\n");
+  if (canonicalJson(ancestryCommitIds) !== canonicalJson(correctionCommitIds)
+    || !(options?.allowedDepths ?? [1, 2]).includes(correctionCommitIds.length)) {
+    throw new Error("CI-evidence correction chain depth or first-parent topology mismatch");
+  }
+  let expectedParent = sourceClosureCommit;
+  for (const [index, commit] of correctionCommitIds.entries()) {
+    const parents = exactCommitParentsAt(repositoryRoot, commit);
+    if (parents.length !== 1 || parents[0] !== expectedParent) throw new Error("Correction chain is nonlinear or contains a merge commit");
+    const changed = exactRawDiffEntriesAt(repositoryRoot, expectedParent, commit, ["M"]);
+    const paths = changed.map(({ path: file }) => file);
+    if (paths.length === 0 || paths.some((file) => !authorizedPaths.includes(file))) {
+      throw new Error("Correction commit changed an unauthorized path");
+    }
+    if (index === 0 && canonicalJson(paths) !== canonicalJson(authorizedPaths)) {
+      throw new Error("Primary correction commit did not change the exact two-path boundary");
+    }
+    expectedParent = commit;
+  }
+  const immediateParents = exactCommitParentsAt(repositoryRoot, head);
+  if (immediateParents.length !== 1 || (options?.claimedImmediateParent !== undefined
+    && options.claimedImmediateParent !== immediateParents[0])) {
+    throw new Error("Current candidate immediate parent identity mismatch");
+  }
+  const cumulativeEntries = exactRawDiffEntriesAt(repositoryRoot, sourceClosureCommit, head, ["M"]);
+  const cumulativePaths = cumulativeEntries.map(({ path: file }) => file);
+  if (canonicalJson(cumulativePaths) !== canonicalJson(authorizedPaths)
+    || exactPathListSha256(cumulativePaths) !== exactPathListSha256(authorizedPaths)) {
+    throw new Error("Cumulative CI-evidence correction boundary mismatch");
+  }
+  return {
+    baseCommit: sourceClosureCommit,
+    depth: correctionCommitIds.length,
+    commitIds: correctionCommitIds,
+    linearFirstParent: true as const,
+    noMergeCommits: true as const
+  };
+}
+
+type ExactSourceRole = "exact-pr-head" | "non-authoritative-local-validation-container" | "disabled-non-pr";
+
+function exactExecutionContext(environment: Readonly<Record<string, string | undefined>> = process.env) {
+  if (environment.GITHUB_ACTIONS !== undefined
+    && environment.GITHUB_ACTIONS !== "true" && environment.GITHUB_ACTIONS !== "false") {
+    throw new Error("GITHUB_ACTIONS has an unreviewed value");
+  }
+  const githubActions = environment.GITHUB_ACTIONS === "true";
+  const requested = environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT;
+  const declaredHead = environment.CLOVER_TREE_HEAD ?? null;
+  const exactPrHead = environment.CLOVER_TREE_EXACT_PR_HEAD ?? null;
+  let role: ExactSourceRole;
+  if (githubActions && requested === "exact-pr-head") {
+    if (declaredHead === null || exactPrHead === null
+      || !/^[0-9a-f]{40}$/u.test(declaredHead) || !/^[0-9a-f]{40}$/u.test(exactPrHead)) {
+      throw new Error("Exact PR execution context lacks closed head identities");
+    }
+    role = "exact-pr-head";
+  }
+  else if (githubActions && requested === "disabled-non-pr") role = "disabled-non-pr";
+  else if (!githubActions && requested === "non-authoritative-local-validation-container") {
+    role = "non-authoritative-local-validation-container";
+  } else throw new Error("Local source-closure execution context is missing, contradictory or unreviewed");
+  return {
+    role,
+    githubActions,
+    localSourceClosureContext: role,
+    declaredHead,
+    exactPrHead,
+    receiptIssuance: role === "disabled-non-pr" ? "disabled" as const : "enabled" as const
+  };
+}
+
 function exactLocalSourceEvidence(testFile: ExactTestState["file"]) {
+  if (testFile !== "test/tree-command-center.e2e.spec.ts") throw new Error("Unexpected exact source-evidence test path");
+  const execution = exactExecutionContext();
+  if (execution.role === "disabled-non-pr") throw new Error("Disabled non-PR context must not issue a PR source-closure receipt");
   const head = exactGitText(["rev-parse", "HEAD^{commit}"]);
   const tree = exactGitText(["rev-parse", "HEAD^{tree}"]);
-  const parent = exactGitText(["rev-parse", "HEAD^"]);
-  const dirty = exactGitText(["status", "--porcelain=v1", "--untracked-files=all"]);
-  if (![head, tree, parent].every((value) => /^[0-9a-f]{40}$/u.test(value)) || dirty !== "") {
+  const parents = exactCommitParentsAt(exactRepositoryRoot, head);
+  const dirty = exactGitBytes(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  if (![head, tree].every((value) => /^[0-9a-f]{40}$/u.test(value)) || parents.length !== 1 || dirty.length !== 0) {
     throw new Error("Exact local source evidence requires one clean committed candidate");
   }
-  if (exactGitText(["rev-parse", `${exactCandidateBaseCommit}^{tree}`]) !== exactCandidateBaseTree
-    || exactGitText(["rev-parse", `${exactCandidateBaseCommit}^`]) !== exactCandidateBaseParent
-    || exactGitText(["rev-parse", `${exactMainCommit}^{tree}`]) !== exactMainTree) {
-    throw new Error("Exact source base or main identity mismatch");
+  if ((execution.declaredHead !== null && execution.declaredHead !== head)
+    || (execution.role === "exact-pr-head" && execution.exactPrHead !== head)) {
+    throw new Error("Declared or exact PR head does not match the current committed candidate");
+  }
+  if (exactGitText(["rev-parse", `${exactProtectedMainCommit}^{tree}`]) !== exactProtectedMainTree
+    || exactGitText(["rev-parse", `${exactSourceClosureBaselineCommit}^{tree}`]) !== exactSourceClosureBaselineTree
+    || canonicalJson(exactCommitParentsAt(exactRepositoryRoot, exactSourceClosureBaselineCommit)) !== canonicalJson([exactSourceClosureBaselineParent])
+    || exactGitText(["rev-parse", `${exactSourceClosureCommit}^{tree}`]) !== exactSourceClosureTree
+    || canonicalJson(exactCommitParentsAt(exactRepositoryRoot, exactSourceClosureCommit)) !== canonicalJson([exactSourceClosureParent])
+    || exactGitText(["merge-base", exactProtectedMainCommit, exactSourceClosureBaselineCommit]) !== exactProtectedMainCommit) {
+    throw new Error("Protected-main, source-closure baseline or completed source-closure identity mismatch");
   }
 
-  const rawLines = exactGitText([
-    "diff", "--raw", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv",
-    exactCandidateBaseCommit, head, "--"
-  ]).split("\n").filter(Boolean);
-  const entries = rawLines.map((line) => {
-    const match = /^:(\d{6}) (\d{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) (M)\t(.+)$/u.exec(line);
-    if (!match) throw new Error(`Unexpected exact candidate delta entry: ${line}`);
-    const [, baseMode, candidateMode, baseBlob, candidateBlob, status, file] = match;
-    return {
-      path: file!,
-      status: status as "M",
-      base: exactGitFileEvidence(exactCandidateBaseCommit, file!, baseMode!, baseBlob!),
-      candidate: exactGitFileEvidence(head, file!, candidateMode!, candidateBlob!)
-    };
-  }).sort((left, right) => left.path.localeCompare(right.path));
-  const candidatePaths = entries.map(({ path: file }) => file);
-  if (candidatePaths.length !== exactCandidateDeltaPathCount
-    || exactPathListSha256(candidatePaths) !== exactCandidateDeltaPathListSha256) {
-    throw new Error("Exact candidate delta path boundary mismatch");
+  const sourceClosurePaths = exactRawDiffEntriesAt(
+    exactRepositoryRoot, exactSourceClosureBaselineCommit, exactSourceClosureCommit, ["M"]
+  ).map(({ path: file }) => file);
+  if (sourceClosurePaths.length !== exactSourceClosureDeltaPathCount
+    || exactPathListSha256(sourceClosurePaths) !== exactSourceClosureDeltaPathListSha256) {
+    throw new Error("Completed source-closure delta identity mismatch");
   }
-  const deltaManifestBody = {
-    baseCommit: exactCandidateBaseCommit,
-    pathCount: candidatePaths.length,
-    pathListSha256: exactPathListSha256(candidatePaths),
-    paths: candidatePaths,
-    entries
-  };
-  const binaryPatch = exactGitBytes([
-    "diff", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv",
-    exactCandidateBaseCommit, head, "--"
-  ]);
+  const sourceClosureDelta = exactDeltaEvidenceAt(
+    exactRepositoryRoot, exactSourceClosureBaselineCommit, exactSourceClosureCommit, sourceClosurePaths, "completed source closure"
+  );
+  const currentCumulativePaths = exactRawDiffEntriesAt(
+    exactRepositoryRoot, exactSourceClosureBaselineCommit, head, ["M"]
+  ).map(({ path: file }) => file);
+  if (canonicalJson(currentCumulativePaths) !== canonicalJson(sourceClosurePaths)
+    || currentCumulativePaths.length !== exactSourceClosureDeltaPathCount
+    || exactPathListSha256(currentCumulativePaths) !== exactSourceClosureDeltaPathListSha256) {
+    throw new Error("Current candidate altered the cumulative source-closure path boundary");
+  }
+  const correctionChain = exactCorrectionChainAt(exactRepositoryRoot, exactSourceClosureCommit, head, {
+    expectedHead: execution.role === "exact-pr-head" ? execution.exactPrHead ?? undefined : undefined
+  });
+  const ciEvidenceCorrectionDelta = exactDeltaEvidenceAt(
+    exactRepositoryRoot, exactSourceClosureCommit, head, exactCiEvidenceCorrectionPaths, "CI-evidence correction"
+  );
+  if (ciEvidenceCorrectionDelta.pathListSha256 !== exactCiEvidenceCorrectionPathListSha256) {
+    throw new Error("CI-evidence correction path-list identity mismatch");
+  }
+  const integratedEntries = exactRawDiffEntriesAt(exactRepositoryRoot, exactProtectedMainCommit, head, ["A", "M"]);
+  const integratedPaths = integratedEntries.map(({ path: file }) => file);
+  if (integratedPaths.length !== exactIntegratedPrPathCount
+    || exactPathListSha256(integratedPaths) !== exactIntegratedPrPathListSha256) {
+    throw new Error("Exact integrated PR boundary mismatch");
+  }
+  const authorizedPaths = exactSortedPaths(exactAuthorizedBoundaryPaths);
+  if (authorizedPaths.length !== 17 || exactPathListSha256(authorizedPaths) !== exactAuthorizedBoundaryPathListSha256
+    || sourceClosurePaths.some((file) => !authorizedPaths.includes(file))
+    || exactCiEvidenceCorrectionPaths.some((file) => !authorizedPaths.includes(file))) {
+    throw new Error("Exact authorized source boundary mismatch");
+  }
   const gitVersion = exactGitText(["--version"]);
   if (!/^git version \d+\.\d+\.\d+(?:\.[A-Za-z0-9.-]+)?(?: \([A-Za-z0-9 ._-]+\))?$/u.test(gitVersion)) {
     throw new Error("Unexpected Git version identity");
   }
-
-  const integratedPaths = exactGitText([
-    "diff", "--name-only", "--no-renames", "--no-ext-diff", "--no-textconv", exactMainCommit, head, "--"
-  ]).split("\n").filter(Boolean).sort((left, right) => left.localeCompare(right));
-  if (integratedPaths.length !== exactIntegratedSourcePathCount
-    || exactPathListSha256(integratedPaths) !== exactIntegratedSourcePathListSha256) {
-    throw new Error("Exact integrated source path boundary mismatch");
-  }
-  const authorizedPaths = [...exactAuthorizedBoundaryPaths].sort((left, right) => left.localeCompare(right));
-  const authorizedPathSet = new Set<string>(authorizedPaths);
-  if (exactPathListSha256(authorizedPaths) !== exactAuthorizedBoundaryPathListSha256
-    || !candidatePaths.every((file) => authorizedPathSet.has(file))) {
-    throw new Error("Exact authorized source boundary mismatch");
-  }
-
-  const role = process.env.GITHUB_ACTIONS === "true"
-    ? "exact-pr-head" as const
-    : "non-authoritative-local-validation-container" as const;
-  if (role === "exact-pr-head" && (process.env.CLOVER_TREE_EXACT_PR_HEAD !== head || parent !== exactCandidateBaseCommit)) {
-    throw new Error("CI source receipt is not bound to the exact PR head");
-  }
-  const testFileBytes = readFileSync(path.join(process.cwd(), testFile));
   return {
     repository: exactRepository,
-    main: { commit: exactMainCommit, tree: exactMainTree },
-    base: { commit: exactCandidateBaseCommit, tree: exactCandidateBaseTree, parent: exactCandidateBaseParent },
-    candidate: { commit: head, tree, parent, cleanWorktree: true as const, role },
-    candidateDelta: {
-      ...deltaManifestBody,
-      manifestSha256: sha256(`${canonicalJson(deltaManifestBody)}\n`),
-      binaryPatchFormat: exactBinaryPatchFormat,
-      binaryPatchByteCount: binaryPatch.byteLength,
-      binaryPatchSha256: sha256(binaryPatch),
-      gitVersion
+    protectedMain: { commit: exactProtectedMainCommit, tree: exactProtectedMainTree },
+    sourceClosureBaseline: {
+      commit: exactSourceClosureBaselineCommit, tree: exactSourceClosureBaselineTree, parent: exactSourceClosureBaselineParent
     },
-    integratedSource: {
-      baseCommit: exactMainCommit,
+    sourceClosureCommit: { commit: exactSourceClosureCommit, tree: exactSourceClosureTree, parent: exactSourceClosureParent },
+    currentCandidate: {
+      commit: head,
+      tree,
+      immediateParent: parents[0]!,
+      correctionChainDepth: correctionChain.depth,
+      correctionCommitIds: correctionChain.commitIds,
+      cleanWorktree: true as const,
+      role: execution.role
+    },
+    correctionChain,
+    sourceClosureDelta: {
+      ...sourceClosureDelta,
+      gitVersion,
+      currentCumulative: {
+        headCommit: head,
+        pathCount: currentCumulativePaths.length,
+        pathListSha256: exactPathListSha256(currentCumulativePaths),
+        paths: currentCumulativePaths,
+        boundaryPreserved: true as const
+      }
+    },
+    ciEvidenceCorrectionDelta,
+    integratedPrDelta: {
+      baseCommit: exactProtectedMainCommit,
+      headCommit: head,
       pathCount: integratedPaths.length,
       pathListSha256: exactPathListSha256(integratedPaths),
-      paths: integratedPaths
+      paths: integratedPaths,
+      allCurrentModes100644: true as const
     },
-    authorizedBoundary: {
-      pathCount: authorizedPaths.length,
+    authorizedSourceBoundary: {
+      maximumPathCount: authorizedPaths.length,
       pathListSha256: exactPathListSha256(authorizedPaths),
       paths: authorizedPaths,
-      candidateDeltaSubset: true as const
+      sourceClosureDeltaSubset: true as const,
+      ciEvidenceCorrectionDeltaSubset: true as const
     },
-    testFileSha256: sha256(testFileBytes)
+    executionContext: {
+      githubActions: execution.githubActions,
+      localSourceClosureContext: execution.localSourceClosureContext,
+      declaredHead: execution.declaredHead,
+      exactPrHead: execution.exactPrHead,
+      receiptIssuance: execution.receiptIssuance
+    },
+    authority: {
+      authoritativePrSourceClosureReceipt: execution.role === "exact-pr-head",
+      finalProviderAcceptance: false as const,
+      privateDataAccessed: false as const,
+      consequentialAuthorityGranted: false as const
+    }
   };
+}
+
+function runExactSourceEvidenceAncestryRegressionMatrix() {
+  const requestedTempBase = process.env.RUNNER_TEMP ?? realpathSync(tmpdir());
+  if (requestedTempBase !== requestedTempBase.normalize("NFC") || !path.isAbsolute(requestedTempBase)
+    || path.resolve(requestedTempBase) !== requestedTempBase) {
+    throw new Error("Disposable source-evidence matrix temp root is relative or noncanonical");
+  }
+  const requestedTempBaseStat = lstatSync(requestedTempBase);
+  const tempBase = realpathSync(requestedTempBase);
+  const isInsideExactRepository = (candidate: string) => {
+    const relative = path.relative(exactRepositoryRoot, candidate);
+    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  };
+  if (!requestedTempBaseStat.isDirectory() || requestedTempBaseStat.isSymbolicLink()
+    || tempBase !== requestedTempBase || isInsideExactRepository(tempBase)) {
+    throw new Error("Disposable source-evidence matrix temp root is not one safe real directory outside the repository");
+  }
+  const matrixRoot = mkdtempSync(path.join(tempBase, "clover-tree-source-evidence-matrix-"));
+  const matrixRootStat = lstatSync(matrixRoot);
+  if (!matrixRootStat.isDirectory() || matrixRootStat.isSymbolicLink() || realpathSync(matrixRoot) !== matrixRoot
+    || isInsideExactRepository(matrixRoot) || (matrixRootStat.mode & 0o777) !== 0o700) {
+    throw new Error("Disposable source-evidence matrix root is unsafe");
+  }
+  const repositoryRoot = path.join(matrixRoot, "repository");
+  const git = (args: string[]) => exactGitTextAt(repositoryRoot, args);
+  const change = (file: string, marker: string) => {
+    const target = path.join(repositoryRoot, file);
+    const before = readFileSync(target);
+    writeFileSync(target, Buffer.concat([before, Buffer.from(marker, "utf8")]));
+  };
+  const commit = (message: string, files: readonly string[]) => {
+    execFileSync("git", ["add", "--", ...files], { cwd: repositoryRoot, stdio: "ignore" });
+    execFileSync("git", ["commit", "--quiet", "-m", message], { cwd: repositoryRoot, stdio: "ignore" });
+    return git(["rev-parse", "HEAD^{commit}"]);
+  };
+  const reject = (label: string, action: () => unknown) => {
+    let rejected = false;
+    try { action(); } catch { rejected = true; }
+    if (!rejected) throw new Error(`Disposable ancestry matrix accepted ${label}`);
+  };
+  try {
+    execFileSync("git", ["clone", "--quiet", "--no-local", "--no-hardlinks", exactRepositoryRoot, repositoryRoot], {
+      cwd: matrixRoot,
+      stdio: "ignore"
+    });
+    git(["config", "user.name", "Clover Synthetic Matrix"]);
+    git(["config", "user.email", "clover-matrix@example.invalid"]);
+    git(["config", "commit.gpgsign", "false"]);
+    git(["switch", "--detach", exactSourceClosureCommit]);
+
+    if (git(["rev-parse", `${exactSourceClosureCommit}^{tree}`]) !== exactSourceClosureTree
+      || canonicalJson(exactCommitParentsAt(repositoryRoot, exactSourceClosureCommit))
+        !== canonicalJson([exactSourceClosureBaselineCommit])) {
+      throw new Error("Source-closure commit anchor tree or sole parent matrix case failed");
+    }
+    const anchor = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, exactSourceClosureCommit, {
+      allowedDepths: [0], authorizedPaths: []
+    });
+    const anchorContext = exactExecutionContext({
+      GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "non-authoritative-local-validation-container"
+    });
+    if (anchor.depth !== 0 || anchorContext.role !== "non-authoritative-local-validation-container") {
+      throw new Error("Source-closure anchor matrix case failed");
+    }
+    reject("the uncorrected source-closure anchor as an authoritative correction head", () => {
+      exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, exactSourceClosureCommit);
+    });
+
+    git(["switch", "-c", "matrix-linear", exactSourceClosureCommit]);
+    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix correction one\n");
+    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix correction one\n");
+    const correctionOne = commit("synthetic correction one", exactCiEvidenceCorrectionPaths);
+    const one = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionOne, {
+      expectedHead: correctionOne
+    });
+    if (one.depth !== 1 || one.commitIds[0] !== correctionOne) throw new Error("One-commit ancestry matrix case failed");
+    const exactPrContext = exactExecutionContext({
+      GITHUB_ACTIONS: "true",
+      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "exact-pr-head",
+      CLOVER_TREE_HEAD: correctionOne,
+      CLOVER_TREE_EXACT_PR_HEAD: correctionOne
+    });
+    if (exactPrContext.role !== "exact-pr-head" || exactPrContext.exactPrHead !== correctionOne) {
+      throw new Error("Exact PR role matrix case failed");
+    }
+
+    change(exactCiEvidenceCorrectionPaths[0], "# synthetic matrix correction two\n");
+    const correctionTwo = commit("synthetic correction two", [exactCiEvidenceCorrectionPaths[0]]);
+    const two = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionTwo, {
+      expectedHead: correctionTwo
+    });
+    if (two.depth !== 2 || canonicalJson(two.commitIds) !== canonicalJson([correctionOne, correctionTwo])) {
+      throw new Error("Two-commit ancestry matrix case failed");
+    }
+
+    change(exactCiEvidenceCorrectionPaths[1], "// synthetic matrix forbidden correction three\n");
+    const correctionThree = commit("synthetic correction three", [exactCiEvidenceCorrectionPaths[1]]);
+    reject("a third correction commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionThree));
+
+    git(["switch", "--detach", exactSourceClosureCommit]);
+    git(["switch", "-c", "matrix-third-path"]);
+    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix third-path case\n");
+    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix third-path case\n");
+    change(".gitignore", "\n# synthetic unauthorized path\n");
+    const thirdPath = commit("synthetic unauthorized path", [...exactCiEvidenceCorrectionPaths, ".gitignore"]);
+    reject("a correction touching a third path", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, thirdPath));
+
+    git(["switch", "--detach", exactSourceClosureCommit]);
+    git(["switch", "-c", "matrix-left"]);
+    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix merge left\n");
+    commit("synthetic merge left", [exactCiEvidenceCorrectionPaths[0]]);
+    git(["switch", "--detach", exactSourceClosureCommit]);
+    git(["switch", "-c", "matrix-right"]);
+    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix merge right\n");
+    commit("synthetic merge right", [exactCiEvidenceCorrectionPaths[1]]);
+    git(["switch", "matrix-left"]);
+    execFileSync("git", ["merge", "--quiet", "--no-ff", "matrix-right", "-m", "synthetic merge correction"], {
+      cwd: repositoryRoot,
+      stdio: "ignore"
+    });
+    const mergeHead = git(["rev-parse", "HEAD^{commit}"]);
+    reject("a merge commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, mergeHead));
+
+    const substituteBaseline = execFileSync("git", [
+      "commit-tree", `${exactSourceClosureBaselineCommit}^{tree}`, "-p", exactSourceClosureBaselineParent
+    ], {
+      cwd: repositoryRoot,
+      input: "synthetic substituted source-closure baseline\n",
+      encoding: "utf8"
+    }).trim();
+    const substituteClosure = execFileSync("git", ["commit-tree", `${exactSourceClosureCommit}^{tree}`, "-p", substituteBaseline], {
+      cwd: repositoryRoot,
+      input: "synthetic substituted source closure\n",
+      encoding: "utf8"
+    }).trim();
+    const substituteCandidate = execFileSync("git", ["commit-tree", `${correctionOne}^{tree}`, "-p", substituteClosure], {
+      cwd: repositoryRoot,
+      input: "synthetic candidate on substituted closure\n",
+      encoding: "utf8"
+    }).trim();
+    if (substituteBaseline === exactSourceClosureBaselineCommit || substituteClosure === exactSourceClosureCommit
+      || git(["rev-parse", `${substituteBaseline}^{tree}`]) !== exactSourceClosureBaselineTree
+      || canonicalJson(exactCommitParentsAt(repositoryRoot, substituteBaseline))
+        !== canonicalJson([exactSourceClosureBaselineParent])
+      || canonicalJson(exactCommitParentsAt(repositoryRoot, substituteClosure)) !== canonicalJson([substituteBaseline])) {
+      throw new Error("Substituted baseline ancestry matrix fixture is not exact");
+    }
+    reject("a rebased or substituted source-closure commit", () => {
+      exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, substituteCandidate);
+    });
+    reject("a wrong current immediate parent", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionOne, {
+      claimedImmediateParent: "0".repeat(40)
+    }));
+    reject("a stale exact-head environment", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionOne, {
+      expectedHead: correctionTwo
+    }));
+
+    const disabledPush = exactExecutionContext({
+      GITHUB_ACTIONS: "true", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "disabled-non-pr"
+    });
+    if (disabledPush.role !== "disabled-non-pr" || disabledPush.receiptIssuance !== "disabled") {
+      throw new Error("Non-PR push context did not disable authoritative receipt issuance");
+    }
+    const syntheticMainMerge = execFileSync("git", [
+      "commit-tree", `${correctionTwo}^{tree}`, "-p", exactProtectedMainCommit, "-p", correctionTwo
+    ], {
+      cwd: repositoryRoot,
+      input: "synthetic protected-main merge\n",
+      encoding: "utf8"
+    }).trim();
+    const syntheticMainMergeParents = exactCommitParentsAt(repositoryRoot, syntheticMainMerge);
+    if (disabledPush.receiptIssuance !== "disabled"
+      || canonicalJson(syntheticMainMergeParents) !== canonicalJson([exactProtectedMainCommit, correctionTwo])) {
+      throw new Error("Protected-main merge context was forced through the PR correction-chain contract");
+    }
+  } finally {
+    rmSync(matrixRoot, { recursive: true, force: true });
+    if (existsSync(matrixRoot)) throw new Error("Disposable source-evidence matrix cleanup failed");
+  }
 }
 
 async function installExactClientConsumptionObserver(page: Page, testStateId: string) {
@@ -1917,6 +2335,173 @@ function assertExactConditionResults(value: unknown, label: string): asserts val
   }
 }
 
+function assertExactSourceStringArray(value: unknown, label: string, sorted = true): asserts value is string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")
+    || (sorted && value.some((entry, index) => index > 0 && compareExactPaths(value[index - 1]!, entry) >= 0))) {
+    throw new Error(`${label}:ordered-string-array`);
+  }
+}
+
+function assertExactSourceFileEvidence(value: unknown, label: string) {
+  exactKeys(value, ["blob", "byteCount", "mode", "sha256"], label);
+  if (value.mode !== "100644" || typeof value.blob !== "string" || !/^[0-9a-f]{40}$/u.test(value.blob)
+    || typeof value.byteCount !== "number" || !Number.isSafeInteger(value.byteCount) || value.byteCount < 0
+    || typeof value.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.sha256)) {
+    throw new Error(`${label}:file-evidence`);
+  }
+}
+
+const exactSourceDeltaKeys = [
+  "baseCommit", "binaryPatchByteCount", "binaryPatchFormat", "binaryPatchSha256", "entries", "headCommit",
+  "manifestSha256", "pathCount", "pathListSha256", "paths"
+] as const;
+
+function assertExactSourceDelta(value: unknown, keys: readonly string[], label: string): asserts value is Record<string, unknown> {
+  exactKeys(value, keys, label);
+  if (typeof value.baseCommit !== "string" || !/^[0-9a-f]{40}$/u.test(value.baseCommit)
+    || typeof value.headCommit !== "string" || !/^[0-9a-f]{40}$/u.test(value.headCommit)
+    || typeof value.pathCount !== "number" || !Number.isSafeInteger(value.pathCount) || value.pathCount < 1
+    || typeof value.pathListSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.pathListSha256)
+    || typeof value.manifestSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.manifestSha256)
+    || value.binaryPatchFormat !== exactBinaryPatchFormat
+    || typeof value.binaryPatchByteCount !== "number" || !Number.isSafeInteger(value.binaryPatchByteCount)
+    || value.binaryPatchByteCount < 1 || typeof value.binaryPatchSha256 !== "string"
+    || !/^[0-9a-f]{64}$/u.test(value.binaryPatchSha256)) {
+    throw new Error(`${label}:delta-identity`);
+  }
+  assertExactSourceStringArray(value.paths, `${label}.paths`);
+  if (!Array.isArray(value.entries) || value.entries.length !== value.pathCount || value.paths.length !== value.pathCount
+    || exactPathListSha256(value.paths) !== value.pathListSha256) throw new Error(`${label}:delta-inventory`);
+  for (const [index, entry] of value.entries.entries()) {
+    exactKeys(entry, ["base", "current", "path", "status"], `${label}.entries[${index}]`);
+    if (entry.path !== value.paths[index] || entry.status !== "M") throw new Error(`${label}.entries[${index}]:identity`);
+    assertExactSourceFileEvidence(entry.base, `${label}.entries[${index}].base`);
+    assertExactSourceFileEvidence(entry.current, `${label}.entries[${index}].current`);
+  }
+  const manifestBody = {
+    baseCommit: value.baseCommit,
+    headCommit: value.headCommit,
+    pathCount: value.pathCount,
+    pathListSha256: value.pathListSha256,
+    paths: value.paths,
+    entries: value.entries
+  };
+  if (sha256(`${canonicalJson(manifestBody)}\n`) !== value.manifestSha256) throw new Error(`${label}:manifest-self-hash`);
+}
+
+function assertExactLocalSourceEvidence(
+  value: unknown,
+  expected: ReturnType<typeof exactLocalSourceEvidence>,
+  label: string
+) {
+  exactKeys(value, [
+    "authority", "authorizedSourceBoundary", "ciEvidenceCorrectionDelta", "correctionChain", "currentCandidate",
+    "executionContext", "integratedPrDelta", "protectedMain", "repository", "sourceClosureBaseline",
+    "sourceClosureCommit", "sourceClosureDelta"
+  ], label);
+  if (value.repository !== exactRepository) throw new Error(`${label}:repository`);
+
+  exactKeys(value.protectedMain, ["commit", "tree"], `${label}.protectedMain`);
+  exactKeys(value.sourceClosureBaseline, ["commit", "parent", "tree"], `${label}.sourceClosureBaseline`);
+  exactKeys(value.sourceClosureCommit, ["commit", "parent", "tree"], `${label}.sourceClosureCommit`);
+  for (const [identityLabel, identity] of [
+    ["protectedMain", value.protectedMain],
+    ["sourceClosureBaseline", value.sourceClosureBaseline],
+    ["sourceClosureCommit", value.sourceClosureCommit]
+  ] as const) {
+    for (const field of Object.keys(identity)) {
+      if (typeof identity[field] !== "string" || !/^[0-9a-f]{40}$/u.test(identity[field] as string)) {
+        throw new Error(`${label}.${identityLabel}.${field}:git-object-id`);
+      }
+    }
+  }
+
+  exactKeys(value.currentCandidate, [
+    "cleanWorktree", "commit", "correctionChainDepth", "correctionCommitIds", "immediateParent", "role", "tree"
+  ], `${label}.currentCandidate`);
+  assertExactSourceStringArray(value.currentCandidate.correctionCommitIds, `${label}.currentCandidate.correctionCommitIds`, false);
+  if (typeof value.currentCandidate.commit !== "string" || !/^[0-9a-f]{40}$/u.test(value.currentCandidate.commit)
+    || typeof value.currentCandidate.tree !== "string" || !/^[0-9a-f]{40}$/u.test(value.currentCandidate.tree)
+    || typeof value.currentCandidate.immediateParent !== "string" || !/^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
+    || value.currentCandidate.cleanWorktree !== true
+    || (value.currentCandidate.role !== "exact-pr-head"
+      && value.currentCandidate.role !== "non-authoritative-local-validation-container")
+    || typeof value.currentCandidate.correctionChainDepth !== "number"
+    || !Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
+    || ![1, 2].includes(value.currentCandidate.correctionChainDepth)
+    || value.currentCandidate.correctionCommitIds.length !== value.currentCandidate.correctionChainDepth) {
+    throw new Error(`${label}.currentCandidate:identity`);
+  }
+
+  exactKeys(value.correctionChain, ["baseCommit", "commitIds", "depth", "linearFirstParent", "noMergeCommits"], `${label}.correctionChain`);
+  assertExactSourceStringArray(value.correctionChain.commitIds, `${label}.correctionChain.commitIds`, false);
+  if (value.correctionChain.baseCommit !== exactSourceClosureCommit
+    || value.correctionChain.depth !== value.currentCandidate.correctionChainDepth
+    || canonicalJson(value.correctionChain.commitIds) !== canonicalJson(value.currentCandidate.correctionCommitIds)
+    || value.correctionChain.linearFirstParent !== true || value.correctionChain.noMergeCommits !== true) {
+    throw new Error(`${label}.correctionChain:identity`);
+  }
+
+  const sourceClosureDelta = value.sourceClosureDelta;
+  assertExactSourceDelta(sourceClosureDelta,
+    [...exactSourceDeltaKeys, "currentCumulative", "gitVersion"], `${label}.sourceClosureDelta`);
+  exactKeys(sourceClosureDelta.currentCumulative,
+    ["boundaryPreserved", "headCommit", "pathCount", "pathListSha256", "paths"], `${label}.sourceClosureDelta.currentCumulative`);
+  const currentCumulative = sourceClosureDelta.currentCumulative;
+  assertExactSourceStringArray(currentCumulative.paths, `${label}.sourceClosureDelta.currentCumulative.paths`);
+  if (currentCumulative.boundaryPreserved !== true
+    || currentCumulative.pathCount !== currentCumulative.paths.length
+    || exactPathListSha256(currentCumulative.paths) !== currentCumulative.pathListSha256
+    || typeof sourceClosureDelta.gitVersion !== "string") {
+    throw new Error(`${label}.sourceClosureDelta.currentCumulative:identity`);
+  }
+  assertExactSourceDelta(value.ciEvidenceCorrectionDelta, exactSourceDeltaKeys, `${label}.ciEvidenceCorrectionDelta`);
+
+  exactKeys(value.integratedPrDelta,
+    ["allCurrentModes100644", "baseCommit", "headCommit", "pathCount", "pathListSha256", "paths"], `${label}.integratedPrDelta`);
+  assertExactSourceStringArray(value.integratedPrDelta.paths, `${label}.integratedPrDelta.paths`);
+  if (value.integratedPrDelta.allCurrentModes100644 !== true
+    || value.integratedPrDelta.pathCount !== value.integratedPrDelta.paths.length
+    || exactPathListSha256(value.integratedPrDelta.paths) !== value.integratedPrDelta.pathListSha256) {
+    throw new Error(`${label}.integratedPrDelta:identity`);
+  }
+
+  exactKeys(value.authorizedSourceBoundary, [
+    "ciEvidenceCorrectionDeltaSubset", "maximumPathCount", "pathListSha256", "paths", "sourceClosureDeltaSubset"
+  ], `${label}.authorizedSourceBoundary`);
+  assertExactSourceStringArray(value.authorizedSourceBoundary.paths, `${label}.authorizedSourceBoundary.paths`);
+  if (value.authorizedSourceBoundary.maximumPathCount !== value.authorizedSourceBoundary.paths.length
+    || exactPathListSha256(value.authorizedSourceBoundary.paths) !== value.authorizedSourceBoundary.pathListSha256
+    || value.authorizedSourceBoundary.sourceClosureDeltaSubset !== true
+    || value.authorizedSourceBoundary.ciEvidenceCorrectionDeltaSubset !== true) {
+    throw new Error(`${label}.authorizedSourceBoundary:identity`);
+  }
+
+  exactKeys(value.executionContext,
+    ["declaredHead", "exactPrHead", "githubActions", "localSourceClosureContext", "receiptIssuance"], `${label}.executionContext`);
+  if (value.executionContext.receiptIssuance !== "enabled"
+    || (value.executionContext.localSourceClosureContext !== "exact-pr-head"
+      && value.executionContext.localSourceClosureContext !== "non-authoritative-local-validation-container")
+    || value.executionContext.githubActions !== (value.executionContext.localSourceClosureContext === "exact-pr-head")) {
+    throw new Error(`${label}.executionContext:role`);
+  }
+  for (const field of ["declaredHead", "exactPrHead"] as const) {
+    const identity = value.executionContext[field];
+    if (identity !== null && (typeof identity !== "string" || !/^[0-9a-f]{40}$/u.test(identity))) {
+      throw new Error(`${label}.executionContext.${field}:identity`);
+    }
+  }
+
+  exactKeys(value.authority, [
+    "authoritativePrSourceClosureReceipt", "consequentialAuthorityGranted", "finalProviderAcceptance", "privateDataAccessed"
+  ], `${label}.authority`);
+  if (value.authority.authoritativePrSourceClosureReceipt !== (value.currentCandidate.role === "exact-pr-head")
+    || value.authority.finalProviderAcceptance !== false || value.authority.privateDataAccessed !== false
+    || value.authority.consequentialAuthorityGranted !== false) throw new Error(`${label}.authority:identity`);
+
+  if (canonicalJson(value) !== canonicalJson(expected)) throw new Error(`${label}:git-recomputed-source-mismatch`);
+}
+
 function assertExactLocalSourceClosureReceipt(
   value: unknown,
   expectedSourceOverride?: ReturnType<typeof exactLocalSourceEvidence>
@@ -1948,7 +2533,7 @@ function assertExactLocalSourceClosureReceipt(
     throw new Error("receipt:test-state");
   }
   const expectedSource = expectedSourceOverride ?? exactLocalSourceEvidence(value.testState.file);
-  if (canonicalJson(value.source) !== canonicalJson(expectedSource)) throw new Error("receipt:source");
+  assertExactLocalSourceEvidence(value.source, expectedSource, "receipt.source");
   exactKeys(value.testOutcome, ["expectedStatus", "status"], "receipt.testOutcome");
   if (value.testOutcome.status !== "passed" || value.testOutcome.expectedStatus !== "passed") {
     throw new Error("receipt:test-outcome");
@@ -2276,8 +2861,51 @@ function assertLocalReceiptMutationResistance(
   });
   rejectResealed("source identity substitution must be rejected", (candidate) => {
     const source = candidate.source as Record<string, unknown>;
-    (source.candidate as Record<string, unknown>).commit = "0".repeat(40);
+    (source.currentCandidate as Record<string, unknown>).commit = "0".repeat(40);
   });
+  for (const [label, mutate] of [
+    ["protected-main", (source: Record<string, unknown>) => {
+      (source.protectedMain as Record<string, unknown>).commit = "0".repeat(40);
+    }],
+    ["source-closure-baseline", (source: Record<string, unknown>) => {
+      (source.sourceClosureBaseline as Record<string, unknown>).parent = "0".repeat(40);
+    }],
+    ["source-closure-commit", (source: Record<string, unknown>) => {
+      (source.sourceClosureCommit as Record<string, unknown>).commit = "0".repeat(40);
+    }],
+    ["current-parent", (source: Record<string, unknown>) => {
+      (source.currentCandidate as Record<string, unknown>).immediateParent = "0".repeat(40);
+    }],
+    ["correction-depth", (source: Record<string, unknown>) => {
+      (source.currentCandidate as Record<string, unknown>).correctionChainDepth = 3;
+    }],
+    ["correction-ids", (source: Record<string, unknown>) => {
+      (source.correctionChain as Record<string, unknown>).commitIds = ["0".repeat(40)];
+    }],
+    ["source-closure-cumulative", (source: Record<string, unknown>) => {
+      const delta = source.sourceClosureDelta as Record<string, unknown>;
+      (delta.currentCumulative as Record<string, unknown>).headCommit = "0".repeat(40);
+    }],
+    ["ci-evidence-correction", (source: Record<string, unknown>) => {
+      (source.ciEvidenceCorrectionDelta as Record<string, unknown>).pathListSha256 = "0".repeat(64);
+    }],
+    ["integrated-pr", (source: Record<string, unknown>) => {
+      (source.integratedPrDelta as Record<string, unknown>).pathCount = 71;
+    }],
+    ["authorized-boundary", (source: Record<string, unknown>) => {
+      (source.authorizedSourceBoundary as Record<string, unknown>).maximumPathCount = 18;
+    }],
+    ["execution-context", (source: Record<string, unknown>) => {
+      (source.executionContext as Record<string, unknown>).localSourceClosureContext = "disabled-non-pr";
+    }],
+    ["authority", (source: Record<string, unknown>) => {
+      (source.authority as Record<string, unknown>).consequentialAuthorityGranted = true;
+    }]
+  ] as const) {
+    rejectResealed(`source ${label} substitution must be rejected`, (candidate) => {
+      mutate(candidate.source as Record<string, unknown>);
+    });
+  }
   rejectResealed("nonempty blocking evidence must be rejected", (candidate) => {
     const blockers = candidate.blockingFindings as Record<string, unknown>;
     blockers.consoleErrors = ["synthetic-unexpected-console-error"];
@@ -2640,11 +3268,8 @@ function assertLocalReceiptMutationResistance(
 async function writeLocalSourceClosureReceipt(page: Page, testInfo: TestInfo) {
   const state = localClosureStates.get(page);
   if (!state?.eligible) return null;
-  if (process.env.GITHUB_ACTIONS === "true") {
-    const context = process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT;
-    if (context === "disabled-non-pr") return null;
-    if (context !== "exact-pr-head") throw new Error("CI local source-closure context is missing or unreviewed");
-  }
+  const receiptContext = exactExecutionContext();
+  if (receiptContext.role === "disabled-non-pr") return null;
   if (testInfo.status !== "passed" || testInfo.expectedStatus !== "passed") return null;
   if (!state.closureCompleted || state.closureGeneration === null
     || state.expectedRequestObservedAt === null || state.expectedGithubObservedAt === null) {
@@ -3383,7 +4008,7 @@ function exactGateLocalReportingArtifacts(page: Page): ExactGateLocalReportingAr
     throw new Error("Exact Gate local reporting artifact does not retain its receipt semantics");
   }
   const body: ExactGateLocalReportingArtifactBindingBody = {
-    schemaVersion: "clover-tree-local-source-closure-receipt-v1",
+    schemaVersion: "clover-tree-local-source-closure-receipt-v2",
     receiptRelativePath: `${state.testState.project}-${state.testState.id}/receipt.json`,
     testState: structuredClone(state.testState),
     closure: {
@@ -3662,7 +4287,7 @@ function requireExactGateLedgerClosure(
     });
     if (raw.sequence < client.documentStartRequestId || raw.generation < client.documentStartGeneration
       || canonicalSha256 !== sha256(`${canonicalJson(body)}\n`)
-      || artifact.schemaVersion !== "clover-tree-local-source-closure-receipt-v1"
+      || artifact.schemaVersion !== "clover-tree-local-source-closure-receipt-v2"
       || artifactTestStateId !== sha256(`${canonicalJson(artifactTestStateBody)}\n`)
       || artifact.receiptRelativePath !== `${artifact.testState.project}-${artifactTestStateId}/receipt.json`
       || artifact.closure.completed !== true || artifact.closure.generation !== raw.generation
@@ -5972,6 +6597,7 @@ test.afterAll(async () => {
 });
 
 test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.title === exactSourceEvidenceMatrixTestTitle) return;
   const runtimeErrors: string[] = [];
   runtimeFindings.set(page, runtimeErrors);
   const blockers: ExactLocalBlockingFindings = {
@@ -6148,6 +6774,7 @@ test.beforeEach(async ({ page }, testInfo) => {
 });
 
 test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.title === exactSourceEvidenceMatrixTestTitle) return;
   await page.waitForTimeout(25);
   const trace = traceFor(page);
   await expect.poll(() => trace.requests.filter(({ terminal }) => terminal === "pending").length, {
@@ -6173,6 +6800,10 @@ test.afterEach(async ({ page }, testInfo) => {
   await writeLocalSourceClosureReceipt(page, testInfo);
   exactFixturePage = null;
   exactFixtureTestState = null;
+});
+
+test(exactSourceEvidenceMatrixTestTitle, async () => {
+  runExactSourceEvidenceAncestryRegressionMatrix();
 });
 
 test("renders the exact source-bound command center without runtime or privacy leakage", async ({ page }, testInfo) => {

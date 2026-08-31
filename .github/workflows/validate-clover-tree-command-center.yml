@@ -44,10 +44,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -n "${GITHUB_WORKSPACE:-}"
+          [[ "$GITHUB_WORKSPACE" = /* ]]
+          test -d "$GITHUB_WORKSPACE"
+          test ! -L "$GITHUB_WORKSPACE"
+          repository_root="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$repository_root" = "$GITHUB_WORKSPACE"
+          test "$(git -C "$repository_root" rev-parse --show-toplevel)" = "$repository_root"
           [[ "$CLOVER_TREE_HEAD" =~ ^[0-9a-f]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$CLOVER_TREE_HEAD"
-          test "$(git rev-parse --is-shallow-repository)" = "false"
-          git diff --check
+          test "$(git -C "$repository_root" rev-parse HEAD)" = "$CLOVER_TREE_HEAD"
+          test "$(git -C "$repository_root" rev-parse --is-shallow-repository)" = "false"
+          git -C "$repository_root" diff --check
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -74,13 +81,88 @@ jobs:
           const fs = require('node:fs');
           const crypto = require('node:crypto');
           const cp = require('node:child_process');
+          const path = require('node:path');
+          const { TextDecoder } = require('node:util');
           const p = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/clover-tree-source-provenance.json`, 'utf8'));
           const m = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/clover-tree-source-manifest.json`, 'utf8'));
           const canonical = value => JSON.stringify(Array.isArray(value) ? value.map(canonicalValue) : canonicalValue(value));
           function canonicalValue(value) { return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalValue(value[key])])) : Array.isArray(value) ? value.map(canonicalValue) : value; }
           const hash = value => crypto.createHash('sha256').update(value).digest('hex');
           const exactKeys = (value, keys) => JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
-          const safePath = value => typeof value === 'string' && value.length > 0 && value === value.normalize('NFC') && !value.startsWith('/') && !value.includes('\\') && !/[\0\r\n]/u.test(value) && !value.split('/').includes('..');
+          const safePath = value => typeof value === 'string' && value.length > 0 && value === value.normalize('NFC') && !value.startsWith('/') && !value.startsWith(':') && !value.includes('\\') && !/[\0\t\r\n]/u.test(value) && !value.split('/').includes('..');
+          const fatalUtf8 = new TextDecoder('utf-8', { fatal: true });
+          const identityGitEnvironmentKeys = new Set([
+            'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+            'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CEILING_DIRECTORIES', 'GIT_PREFIX'
+          ]);
+          if (Object.keys(process.env).some((key) => (identityGitEnvironmentKeys.has(key) || key === 'GIT_CONFIG_COUNT' || /^GIT_CONFIG_(?:KEY|VALUE)_/u.test(key)) && process.env[key])) {
+            throw new Error('source verifier received an identity-substituting Git environment');
+          }
+          const workspace = process.env.GITHUB_WORKSPACE;
+          if (typeof workspace !== 'string' || workspace.length === 0 || workspace !== workspace.normalize('NFC')
+              || !path.isAbsolute(workspace) || path.normalize(workspace) !== workspace || path.resolve(workspace) !== workspace) {
+            throw new Error('source verifier repository root input is invalid');
+          }
+          const workspaceStat = fs.lstatSync(workspace);
+          if (!workspaceStat.isDirectory() || workspaceStat.isSymbolicLink()) throw new Error('source verifier repository root is not one real directory');
+          const repositoryRoot = fs.realpathSync.native(workspace);
+          if (repositoryRoot !== workspace) throw new Error('source verifier repository root is symlinked or substituted');
+          const gitEnvironment = { ...process.env, LC_ALL: 'C', LANG: 'C', GIT_OPTIONAL_LOCKS: '0' };
+          const gitAtBytes = (directory, args) => cp.execFileSync('git', ['-C', directory, ...args], {
+            encoding: null, env: gitEnvironment, maxBuffer: 64 * 1024 * 1024
+          });
+          const gitAtLine = (directory, args, label) => {
+            const raw = gitAtBytes(directory, args);
+            if (raw.length < 2 || raw[raw.length - 1] !== 0x0a || raw.subarray(0, raw.length - 1).includes(0x0a)
+                || raw.includes(0x00) || raw.includes(0x0d)) throw new Error(`${label} did not return one canonical line`);
+            let value;
+            try { value = fatalUtf8.decode(raw.subarray(0, raw.length - 1)); } catch { throw new Error(`${label} returned invalid UTF-8`); }
+            return value;
+          };
+          const gitRootBytes = (args) => gitAtBytes(repositoryRoot, args);
+          const gitRootLine = (args, label) => gitAtLine(repositoryRoot, args, label);
+          const discoveredRoot = gitRootLine(['rev-parse', '--show-toplevel'], 'repository discovery');
+          if (!path.isAbsolute(discoveredRoot) || fs.realpathSync.native(discoveredRoot) !== repositoryRoot || discoveredRoot !== repositoryRoot
+              || gitRootLine(['rev-parse', '--is-inside-work-tree'], 'repository worktree status') !== 'true'
+              || gitRootLine(['rev-parse', '--is-bare-repository'], 'repository bare status') !== 'false') {
+            throw new Error('source verifier repository discovery mismatch');
+          }
+          if (gitRootBytes(['status', '--porcelain=v1', '-z', '--untracked-files=all']).length !== 0) throw new Error('source verifier worktree is dirty');
+          const resolveCommit = (revision) => {
+            if (!/^[0-9a-f]{40}$/u.test(revision)) throw new Error('source verifier revision is malformed');
+            const resolved = gitRootLine(['rev-parse', '--verify', `${revision}^{commit}`], 'source revision');
+            if (resolved !== revision) throw new Error('source verifier revision was substituted');
+            return resolved;
+          };
+          const readTreeRecord = (revision, entryPath, allowMissing = false) => {
+            const raw = gitRootBytes(['ls-tree', '-z', '--full-tree', revision, '--', `:(top,literal)${entryPath}`]);
+            if (allowMissing && raw.length === 0) return null;
+            if (raw.length === 0 || raw[raw.length - 1] !== 0x00 || raw.indexOf(0x00) !== raw.length - 1) {
+              throw new Error(`source tree record count mismatch: ${entryPath}`);
+            }
+            const record = raw.subarray(0, raw.length - 1);
+            const tab = record.indexOf(0x09);
+            if (tab <= 0) throw new Error(`source tree record separator mismatch: ${entryPath}`);
+            const metadataBytes = record.subarray(0, tab);
+            if ([...metadataBytes].some((byte) => byte > 0x7f)) throw new Error(`source tree metadata encoding mismatch: ${entryPath}`);
+            const metadata = metadataBytes.toString('ascii');
+            const match = /^(100644|100755) blob ([0-9a-f]{40})$/u.exec(metadata);
+            if (!match) throw new Error(`source tree metadata mismatch: ${entryPath}`);
+            let returnedPath;
+            try { returnedPath = fatalUtf8.decode(record.subarray(tab + 1)); } catch { throw new Error(`source tree path encoding mismatch: ${entryPath}`); }
+            if (returnedPath !== entryPath) throw new Error(`source tree path mismatch: ${entryPath}`);
+            return { mode: match[1], type: 'blob', blob: match[2], path: returnedPath };
+          };
+          const readFileEvidence = (revision, record) => {
+            const resolved = resolveCommit(revision);
+            const tree = readTreeRecord(resolved, record.path);
+            const bytes = gitRootBytes(['show', `${resolved}:${record.path}`]);
+            const blob = gitRootLine(['rev-parse', '--verify', `${resolved}:${record.path}`], `source blob ${record.path}`);
+            const computedBlob = crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+            if (tree.mode !== record.mode || tree.blob !== record.blob || blob !== record.blob || computedBlob !== record.blob
+                || bytes.length !== record.bytes || hash(bytes) !== record.sha256) throw new Error(`source bytes mismatch: ${record.path}`);
+            return { path: record.path, mode: tree.mode, type: tree.type, blob: tree.blob, bytes: bytes.length, sha256: hash(bytes) };
+          };
           if (!exactKeys(m, ['documentType','schemaVersion','sourceCommit','stackABase','entries','pathCount','pathListSha256','sourceManifestSha256','manifestSelfHash']) ||
               m.documentType !== 'clover-tree-source-manifest' || m.schemaVersion !== '0.4.0' || m.sourceCommit !== p.commit || m.stackABase !== p.stackABase ||
               m.pathCount !== 72 || m.pathCount !== p.changedPathCount || m.pathListSha256 !== '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8' ||
@@ -95,11 +177,34 @@ jobs:
               if (!exactKeys(entry, ['path','status','base','current']) || entry.current !== null || !record || record.path !== entry.path) throw new Error(`source deletion mismatch: ${entry.path}`);
             } else if (!exactKeys(entry, ['path','mode','blob','bytes','sha256'])) throw new Error(`source entry schema mismatch: ${entry.path}`);
             if (!exactKeys(record, ['path','mode','blob','bytes','sha256']) || record.path !== entry.path || !/^(?:100644|100755)$/u.test(record.mode) || !/^[0-9a-f]{40}$/u.test(record.blob) || !Number.isSafeInteger(record.bytes) || !/^[0-9a-f]{64}$/u.test(record.sha256)) throw new Error(`source entry invalid: ${entry.path}`);
-            const bytes = cp.execFileSync('git', ['show', `${revision}:${entry.path}`]);
-            const blob = cp.execFileSync('git', ['rev-parse', `${revision}:${entry.path}`], { encoding: 'utf8' }).trim();
-            const mode = cp.execFileSync('git', ['ls-tree', revision, '--', entry.path], { encoding: 'utf8' }).split(/\s/u)[0];
-            if (bytes.length !== record.bytes || hash(bytes) !== record.sha256 || blob !== record.blob || mode !== record.mode) throw new Error(`source bytes mismatch: ${entry.path}`);
+            readFileEvidence(revision, record);
+            if (entry.status === 'D' && readTreeRecord(resolveCommit(m.sourceCommit), entry.path, true) !== null) throw new Error(`source deletion is still present: ${entry.path}`);
           }
+          const workflowPath = '.github/workflows/validate-clover-tree-command-center.yml';
+          const workflowEntry = m.entries.find((entry) => entry.path === workflowPath);
+          if (!workflowEntry || workflowEntry.status === 'D') throw new Error('source workflow entry is missing from the current manifest');
+          const expectedWorkflowEvidence = readFileEvidence(m.sourceCommit, workflowEntry);
+          const invocationDirectories = [
+            repositoryRoot,
+            path.join(repositoryRoot, 'apps/clover-launch-studio'),
+            path.join(repositoryRoot, 'portfolio/core/tree-program')
+          ];
+          const originalDirectory = process.cwd();
+          try {
+            for (const directory of invocationDirectories) {
+              const stat = fs.lstatSync(directory);
+              if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync.native(directory) !== directory
+                  || gitAtLine(directory, ['rev-parse', '--show-toplevel'], 'nested repository discovery') !== repositoryRoot) {
+                throw new Error('source verifier nested invocation directory mismatch');
+              }
+              process.chdir(directory);
+              const observed = readFileEvidence(m.sourceCommit, workflowEntry);
+              if (canonical(observed) !== canonical(expectedWorkflowEvidence)) throw new Error('source workflow identity changed by invocation directory');
+            }
+          } finally {
+            process.chdir(originalDirectory);
+          }
+          if (gitRootBytes(['status', '--porcelain=v1', '-z', '--untracked-files=all']).length !== 0) throw new Error('source verifier changed the worktree');
           const { manifestSelfHash, ...body } = m;
           if (hash(`${canonical(body)}\n`) !== manifestSelfHash) throw new Error('source manifest self-hash mismatch');
           NODE
@@ -119,7 +224,7 @@ jobs:
           VERCEL_TELEMETRY_DISABLED: '1'
         run: |
           set -euo pipefail
-          test "$(git status --porcelain=v1 --untracked-files=all)" = ""
+          test "$(git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all)" = ""
           test -z "${VERCEL_TOKEN:-}"
           export NEXT_DEPLOYMENT_ID="clover-${CLOVER_TREE_HEAD:0:24}"
           [[ "$NEXT_DEPLOYMENT_ID" =~ ^clover-[0-9a-f]{24}$ ]]
@@ -139,7 +244,7 @@ jobs:
           test ! -e "$RUNNER_TEMP/clover-build-output"
           mv apps/clover-launch-studio/.vercel/output "$RUNNER_TEMP/clover-build-output"
           rm -rf .vercel apps/clover-launch-studio/.vercel "$VERCEL_CONFIG_DIR"
-          test "$(git status --porcelain=v1 --untracked-files=all)" = ""
+          test "$(git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all)" = ""
           node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs output --repository-root . --output "$RUNNER_TEMP/clover-build-output" --evidence "$RUNNER_TEMP/clover-attestation-evidence" --frozen-output "$RUNNER_TEMP/clover-frozen-workspace" > "$RUNNER_TEMP/clover-deployment-input-digests.json"
           node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs verify --repository-root . --output "$RUNNER_TEMP/clover-frozen-workspace/.vercel/output" --evidence "$RUNNER_TEMP/clover-attestation-evidence" > "$RUNNER_TEMP/clover-deployment-input-verification.json"
           node <<'NODE'
@@ -195,7 +300,7 @@ jobs:
           fs.writeFileSync(path.join(root, 'clover-ci-deployment-input-evidence.json'), `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx', mode: 0o644 });
           NODE
           cp "$RUNNER_TEMP/clover-frozen-workspace/.vercel/output/static/__clover/deployment-attestation.json" "$RUNNER_TEMP/clover-attestation-evidence/clover-deployment-attestation.json"
-          test "$(git status --porcelain=v1 --untracked-files=all)" = ""
+          test "$(git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all)" = ""
 
       - name: Record exact-head, privacy and authority evidence
         shell: bash
@@ -206,11 +311,27 @@ jobs:
           const fs = require('node:fs');
           const cp = require('node:child_process');
           const path = require('node:path');
+          const { TextDecoder } = require('node:util');
           const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
-          const head = cp.execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-          const tree = cp.execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+          const workspace = process.env.GITHUB_WORKSPACE;
+          if (typeof workspace !== 'string' || !path.isAbsolute(workspace) || path.normalize(workspace) !== workspace
+              || fs.realpathSync.native(workspace) !== workspace || fs.lstatSync(workspace).isSymbolicLink()) throw new Error('exact-head evidence repository root mismatch');
+          const repositoryRoot = workspace;
+          const gitBytes = (args) => cp.execFileSync('git', ['-C', repositoryRoot, ...args], { encoding: null, maxBuffer: 64 * 1024 * 1024 });
+          const gitLine = (args, label) => {
+            const raw = gitBytes(args);
+            if (raw.length < 2 || raw[raw.length - 1] !== 0x0a || raw.subarray(0, raw.length - 1).includes(0x0a)
+                || raw.includes(0x00) || raw.includes(0x0d)) throw new Error(`${label} did not return one canonical line`);
+            return new TextDecoder('utf-8', { fatal: true }).decode(raw.subarray(0, raw.length - 1));
+          };
+          if (gitLine(['rev-parse', '--show-toplevel'], 'exact-head repository discovery') !== repositoryRoot) throw new Error('exact-head repository discovery mismatch');
+          const head = gitLine(['rev-parse', 'HEAD'], 'exact-head commit');
+          const tree = gitLine(['rev-parse', 'HEAD^{tree}'], 'exact-head tree');
           const roots = ['apps/clover-launch-studio', 'portfolio/core/tree-program'];
-          const files = cp.execFileSync('git', ['ls-files', ...roots], { encoding: 'utf8' }).trim().split(/\r?\n/u).filter(Boolean);
+          const rawFiles = gitBytes(['ls-files', '-z', '--', ...roots]);
+          if (rawFiles.length === 0 || rawFiles[rawFiles.length - 1] !== 0x00) throw new Error('exact-head source inventory is empty or not NUL terminated');
+          const files = rawFiles.subarray(0, rawFiles.length - 1).toString('utf8').split('\0');
+          if (files.some((file) => !file || /[\0\r\n]/u.test(file))) throw new Error('exact-head source inventory is malformed');
           const prohibited = [
             /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/u,
             /\bgh[oprsu]_[A-Za-z0-9]{20,}\b/u,
@@ -220,9 +341,10 @@ jobs:
           ];
           const findings = [];
           for (const file of files) {
-            const stat = fs.lstatSync(file);
+            const target = path.join(repositoryRoot, file);
+            const stat = fs.lstatSync(target);
             if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`nonregular source path: ${file}`);
-            const text = fs.readFileSync(file, 'utf8');
+            const text = fs.readFileSync(target, 'utf8');
             if (prohibited.some((pattern) => pattern.test(text))) findings.push(file);
           }
           if (findings.length) throw new Error(`privacy findings: ${findings.join(', ')}`);
@@ -231,8 +353,8 @@ jobs:
             head,
             tree,
             node: process.version,
-            packageLockSha256: sha256(fs.readFileSync('apps/clover-launch-studio/package-lock.json')),
-            treeProgramIndexSha256: sha256(fs.readFileSync('portfolio/core/tree-program/index.json')),
+            packageLockSha256: sha256(fs.readFileSync(path.join(repositoryRoot, 'apps/clover-launch-studio/package-lock.json'))),
+            treeProgramIndexSha256: sha256(fs.readFileSync(path.join(repositoryRoot, 'portfolio/core/tree-program/index.json'))),
             scannedFiles: files.length,
             privacyFindings: [],
             publicSanitized: true,
@@ -289,7 +411,17 @@ jobs:
           fetch-depth: 0
 
       - name: Verify exact candidate identity
-        run: test "$(git rev-parse HEAD)" = "$CLOVER_TREE_HEAD"
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GITHUB_WORKSPACE:-}"
+          [[ "$GITHUB_WORKSPACE" = /* ]]
+          test -d "$GITHUB_WORKSPACE"
+          test ! -L "$GITHUB_WORKSPACE"
+          repository_root="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          test "$repository_root" = "$GITHUB_WORKSPACE"
+          test "$(git -C "$repository_root" rev-parse --show-toplevel)" = "$repository_root"
+          test "$(git -C "$repository_root" rev-parse HEAD)" = "$CLOVER_TREE_HEAD"
 
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -358,6 +490,22 @@ jobs:
             requireCondition(value && typeof value === 'object' && !Array.isArray(value), `${label} is not one object`);
             exactJson(Object.keys(value).sort(), [...keys].sort(), `${label} exact keys`);
           };
+          const workspace = process.env.GITHUB_WORKSPACE;
+          requireCondition(typeof workspace === 'string' && workspace.length > 0 && workspace === workspace.normalize('NFC')
+            && path.isAbsolute(workspace) && path.normalize(workspace) === workspace && path.resolve(workspace) === workspace,
+          'browser evidence repository root input mismatch');
+          const workspaceStat = fs.lstatSync(workspace);
+          requireCondition(workspaceStat.isDirectory() && !workspaceStat.isSymbolicLink() && fs.realpathSync.native(workspace) === workspace,
+            'browser evidence repository root is not one canonical real directory');
+          const repositoryRoot = workspace;
+          const browserIdentityGitEnvironmentKeys = new Set([
+            'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_OBJECT_DIRECTORY',
+            'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CEILING_DIRECTORIES', 'GIT_PREFIX'
+          ]);
+          requireCondition(!Object.keys(process.env).some((key) =>
+            (browserIdentityGitEnvironmentKeys.has(key) || key === 'GIT_CONFIG_COUNT'
+              || /^GIT_CONFIG_(?:KEY|VALUE)_/u.test(key)) && process.env[key]),
+          'browser evidence received an identity-substituting Git environment');
           const exactDefaultOwnerText = 'Start a new synthetic neighborhood garden guide and show how it relates to Personal Launch Pods. Keep it no-build until source coverage is reviewed.';
           const exactSyntheticOwnerText = 'Create a new synthetic SongAndStage collaboration opportunity with no private data.';
           const exactDecisionText = (decision) => `Decision: ${decision}. This local preview decision grants no execution, merge, production, messaging, payment or spending authority.`;
@@ -635,7 +783,7 @@ jobs:
             validateSelfHash(artifact, ['adjudication', 'closure', 'conditionResults', 'independentCompletionEvidence', 'rawEvent', 'receiptRelativePath', 'schemaVersion', 'testState'], label);
             exactKeys(artifact.testState, ['file', 'id', 'project', 'repeatEachIndex', 'retry', 'title', 'viewport'], `${label}.testState`);
             const { id: testStateId, ...testStateBody } = artifact.testState;
-            requireCondition(artifact.schemaVersion === 'clover-tree-local-source-closure-receipt-v1'
+            requireCondition(artifact.schemaVersion === 'clover-tree-local-source-closure-receipt-v2'
               && testStateId === sha256(`${canonicalJson(testStateBody)}\n`)
               && artifact.receiptRelativePath === `${artifact.testState.project}-${testStateId}/receipt.json`, `${label} receipt/test-state identity mismatch`);
             exactKeys(artifact.closure, ['completed', 'generation', 'githubObservedAt', 'requestObservedAt'], `${label}.closure`);
@@ -1049,13 +1197,24 @@ jobs:
             try { source = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw new Error(`${label} invalid UTF-8`); }
             try { return { source, value: parseJsonWithoutDuplicateKeys(source) }; } catch { throw new Error(`${label} duplicate or malformed JSON`); }
           };
-          const exactMainCommit = 'be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb';
-          const exactMainTree = 'd0ac615a9f038c62fa6c0b1296312920b0dceb4d';
-          const exactCandidateBaseCommit = 'c44d5bfbe56b4bb3b0b2ee27352f1f06bb74214a';
-          const exactCandidateBaseTree = '9c7b613827dee3541e81387af6c445fb6f3e53a6';
-          const exactCandidateBaseParent = 'b790ca32899981fb3f8536c6278601e2a392cd59';
-          const exactCandidateDeltaPathListSha256 = '9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba';
-          const exactIntegratedSourcePathListSha256 = '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8';
+          const exactRepository = 'chrisdortch/first';
+          const exactProtectedMainCommit = 'be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb';
+          const exactProtectedMainTree = 'd0ac615a9f038c62fa6c0b1296312920b0dceb4d';
+          const exactSourceClosureBaselineCommit = 'c44d5bfbe56b4bb3b0b2ee27352f1f06bb74214a';
+          const exactSourceClosureBaselineTree = '9c7b613827dee3541e81387af6c445fb6f3e53a6';
+          const exactSourceClosureBaselineParent = 'b790ca32899981fb3f8536c6278601e2a392cd59';
+          const exactSourceClosureCommit = '07342cc825f4240ac87de79fcea661b9817c5c34';
+          const exactSourceClosureTree = '3aa5bac7ea1696987cebb2c24ee03c1fa765c91d';
+          const exactSourceClosureParent = exactSourceClosureBaselineCommit;
+          const exactSourceClosureDeltaPathCount = 16;
+          const exactSourceClosureDeltaPathListSha256 = '9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba';
+          const exactIntegratedPrPathCount = 72;
+          const exactIntegratedPrPathListSha256 = '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8';
+          const exactCiEvidenceCorrectionPathListSha256 = '3bf6eb010674c0a9b9bbcad44c636b5bf01e2c5762eb7319a1e5aa2bb5f6a07b';
+          const exactCiEvidenceCorrectionPaths = [
+            '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
           const exactAuthorizedBoundaryPathListSha256 = 'bcc3f4c93d2e74400602f3b688e69714d1550b22ff8edf7de0049f2f0bf793a0';
           const exactAuthorizedBoundaryPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
@@ -1075,61 +1234,246 @@ jobs:
             'apps/clover-launch-studio/test/launch-studio-app.test.mjs',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
-          ].sort();
-          const gitText = (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trimEnd();
-          const gitBytes = (args) => execFileSync('git', args, { encoding: null, maxBuffer: 64 * 1024 * 1024 });
+          ];
+          const exactBinaryPatchFormat = 'git-diff-binary-full-index-no-renames-no-ext-diff-no-textconv';
+          const gitText = (args) => execFileSync('git', ['-C', repositoryRoot, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trimEnd();
+          const gitBytes = (args) => execFileSync('git', ['-C', repositoryRoot, ...args], { encoding: null, maxBuffer: 64 * 1024 * 1024 });
+          requireCondition(gitText(['rev-parse', '--show-toplevel']) === repositoryRoot, 'browser evidence repository discovery mismatch');
+          const compareExactPaths = (left, right) => Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'));
+          const exactSortedPaths = (paths) => [...paths].sort(compareExactPaths);
           const pathListSha256 = (paths) => sha256(`${paths.join('\n')}\n`);
+          const exactSafeGitPath = (value) => typeof value === 'string' && value.length > 0
+            && value === value.normalize('NFC') && !path.isAbsolute(value) && !value.includes('\\')
+            && !/[\0\r\n]/u.test(value) && !value.split('/').includes('..');
           const gitFileEvidence = (commit, file, mode, blob) => {
             requireCondition(/^[0-9a-f]{40}$/u.test(commit) && /^[0-9a-f]{40}$/u.test(blob) && mode === '100644'
-              && !path.isAbsolute(file) && !/[\0\r\n]/u.test(file), `invalid Git file evidence for ${file}`);
+              && exactSafeGitPath(file), `invalid Git file evidence for ${file}`);
             const bytes = gitBytes(['show', `${commit}:${file}`]);
             const computedBlob = crypto.createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex');
-            requireCondition(computedBlob === blob && gitText(['rev-parse', `${commit}:${file}`]) === blob, `Git blob mismatch for ${file}`);
+            requireCondition(computedBlob === blob && gitText(['rev-parse', '--verify', `${commit}:${file}`]) === blob, `Git blob mismatch for ${file}`);
             return { mode, blob, byteCount: bytes.byteLength, sha256: sha256(bytes) };
+          };
+          const exactRawDiffEntries = (base, head, allowedStatuses) => {
+            const raw = gitBytes([
+              'diff', '--raw', '--no-abbrev', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', base, head, '--'
+            ]);
+            if (raw.byteLength === 0) return [];
+            requireCondition(raw[raw.byteLength - 1] === 0, 'exact raw Git diff is not NUL terminated');
+            const fields = [];
+            let offset = 0;
+            for (let index = 0; index < raw.byteLength; index += 1) {
+              if (raw[index] === 0) {
+                fields.push(raw.subarray(offset, index));
+                offset = index + 1;
+              }
+            }
+            requireCondition(offset === raw.byteLength && fields.length % 2 === 0
+              && fields.every((field) => field.byteLength > 0), 'exact raw Git diff has an ambiguous record shape');
+            const decoder = new TextDecoder('utf-8', { fatal: true });
+            const entries = [];
+            for (let index = 0; index < fields.length; index += 2) {
+              const metadata = fields[index].toString('ascii');
+              const match = /^:(\d{6}) (\d{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) ([A-Z])$/u.exec(metadata);
+              const file = decoder.decode(fields[index + 1]);
+              requireCondition(match && exactSafeGitPath(file) && allowedStatuses.includes(match[5]),
+                `unexpected exact Git delta record for ${file}`);
+              const [, baseMode, currentMode, baseBlob, currentBlob, status] = match;
+              requireCondition(currentMode === '100644'
+                && (status === 'M' ? baseMode === '100644' : baseMode === '000000'), `exact Git delta mode mismatch for ${file}`);
+              entries.push({
+                path: file,
+                status,
+                base: status === 'M' ? gitFileEvidence(base, file, baseMode, baseBlob) : null,
+                current: gitFileEvidence(head, file, currentMode, currentBlob)
+              });
+            }
+            return entries.sort((left, right) => compareExactPaths(left.path, right.path));
+          };
+          const exactDeltaEvidence = (base, head, expectedPaths, label) => {
+            const entries = exactRawDiffEntries(base, head, ['M']);
+            const paths = entries.map(({ path: file }) => file);
+            const expected = exactSortedPaths(expectedPaths);
+            requireCondition(canonicalJson(paths) === canonicalJson(expected)
+              && pathListSha256(paths) === pathListSha256(expected), `${label} exact path boundary mismatch`);
+            const body = {
+              baseCommit: base, headCommit: head, pathCount: paths.length,
+              pathListSha256: pathListSha256(paths), paths, entries
+            };
+            const binaryPatch = gitBytes([
+              'diff', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', base, head, '--'
+            ]);
+            return {
+              ...body,
+              manifestSha256: sha256(`${canonicalJson(body)}\n`),
+              binaryPatchFormat: exactBinaryPatchFormat,
+              binaryPatchByteCount: binaryPatch.byteLength,
+              binaryPatchSha256: sha256(binaryPatch)
+            };
+          };
+          const exactCommitParents = (commit) => {
+            const fields = gitText(['rev-list', '--parents', '-n', '1', `${commit}^{commit}`]).split(' ');
+            requireCondition(fields[0] === commit && fields.every((value) => /^[0-9a-f]{40}$/u.test(value)),
+              'exact commit parent record is malformed');
+            return fields.slice(1);
+          };
+          const exactCorrectionChain = (head, expectedHead) => {
+            let ancestor = true;
+            try {
+              execFileSync('git', ['-C', repositoryRoot, 'merge-base', '--is-ancestor', exactSourceClosureCommit, head], { stdio: 'ignore' });
+            } catch { ancestor = false; }
+            requireCondition(ancestor, 'completed source-closure commit is not an ancestor of the current candidate');
+            requireCondition(expectedHead === head, 'exact PR head environment does not match the current candidate');
+            const firstParentText = gitText(['rev-list', '--first-parent', '--reverse', `${exactSourceClosureCommit}..${head}`]);
+            const commitIds = firstParentText === '' ? [] : firstParentText.split('\n');
+            const ancestryText = gitText(['rev-list', '--ancestry-path', '--reverse', `${exactSourceClosureCommit}..${head}`]);
+            const ancestryCommitIds = ancestryText === '' ? [] : ancestryText.split('\n');
+            requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds) && [1, 2].includes(commitIds.length),
+              'CI-evidence correction chain depth or first-parent topology mismatch');
+            const authorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
+            let expectedParent = exactSourceClosureCommit;
+            for (const [index, commit] of commitIds.entries()) {
+              const parents = exactCommitParents(commit);
+              requireCondition(parents.length === 1 && parents[0] === expectedParent,
+                'correction chain is nonlinear or contains a merge commit');
+              const paths = exactRawDiffEntries(expectedParent, commit, ['M']).map(({ path: file }) => file);
+              requireCondition(paths.length > 0 && paths.every((file) => authorizedPaths.includes(file)),
+                'correction commit changed an unauthorized path');
+              if (index === 0) requireCondition(canonicalJson(paths) === canonicalJson(authorizedPaths),
+                'primary correction commit did not change the exact two-path boundary');
+              expectedParent = commit;
+            }
+            const immediateParents = exactCommitParents(head);
+            requireCondition(immediateParents.length === 1, 'current candidate immediate parent identity mismatch');
+            const cumulativePaths = exactRawDiffEntries(exactSourceClosureCommit, head, ['M']).map(({ path: file }) => file);
+            requireCondition(canonicalJson(cumulativePaths) === canonicalJson(authorizedPaths)
+              && pathListSha256(cumulativePaths) === exactCiEvidenceCorrectionPathListSha256,
+              'cumulative CI-evidence correction boundary mismatch');
+            return {
+              baseCommit: exactSourceClosureCommit,
+              depth: commitIds.length,
+              commitIds,
+              linearFirstParent: true,
+              noMergeCommits: true
+            };
           };
           const exactCiSource = () => {
             const head = gitText(['rev-parse', 'HEAD^{commit}']);
             const tree = gitText(['rev-parse', 'HEAD^{tree}']);
-            const parent = gitText(['rev-parse', 'HEAD^']);
-            requireCondition(head === process.env.CLOVER_TREE_HEAD && head === process.env.CLOVER_TREE_EXACT_PR_HEAD, 'CI exact PR head mismatch');
-            requireCondition(parent === exactCandidateBaseCommit, 'CI candidate must be the single exact c44-parent source commit');
-            requireCondition(gitText(['status', '--porcelain=v1', '--untracked-files=all']) === '', 'CI source worktree is dirty');
-            requireCondition(gitText(['rev-parse', `${exactCandidateBaseCommit}^{tree}`]) === exactCandidateBaseTree
-              && gitText(['rev-parse', `${exactCandidateBaseCommit}^`]) === exactCandidateBaseParent
-              && gitText(['rev-parse', `${exactMainCommit}^{tree}`]) === exactMainTree, 'CI source ancestry mismatch');
-            const rawLines = gitText(['diff', '--raw', '--no-abbrev', '--no-renames', '--no-ext-diff', '--no-textconv', exactCandidateBaseCommit, head, '--']).split('\n').filter(Boolean);
-            const entries = rawLines.map((line) => {
-              const match = /^:(\d{6}) (\d{6}) ([0-9a-f]{40}) ([0-9a-f]{40}) (M)\t(.+)$/u.exec(line);
-              requireCondition(match, `unexpected candidate delta entry: ${line}`);
-              const [, baseMode, candidateMode, baseBlob, candidateBlob, status, file] = match;
-              return { path: file, status, base: gitFileEvidence(exactCandidateBaseCommit, file, baseMode, baseBlob), candidate: gitFileEvidence(head, file, candidateMode, candidateBlob) };
-            }).sort((left, right) => left.path.localeCompare(right.path));
-            const paths = entries.map((entry) => entry.path);
-            requireCondition(paths.length === 16 && pathListSha256(paths) === exactCandidateDeltaPathListSha256, 'CI exact 16-path candidate boundary mismatch');
-            const deltaManifestBody = { baseCommit: exactCandidateBaseCommit, pathCount: paths.length, pathListSha256: pathListSha256(paths), paths, entries };
-            const binaryPatch = gitBytes(['diff', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', exactCandidateBaseCommit, head, '--']);
-            const integratedPaths = gitText(['diff', '--name-only', '--no-renames', '--no-ext-diff', '--no-textconv', exactMainCommit, head, '--']).split('\n').filter(Boolean).sort();
-            requireCondition(integratedPaths.length === 72 && pathListSha256(integratedPaths) === exactIntegratedSourcePathListSha256, 'CI integrated 72-path source mismatch');
-            requireCondition(exactAuthorizedBoundaryPaths.length === 17 && pathListSha256(exactAuthorizedBoundaryPaths) === exactAuthorizedBoundaryPathListSha256
-              && paths.every((file) => exactAuthorizedBoundaryPaths.includes(file)), 'CI authorized boundary mismatch');
+            const parents = exactCommitParents(head);
+            requireCondition(process.env.GITHUB_ACTIONS === 'true'
+              && process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'exact-pr-head',
+            'CI source receipt requires the explicit exact-pr-head GitHub Actions role');
+            requireCondition(head === process.env.CLOVER_TREE_HEAD && head === process.env.CLOVER_TREE_EXACT_PR_HEAD,
+              'CI exact PR head mismatch');
+            requireCondition(parents.length === 1 && /^[0-9a-f]{40}$/u.test(tree),
+              'CI current candidate must be one exact non-merge commit');
+            requireCondition(gitBytes(['status', '--porcelain=v1', '-z', '--untracked-files=all']).byteLength === 0,
+              'CI source worktree is dirty');
+            requireCondition(gitText(['rev-parse', `${exactProtectedMainCommit}^{tree}`]) === exactProtectedMainTree
+              && gitText(['rev-parse', `${exactSourceClosureBaselineCommit}^{tree}`]) === exactSourceClosureBaselineTree
+              && canonicalJson(exactCommitParents(exactSourceClosureBaselineCommit)) === canonicalJson([exactSourceClosureBaselineParent])
+              && gitText(['rev-parse', `${exactSourceClosureCommit}^{tree}`]) === exactSourceClosureTree
+              && canonicalJson(exactCommitParents(exactSourceClosureCommit)) === canonicalJson([exactSourceClosureParent])
+              && gitText(['merge-base', exactProtectedMainCommit, exactSourceClosureBaselineCommit]) === exactProtectedMainCommit,
+            'CI protected-main, baseline or source-closure identity mismatch');
+            const sourceClosurePaths = exactRawDiffEntries(
+              exactSourceClosureBaselineCommit, exactSourceClosureCommit, ['M']
+            ).map(({ path: file }) => file);
+            requireCondition(sourceClosurePaths.length === exactSourceClosureDeltaPathCount
+              && pathListSha256(sourceClosurePaths) === exactSourceClosureDeltaPathListSha256,
+            'CI completed source-closure delta identity mismatch');
+            const sourceClosureDelta = exactDeltaEvidence(
+              exactSourceClosureBaselineCommit, exactSourceClosureCommit, sourceClosurePaths, 'completed source closure'
+            );
+            const currentCumulativePaths = exactRawDiffEntries(
+              exactSourceClosureBaselineCommit, head, ['M']
+            ).map(({ path: file }) => file);
+            requireCondition(canonicalJson(currentCumulativePaths) === canonicalJson(sourceClosurePaths)
+              && currentCumulativePaths.length === exactSourceClosureDeltaPathCount
+              && pathListSha256(currentCumulativePaths) === exactSourceClosureDeltaPathListSha256,
+            'CI current candidate altered the cumulative source-closure path boundary');
+            const correctionChain = exactCorrectionChain(head, process.env.CLOVER_TREE_EXACT_PR_HEAD);
+            const ciEvidenceCorrectionDelta = exactDeltaEvidence(
+              exactSourceClosureCommit, head, exactCiEvidenceCorrectionPaths, 'CI-evidence correction'
+            );
+            requireCondition(ciEvidenceCorrectionDelta.pathListSha256 === exactCiEvidenceCorrectionPathListSha256,
+              'CI-evidence correction path-list identity mismatch');
+            const integratedEntries = exactRawDiffEntries(exactProtectedMainCommit, head, ['A', 'M']);
+            const integratedPaths = integratedEntries.map(({ path: file }) => file);
+            requireCondition(integratedPaths.length === exactIntegratedPrPathCount
+              && pathListSha256(integratedPaths) === exactIntegratedPrPathListSha256,
+            'CI exact integrated PR boundary mismatch');
+            const authorizedPaths = exactSortedPaths(exactAuthorizedBoundaryPaths);
+            requireCondition(authorizedPaths.length === 17
+              && pathListSha256(authorizedPaths) === exactAuthorizedBoundaryPathListSha256
+              && sourceClosurePaths.every((file) => authorizedPaths.includes(file))
+              && exactCiEvidenceCorrectionPaths.every((file) => authorizedPaths.includes(file)),
+            'CI authorized source boundary mismatch');
             const gitVersion = gitText(['--version']);
             requireCondition(/^git version \d+\.\d+\.\d+(?:\.[A-Za-z0-9.-]+)?(?: \([A-Za-z0-9 ._-]+\))?$/u.test(gitVersion), 'CI Git version identity malformed');
             return {
-              repository: 'chrisdortch/first',
-              main: { commit: exactMainCommit, tree: exactMainTree },
-              base: { commit: exactCandidateBaseCommit, tree: exactCandidateBaseTree, parent: exactCandidateBaseParent },
-              candidate: { commit: head, tree, parent, cleanWorktree: true, role: 'exact-pr-head' },
-              candidateDelta: {
-                ...deltaManifestBody,
-                manifestSha256: sha256(`${canonicalJson(deltaManifestBody)}\n`),
-                binaryPatchFormat: 'git-diff-binary-full-index-no-renames-no-ext-diff-no-textconv',
-                binaryPatchByteCount: binaryPatch.byteLength,
-                binaryPatchSha256: sha256(binaryPatch),
-                gitVersion
+              repository: exactRepository,
+              protectedMain: { commit: exactProtectedMainCommit, tree: exactProtectedMainTree },
+              sourceClosureBaseline: {
+                commit: exactSourceClosureBaselineCommit,
+                tree: exactSourceClosureBaselineTree,
+                parent: exactSourceClosureBaselineParent
               },
-              integratedSource: { baseCommit: exactMainCommit, pathCount: integratedPaths.length, pathListSha256: pathListSha256(integratedPaths), paths: integratedPaths },
-              authorizedBoundary: { pathCount: exactAuthorizedBoundaryPaths.length, pathListSha256: pathListSha256(exactAuthorizedBoundaryPaths), paths: exactAuthorizedBoundaryPaths, candidateDeltaSubset: true },
-              testFileSha256: sha256(fs.readFileSync('apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'))
+              sourceClosureCommit: {
+                commit: exactSourceClosureCommit,
+                tree: exactSourceClosureTree,
+                parent: exactSourceClosureParent
+              },
+              currentCandidate: {
+                commit: head,
+                tree,
+                immediateParent: parents[0],
+                correctionChainDepth: correctionChain.depth,
+                correctionCommitIds: correctionChain.commitIds,
+                cleanWorktree: true,
+                role: 'exact-pr-head'
+              },
+              correctionChain,
+              sourceClosureDelta: {
+                ...sourceClosureDelta,
+                gitVersion,
+                currentCumulative: {
+                  headCommit: head,
+                  pathCount: currentCumulativePaths.length,
+                  pathListSha256: pathListSha256(currentCumulativePaths),
+                  paths: currentCumulativePaths,
+                  boundaryPreserved: true
+                }
+              },
+              ciEvidenceCorrectionDelta,
+              integratedPrDelta: {
+                baseCommit: exactProtectedMainCommit,
+                headCommit: head,
+                pathCount: integratedPaths.length,
+                pathListSha256: pathListSha256(integratedPaths),
+                paths: integratedPaths,
+                allCurrentModes100644: true
+              },
+              authorizedSourceBoundary: {
+                maximumPathCount: authorizedPaths.length,
+                pathListSha256: pathListSha256(authorizedPaths),
+                paths: authorizedPaths,
+                sourceClosureDeltaSubset: true,
+                ciEvidenceCorrectionDeltaSubset: true
+              },
+              executionContext: {
+                githubActions: true,
+                localSourceClosureContext: 'exact-pr-head',
+                declaredHead: process.env.CLOVER_TREE_HEAD,
+                exactPrHead: process.env.CLOVER_TREE_EXACT_PR_HEAD,
+                receiptIssuance: 'enabled'
+              },
+              authority: {
+                authoritativePrSourceClosureReceipt: true,
+                finalProviderAcceptance: false,
+                privateDataAccessed: false,
+                consequentialAuthorityGranted: false
+              }
             };
           };
           const exactLocalConditionNames = [
@@ -1200,13 +1544,156 @@ jobs:
             frozenArchive: 'not-created-predeployment',
             finalPreviewDecision: 'not-issued'
           };
+          const assertExactSourceStringArray = (value, label, sorted = true) => {
+            requireCondition(Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+              && (!sorted || value.every((entry, index) => index === 0
+                || compareExactPaths(value[index - 1], entry) < 0)), `${label} is not one exact ordered string array`);
+          };
+          const assertExactSourceFileEvidence = (value, label) => {
+            exactKeys(value, ['blob', 'byteCount', 'mode', 'sha256'], label);
+            requireCondition(value.mode === '100644' && typeof value.blob === 'string' && /^[0-9a-f]{40}$/u.test(value.blob)
+              && Number.isSafeInteger(value.byteCount) && value.byteCount >= 0
+              && typeof value.sha256 === 'string' && /^[0-9a-f]{64}$/u.test(value.sha256), `${label} file evidence mismatch`);
+          };
+          const exactSourceDeltaKeys = [
+            'baseCommit', 'binaryPatchByteCount', 'binaryPatchFormat', 'binaryPatchSha256', 'entries', 'headCommit',
+            'manifestSha256', 'pathCount', 'pathListSha256', 'paths'
+          ];
+          const assertExactSourceDelta = (value, keys, label) => {
+            exactKeys(value, keys, label);
+            requireCondition(typeof value.baseCommit === 'string' && /^[0-9a-f]{40}$/u.test(value.baseCommit)
+              && typeof value.headCommit === 'string' && /^[0-9a-f]{40}$/u.test(value.headCommit)
+              && Number.isSafeInteger(value.pathCount) && value.pathCount > 0
+              && typeof value.pathListSha256 === 'string' && /^[0-9a-f]{64}$/u.test(value.pathListSha256)
+              && typeof value.manifestSha256 === 'string' && /^[0-9a-f]{64}$/u.test(value.manifestSha256)
+              && value.binaryPatchFormat === exactBinaryPatchFormat
+              && Number.isSafeInteger(value.binaryPatchByteCount) && value.binaryPatchByteCount > 0
+              && typeof value.binaryPatchSha256 === 'string' && /^[0-9a-f]{64}$/u.test(value.binaryPatchSha256),
+            `${label} delta identity mismatch`);
+            assertExactSourceStringArray(value.paths, `${label}.paths`);
+            requireCondition(Array.isArray(value.entries) && value.entries.length === value.pathCount
+              && value.paths.length === value.pathCount && pathListSha256(value.paths) === value.pathListSha256,
+            `${label} delta inventory mismatch`);
+            value.entries.forEach((entry, index) => {
+              exactKeys(entry, ['base', 'current', 'path', 'status'], `${label}.entries[${index}]`);
+              requireCondition(entry.path === value.paths[index] && entry.status === 'M',
+                `${label}.entries[${index}] identity mismatch`);
+              assertExactSourceFileEvidence(entry.base, `${label}.entries[${index}].base`);
+              assertExactSourceFileEvidence(entry.current, `${label}.entries[${index}].current`);
+            });
+            const manifestBody = {
+              baseCommit: value.baseCommit,
+              headCommit: value.headCommit,
+              pathCount: value.pathCount,
+              pathListSha256: value.pathListSha256,
+              paths: value.paths,
+              entries: value.entries
+            };
+            requireCondition(sha256(`${canonicalJson(manifestBody)}\n`) === value.manifestSha256,
+              `${label} manifest self-hash mismatch`);
+          };
+          const assertExactCiSource = (value, expected, label) => {
+            exactKeys(value, [
+              'authority', 'authorizedSourceBoundary', 'ciEvidenceCorrectionDelta', 'correctionChain', 'currentCandidate',
+              'executionContext', 'integratedPrDelta', 'protectedMain', 'repository', 'sourceClosureBaseline',
+              'sourceClosureCommit', 'sourceClosureDelta'
+            ], label);
+            requireCondition(value.repository === exactRepository, `${label} repository mismatch`);
+            exactKeys(value.protectedMain, ['commit', 'tree'], `${label}.protectedMain`);
+            exactKeys(value.sourceClosureBaseline, ['commit', 'parent', 'tree'], `${label}.sourceClosureBaseline`);
+            exactKeys(value.sourceClosureCommit, ['commit', 'parent', 'tree'], `${label}.sourceClosureCommit`);
+            for (const [identityLabel, identity] of [
+              ['protectedMain', value.protectedMain],
+              ['sourceClosureBaseline', value.sourceClosureBaseline],
+              ['sourceClosureCommit', value.sourceClosureCommit]
+            ]) {
+              requireCondition(Object.values(identity).every((field) => typeof field === 'string' && /^[0-9a-f]{40}$/u.test(field)),
+                `${label}.${identityLabel} Git identity mismatch`);
+            }
+            exactKeys(value.currentCandidate, [
+              'cleanWorktree', 'commit', 'correctionChainDepth', 'correctionCommitIds', 'immediateParent', 'role', 'tree'
+            ], `${label}.currentCandidate`);
+            assertExactSourceStringArray(value.currentCandidate.correctionCommitIds,
+              `${label}.currentCandidate.correctionCommitIds`, false);
+            requireCondition(typeof value.currentCandidate.commit === 'string' && /^[0-9a-f]{40}$/u.test(value.currentCandidate.commit)
+              && typeof value.currentCandidate.tree === 'string' && /^[0-9a-f]{40}$/u.test(value.currentCandidate.tree)
+              && typeof value.currentCandidate.immediateParent === 'string'
+              && /^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
+              && value.currentCandidate.cleanWorktree === true && value.currentCandidate.role === 'exact-pr-head'
+              && Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
+              && [1, 2].includes(value.currentCandidate.correctionChainDepth)
+              && value.currentCandidate.correctionCommitIds.length === value.currentCandidate.correctionChainDepth,
+            `${label}.currentCandidate identity mismatch`);
+            exactKeys(value.correctionChain,
+              ['baseCommit', 'commitIds', 'depth', 'linearFirstParent', 'noMergeCommits'], `${label}.correctionChain`);
+            assertExactSourceStringArray(value.correctionChain.commitIds, `${label}.correctionChain.commitIds`, false);
+            requireCondition(value.correctionChain.baseCommit === exactSourceClosureCommit
+              && value.correctionChain.depth === value.currentCandidate.correctionChainDepth
+              && canonicalJson(value.correctionChain.commitIds) === canonicalJson(value.currentCandidate.correctionCommitIds)
+              && value.correctionChain.linearFirstParent === true && value.correctionChain.noMergeCommits === true,
+            `${label}.correctionChain identity mismatch`);
+            const sourceClosureDelta = value.sourceClosureDelta;
+            assertExactSourceDelta(sourceClosureDelta,
+              [...exactSourceDeltaKeys, 'currentCumulative', 'gitVersion'], `${label}.sourceClosureDelta`);
+            exactKeys(sourceClosureDelta.currentCumulative,
+              ['boundaryPreserved', 'headCommit', 'pathCount', 'pathListSha256', 'paths'],
+              `${label}.sourceClosureDelta.currentCumulative`);
+            const currentCumulative = sourceClosureDelta.currentCumulative;
+            assertExactSourceStringArray(currentCumulative.paths, `${label}.sourceClosureDelta.currentCumulative.paths`);
+            requireCondition(currentCumulative.boundaryPreserved === true
+              && currentCumulative.pathCount === currentCumulative.paths.length
+              && pathListSha256(currentCumulative.paths) === currentCumulative.pathListSha256
+              && typeof currentCumulative.headCommit === 'string' && /^[0-9a-f]{40}$/u.test(currentCumulative.headCommit)
+              && typeof sourceClosureDelta.gitVersion === 'string',
+            `${label}.sourceClosureDelta.currentCumulative identity mismatch`);
+            assertExactSourceDelta(value.ciEvidenceCorrectionDelta, exactSourceDeltaKeys,
+              `${label}.ciEvidenceCorrectionDelta`);
+            exactKeys(value.integratedPrDelta,
+              ['allCurrentModes100644', 'baseCommit', 'headCommit', 'pathCount', 'pathListSha256', 'paths'],
+              `${label}.integratedPrDelta`);
+            assertExactSourceStringArray(value.integratedPrDelta.paths, `${label}.integratedPrDelta.paths`);
+            requireCondition(value.integratedPrDelta.allCurrentModes100644 === true
+              && value.integratedPrDelta.pathCount === value.integratedPrDelta.paths.length
+              && pathListSha256(value.integratedPrDelta.paths) === value.integratedPrDelta.pathListSha256
+              && typeof value.integratedPrDelta.baseCommit === 'string' && /^[0-9a-f]{40}$/u.test(value.integratedPrDelta.baseCommit)
+              && typeof value.integratedPrDelta.headCommit === 'string' && /^[0-9a-f]{40}$/u.test(value.integratedPrDelta.headCommit),
+            `${label}.integratedPrDelta identity mismatch`);
+            exactKeys(value.authorizedSourceBoundary, [
+              'ciEvidenceCorrectionDeltaSubset', 'maximumPathCount', 'pathListSha256', 'paths', 'sourceClosureDeltaSubset'
+            ], `${label}.authorizedSourceBoundary`);
+            assertExactSourceStringArray(value.authorizedSourceBoundary.paths, `${label}.authorizedSourceBoundary.paths`);
+            requireCondition(value.authorizedSourceBoundary.maximumPathCount === value.authorizedSourceBoundary.paths.length
+              && pathListSha256(value.authorizedSourceBoundary.paths) === value.authorizedSourceBoundary.pathListSha256
+              && value.authorizedSourceBoundary.sourceClosureDeltaSubset === true
+              && value.authorizedSourceBoundary.ciEvidenceCorrectionDeltaSubset === true,
+            `${label}.authorizedSourceBoundary identity mismatch`);
+            exactKeys(value.executionContext,
+              ['declaredHead', 'exactPrHead', 'githubActions', 'localSourceClosureContext', 'receiptIssuance'],
+              `${label}.executionContext`);
+            requireCondition(value.executionContext.receiptIssuance === 'enabled'
+              && value.executionContext.localSourceClosureContext === 'exact-pr-head'
+              && value.executionContext.githubActions === true,
+            `${label}.executionContext role mismatch`);
+            for (const field of ['declaredHead', 'exactPrHead']) {
+              requireCondition(typeof value.executionContext[field] === 'string'
+                && /^[0-9a-f]{40}$/u.test(value.executionContext[field]),
+              `${label}.executionContext.${field} identity mismatch`);
+            }
+            exactKeys(value.authority, [
+              'authoritativePrSourceClosureReceipt', 'consequentialAuthorityGranted', 'finalProviderAcceptance', 'privateDataAccessed'
+            ], `${label}.authority`);
+            requireCondition(value.authority.authoritativePrSourceClosureReceipt === true
+              && value.authority.finalProviderAcceptance === false && value.authority.privateDataAccessed === false
+              && value.authority.consequentialAuthorityGranted === false, `${label}.authority identity mismatch`);
+            exactJson(value, expected, `${label} Git-recomputed source`);
+          };
           const assertLocalReceipt = (value, expectedSource, expectedState, label) => {
             exactKeys(value, [
               'adjudications', 'blockingFindings', 'canonicalSha256', 'conditionResults', 'independentCompletionEvidence',
               'closure', 'localState', 'rawEvents', 'schemaVersion', 'source', 'testOutcome', 'testState'
             ], label);
-            requireCondition(value.schemaVersion === 'clover-tree-local-source-closure-receipt-v1', `${label} schema`);
-            exactJson(value.source, expectedSource, `${label} exact source`);
+            requireCondition(value.schemaVersion === 'clover-tree-local-source-closure-receipt-v2', `${label} schema`);
+            assertExactCiSource(value.source, expectedSource, `${label}.source`);
             exactJson(value.testState, expectedState, `${label} exact test state`);
             exactJson(value.testOutcome, { expectedStatus: 'passed', status: 'passed' }, `${label} exact passed outcome`);
             exactKeys(value.closure, [
@@ -1372,7 +1859,7 @@ jobs:
             requireCondition(value.canonicalSha256 === sha256(`${canonicalJson(withoutHash)}\n`), `${label} self hash mismatch`);
             assertPublicBrowserArtifactBytes(Buffer.from(canonicalJson(value), 'utf8'), label);
           };
-          const contrastContractSource = fs.readFileSync('apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts', 'utf8');
+          const contrastContractSource = fs.readFileSync(path.join(repositoryRoot, 'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'), 'utf8');
           const contrastContractMatches = [...contrastContractSource.matchAll(/^export const MIN_MEANINGFUL_CONTRAST_RATIO = (\d+(?:\.\d+)?);$/gmu)];
           requireCondition(contrastContractMatches.length === 1, 'canonical meaningful contrast contract missing or ambiguous');
           const minimumRequiredMeaningfulContrastRatio = Number(contrastContractMatches[0][1]);
@@ -1387,16 +1874,170 @@ jobs:
             if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`browser evidence path is not one regular file: ${target}`);
             return { bytes: fs.readFileSync(target), size: stat.size };
           };
-          const assertPublicBrowserArtifactBytes = (bytes, label) => {
+          const publicBrowserArtifactFindings = (bytes, label) => {
             let source;
             try { source = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw new Error(`${label} invalid UTF-8 before privacy scan`); }
-            const findings = [
+            return [
               [/\/Users\/|\/home\/|\/private\/tmp\/|\/private\/var\/folders\/|\/tmp\/|(?<![A-Za-z0-9+.-])[A-Za-z]:[\\\/]/u, 'absolute-local-path'],
               [/\b(?:gh[oprsu]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._~+\/-]{16,})\b/u, 'credential'],
               [/BEGIN [A-Z ]*PRIVATE KEY|["']?(?:VERCEL_TOKEN|GITHUB_TOKEN|CLOVER_ARCHIVE_TOKEN|CLOVER_ARCHIVE_(?:ENCRYPTION|SEAL)_KEY|api[_-]?key|access[_-]?token|auth[_-]?token|secret)["']?\s*(?:=|:)\s*["']?[A-Za-z0-9._~+\/-]{8,}/iu, 'secret'],
               [/"(?:privateDataAccessed|secretsIncluded|consequentialAuthorityGranted)"\s*:\s*true/u, 'affirmative-private-or-authority-claim']
             ].filter(([pattern]) => pattern.test(source)).map(([, finding]) => finding);
+          };
+          const assertPublicBrowserArtifactBytes = (bytes, label) => {
+            const findings = publicBrowserArtifactFindings(bytes, label);
             requireCondition(findings.length === 0, `${label} prohibited serialized finding: ${findings.join(',')}`);
+          };
+          const runtimePrivacyFindingClasses = (bytes, label) => {
+            let source;
+            try { source = new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { throw new Error(`${label} invalid UTF-8`); }
+            return [
+              ['private-key', /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/u],
+              ['bearer-token', /\bBearer\s+[A-Za-z0-9._~+\/-]{20,}={0,2}\b/iu],
+              ['local-user-path', /(?:\/Users\/[^/\s"']+|\/home\/[^/\s"']+|[A-Za-z]:\\Users\\[^\\\s"']+)/u]
+            ].filter(([, pattern]) => pattern.test(source)).map(([finding]) => finding);
+          };
+          const runSyntheticPrivacyFixtureSelfTest = () => {
+            const createBytes = (parts) => Buffer.from(parts.join(''), 'utf8');
+            const specs = [
+              {
+                id: 'mac-user-path', expectedClass: 'local-user-path', expectedBytes: 34,
+                expectedSha256: 'ce0c3a8bbfa58d29114b579dab34dfa7fbfb1307b3af09f559bf818bf69b6712',
+                create: () => createBytes(['{"path":"', '/Us', 'ers/', 'example/private', '"}\n']),
+                truncate: () => createBytes(['{"path":"', '/Us', 'ers', '"}\n']),
+                change: () => createBytes(['{"path":"', '/Xs', 'ers/', 'example/private', '"}\n'])
+              },
+              {
+                id: 'linux-home-path', expectedClass: 'local-user-path', expectedBytes: 33,
+                expectedSha256: 'f0a80be9e09c470d6127fed776a62b50c12fc97b10b3273364e0c1a2e015a24c',
+                create: () => createBytes(['{"path":"', '/ho', 'me/', 'example/private', '"}\n']),
+                truncate: () => createBytes(['{"path":"', '/ho', 'me', '"}\n']),
+                change: () => createBytes(['{"path":"', '/xo', 'me/', 'example/private', '"}\n'])
+              },
+              {
+                id: 'bearer-credential', expectedClass: 'bearer-token', expectedBytes: 60,
+                expectedSha256: 'db1dc988790c7205b1e38d146e718aa49362d332ad6f6a20a83290fe3db05362',
+                create: () => createBytes(['{"authorization":"', 'Be', 'arer ', 'abcdefghijklmnopqrstuvwxyz012345', '"}\n']),
+                truncate: () => createBytes(['{"authorization":"', 'Be', 'arer ', 'abcdefghijklmno', '"}\n']),
+                change: () => createBytes(['{"authorization":"', 'Xe', 'arer ', 'abcdefghijklmnopqrstuvwxyz012345', '"}\n'])
+              },
+              {
+                id: 'private-key-header', expectedClass: 'private-key', expectedBytes: 38,
+                expectedSha256: 'f4bbc0d7c65c6ee67bdcde735b87d5fd149daac2511aec8363dbd3311b94f86e',
+                create: () => createBytes(['-----BE', 'GIN ', 'PRIVATE ', 'KEY-----', '\nsynthetic\n']),
+                truncate: () => createBytes(['-----BE', 'GIN ', 'PRIVATE ', 'KE', '\nsynthetic\n']),
+                change: () => createBytes(['-----BE', 'GIN ', 'XRIVATE ', 'KEY-----', '\nsynthetic\n'])
+              }
+            ];
+            const cleanSpec = {
+              id: 'clean-control', expectedClass: 'none', expectedBytes: 41,
+              expectedSha256: '8d7edde153a0e278567d12cb995f6c2f6bf531a3f63fefe87eb2a2b26f4df45b',
+              create: () => createBytes(['{"url":"http://', '127.0.0.1:3117', '/api/tree', '"}\n'])
+            };
+            const auxiliarySpecs = [
+              { id: 'private-tmp-path', create: () => createBytes(['{"path":"', '/private/', 'tmp/', 'clover-secret', '"}\n']) },
+              { id: 'private-var-path', create: () => createBytes(['{"path":"', '/private/', 'var/folders/', 'aa/clover-secret', '"}\n']) },
+              { id: 'tmp-path', create: () => createBytes(['{"path":"', '/tm', 'p/', 'clover-secret', '"}\n']) },
+              { id: 'windows-path', create: () => createBytes(['{"path":"C:', '\\\\', 'work', '\\\\', 'clover-secret"}\n']) },
+              { id: 'windows-path-one-backslash', create: () => createBytes(['C:', '\\', 'work', '\\', 'clover-secret']) },
+              { id: 'github-pat', create: () => createBytes(['{"token":"github_', 'pat_', 'abcdefghijklmnopqrstuvwxyz0123456789', '"}\n']) },
+              { id: 'json-token', create: () => createBytes(['{"access_', 'token":"', 'abcdefghijklmnopqrstuvwxyz012345', '"}\n']) },
+              { id: 'json-key', create: () => createBytes(['{"api', 'Key":"', 'abcdefghijklmnopqrstuvwxyz012345', '"}\n']) },
+              { id: 'private-data', create: () => createBytes(['{"privateData', 'Accessed":', 'true', '}\n']) },
+              { id: 'secrets-included', create: () => createBytes(['{"secrets', 'Included":', 'true', '}\n']) },
+              { id: 'authority-granted', create: () => createBytes(['{"consequentialAuthority', 'Granted":', 'true', '}\n']) }
+            ];
+            const validatePositive = (spec, bytes) => {
+              const observed = runtimePrivacyFindingClasses(bytes, `synthetic ${spec.id}`);
+              requireCondition(observed.length === 1 && observed[0] === spec.expectedClass, `synthetic ${spec.id} intended finding class mismatch`);
+              let rejected = false;
+              try { assertPublicBrowserArtifactBytes(bytes, `synthetic ${spec.id}`); } catch { rejected = true; }
+              requireCondition(rejected, `synthetic ${spec.id} was accepted by the public artifact scanner`);
+              requireCondition(bytes.length === spec.expectedBytes && sha256(bytes) === spec.expectedSha256, `synthetic ${spec.id} byte identity mismatch`);
+              return { id: spec.id, bytes: bytes.length, sha256: sha256(bytes), expectedClass: spec.expectedClass, observedClass: observed[0] };
+            };
+            const validateClean = (spec, bytes) => {
+              const observed = runtimePrivacyFindingClasses(bytes, `synthetic ${spec.id}`);
+              requireCondition(observed.length === 0, `synthetic ${spec.id} produced a privacy finding`);
+              assertPublicBrowserArtifactBytes(bytes, `synthetic ${spec.id}`);
+              requireCondition(bytes.length === spec.expectedBytes && sha256(bytes) === spec.expectedSha256, `synthetic ${spec.id} byte identity mismatch`);
+              return { id: spec.id, bytes: bytes.length, sha256: sha256(bytes), expectedClass: spec.expectedClass, observedClass: 'none' };
+            };
+            const expectedIds = [...specs.map(({ id }) => id), cleanSpec.id];
+            const validateSet = (bodies) => {
+              requireCondition(Array.isArray(bodies) && bodies.length === expectedIds.length
+                && bodies.every(({ id }, index) => id === expectedIds[index]), 'synthetic privacy fixture set mismatch');
+              const records = specs.map((spec, index) => validatePositive(spec, bodies[index].bytes));
+              records.push(validateClean(cleanSpec, bodies[bodies.length - 1].bytes));
+              return records;
+            };
+            const runnerTempInput = process.env.RUNNER_TEMP;
+            requireCondition(typeof runnerTempInput === 'string' && runnerTempInput.length > 0 && path.isAbsolute(runnerTempInput)
+              && path.normalize(runnerTempInput) === runnerTempInput && path.resolve(runnerTempInput) === runnerTempInput,
+            'synthetic privacy fixture temp root input mismatch');
+            const runnerTempStat = fs.lstatSync(runnerTempInput);
+            requireCondition(runnerTempStat.isDirectory() && !runnerTempStat.isSymbolicLink()
+              && fs.realpathSync.native(runnerTempInput) === runnerTempInput, 'synthetic privacy fixture temp root is not canonical');
+            const fixtureRoot = path.join(runnerTempInput, 'clover-tree-synthetic-privacy-fixtures');
+            const allSpecs = [...specs, cleanSpec, ...auxiliarySpecs];
+            const fixturePaths = allSpecs.map(({ id }) => path.join(fixtureRoot, `${id}.bin`));
+            requireCondition(!fs.existsSync(fixtureRoot) && path.dirname(fixtureRoot) === runnerTempInput,
+              'synthetic privacy fixture directory already exists or escaped the temp root');
+            const bodies = [];
+            try {
+              fs.mkdirSync(fixtureRoot, { mode: 0o700 });
+              const rootStat = fs.lstatSync(fixtureRoot);
+              requireCondition(rootStat.isDirectory() && !rootStat.isSymbolicLink() && (rootStat.mode & 0o777) === 0o700,
+                'synthetic privacy fixture directory identity mismatch');
+              for (let index = 0; index < allSpecs.length; index += 1) {
+                const spec = allSpecs[index];
+                const created = spec.create();
+                fs.writeFileSync(fixturePaths[index], created, { flag: 'wx', mode: 0o600 });
+                const stat = fs.lstatSync(fixturePaths[index]);
+                requireCondition(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && (stat.mode & 0o777) === 0o600
+                  && stat.size === created.length, `synthetic ${spec.id} file identity mismatch`);
+                const bytes = fs.readFileSync(fixturePaths[index]);
+                requireCondition(bytes.equals(created), `synthetic ${spec.id} materialization mismatch`);
+                bodies.push({ id: spec.id, bytes });
+              }
+              const records = validateSet(bodies.slice(0, expectedIds.length));
+              for (const entry of bodies.slice(expectedIds.length)) {
+                let auxiliaryRejected = false;
+                try { assertPublicBrowserArtifactBytes(entry.bytes, `synthetic ${entry.id}`); } catch { auxiliaryRejected = true; }
+                requireCondition(auxiliaryRejected, `synthetic ${entry.id} was accepted by the public artifact scanner`);
+              }
+              for (let index = 0; index < specs.length; index += 1) {
+                let removalRejected = false;
+                const exactBodies = bodies.slice(0, expectedIds.length);
+                try { validateSet(exactBodies.filter((_, bodyIndex) => bodyIndex !== index)); } catch { removalRejected = true; }
+                requireCondition(removalRejected, `synthetic ${specs[index].id} removal was accepted`);
+                for (const mutation of [specs[index].truncate(), specs[index].change()]) {
+                  requireCondition(runtimePrivacyFindingClasses(mutation, `synthetic ${specs[index].id} mutation`).length === 0
+                    && publicBrowserArtifactFindings(mutation, `synthetic ${specs[index].id} mutation`).length === 0,
+                  `synthetic ${specs[index].id} mutation retained its intended finding`);
+                  let mutationRejected = false;
+                  try { validateSet(exactBodies.map((entry, bodyIndex) => bodyIndex === index ? { ...entry, bytes: mutation } : entry)); } catch { mutationRejected = true; }
+                  requireCondition(mutationRejected, `synthetic ${specs[index].id} mutation was accepted`);
+                }
+              }
+              const workflowBytes = fs.readFileSync(path.join(repositoryRoot, '.github/workflows/validate-clover-tree-command-center.yml'));
+              for (const { bytes } of bodies) requireCondition(!workflowBytes.includes(bytes), 'tracked workflow contains a complete synthetic privacy fixture');
+              for (const record of records) exactKeys(record, ['expectedClass', 'id', 'observedClass', 'sha256', 'bytes'], `synthetic ${record.id} durable evidence`);
+              return { records, bodies: bodies.map(({ bytes }) => Buffer.from(bytes)) };
+            } finally {
+              for (const target of fixturePaths) {
+                try { if (fs.existsSync(target)) fs.unlinkSync(target); } catch { throw new Error('synthetic privacy fixture cleanup failed'); }
+              }
+              try { if (fs.existsSync(fixtureRoot)) fs.rmdirSync(fixtureRoot); } catch { throw new Error('synthetic privacy fixture directory cleanup failed'); }
+            }
+          };
+          const syntheticPrivacyFixtureProof = runSyntheticPrivacyFixtureSelfTest();
+          requireCondition(!fs.existsSync(path.join(process.env.RUNNER_TEMP, 'clover-tree-synthetic-privacy-fixtures')),
+            'synthetic privacy fixture cleanup was incomplete');
+          const assertNoSyntheticPrivacyFixtureBody = (bytes, label) => {
+            for (const fixtureBody of syntheticPrivacyFixtureProof.bodies) {
+              requireCondition(!bytes.includes(fixtureBody), `${label} contains a complete synthetic privacy fixture body`);
+            }
           };
           const readCanonicalJson = (target, label, maximumBytes = 64 * 1024 * 1024) => {
             const stat = fs.lstatSync(target);
@@ -2353,7 +2994,7 @@ jobs:
               adjudication: 'LOCAL_HARNESS_REPORTING_ARTIFACT_CONFIRMED', reason: exactLocalReportingArtifactReason
             };
             const artifact = sealed({
-              schemaVersion: 'clover-tree-local-source-closure-receipt-v1',
+              schemaVersion: 'clover-tree-local-source-closure-receipt-v2',
               receiptRelativePath: `${project}-${testStateId}/receipt.json`, testState: { id: testStateId, ...testStateBody },
               closure, conditionResults, rawEvent, independentCompletionEvidence: completion, adjudication
             });
@@ -2466,30 +3107,9 @@ jobs:
             const sidecar = sealed(sidecarBody);
             validateGateScanAttemptSidecar(sidecar, project, exactProjects[project], document);
             assertGateScanAttemptMutationResistance(document, sidecar, project, exactProjects[project], localArtifactFence);
-            const prohibitedBrowserArtifactMutations = [
-              ['mac-user-path', '{"path":"/Users/example/private"}\n'],
-              ['linux-home-path', '{"path":"/home/example/private"}\n'],
-              ['private-tmp-path', '{"path":"/private/tmp/clover-secret"}\n'],
-              ['private-var-path', '{"path":"/private/var/folders/aa/clover-secret"}\n'],
-              ['tmp-path', '{"path":"/tmp/clover-secret"}\n'],
-              ['windows-path', '{"path":"C:\\\\work\\\\clover-secret"}\n'],
-              ['windows-path-one-backslash', String.raw`C:\work\clover-secret`],
-              ['github-pat', '{"token":"github_pat_abcdefghijklmnopqrstuvwxyz0123456789"}\n'],
-              ['credential', '{"authorization":"Bearer abcdefghijklmnopqrstuvwxyz012345"}\n'],
-              ['json-token', '{"access_token":"abcdefghijklmnopqrstuvwxyz012345"}\n'],
-              ['json-key', '{"apiKey":"abcdefghijklmnopqrstuvwxyz012345"}\n'],
-              ['private-key', '-----BEGIN PRIVATE KEY-----\nsynthetic\n'],
-              ['private-data', '{"privateDataAccessed":true}\n'],
-              ['secrets-included', '{"secretsIncluded":true}\n'],
-              ['authority-granted', '{"consequentialAuthorityGranted":true}\n']
-            ];
-            for (const [label, source] of prohibitedBrowserArtifactMutations) {
-              let rejected = false;
-              try { assertPublicBrowserArtifactBytes(Buffer.from(source, 'utf8'), `synthetic ${label}`); } catch { rejected = true; }
-              requireCondition(rejected, `Gate serialized ${label} mutation was accepted`);
-            }
-            assertPublicBrowserArtifactBytes(Buffer.from('{"url":"http://127.0.0.1:3117/api/tree"}\n', 'utf8'),
-              'synthetic safe HTTP URL');
+            requireCondition(syntheticPrivacyFixtureProof.records.length === 5
+              && syntheticPrivacyFixtureProof.records.filter(({ observedClass }) => observedClass !== 'none').length === 4,
+            'Gate runtime synthetic privacy fixture proof mismatch');
             const substitutedSource = { ...source, text: `${source.text}unreviewed` };
             let substitutedSourceRejected = false;
             try { validateGateSource(substitutedSource, 'synthetic substituted exact source'); } catch { substitutedSourceRejected = true; }
@@ -3008,7 +3628,32 @@ jobs:
               && receiptSource === `${JSON.stringify(canonicalValue(receipt), null, 2)}\n`, `${directoryName} is not canonical LF JSON`);
             assertLocalReceipt(receipt, expectedCiSource, state, directoryName);
             rejectReceiptMutation(receipt, state, `${directoryName}:extra-key`, (candidate) => { candidate.unreviewed = true; });
-            rejectReceiptMutation(receipt, state, `${directoryName}:source`, (candidate) => { candidate.source.candidate.commit = '0'.repeat(40); });
+            rejectReceiptMutation(receipt, state, `${directoryName}:source`, (candidate) => {
+              candidate.source.currentCandidate.commit = '0'.repeat(40);
+            });
+            const sourceMutations = [
+              ['protected-main', (source) => { source.protectedMain.commit = '0'.repeat(40); }],
+              ['source-closure-baseline', (source) => { source.sourceClosureBaseline.parent = '0'.repeat(40); }],
+              ['source-closure-commit', (source) => { source.sourceClosureCommit.commit = '0'.repeat(40); }],
+              ['current-parent', (source) => { source.currentCandidate.immediateParent = '0'.repeat(40); }],
+              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 3; }],
+              ['correction-ids', (source) => { source.correctionChain.commitIds = ['0'.repeat(40)]; }],
+              ['source-closure-cumulative', (source) => {
+                source.sourceClosureDelta.currentCumulative.headCommit = '0'.repeat(40);
+              }],
+              ['ci-evidence-correction', (source) => {
+                source.ciEvidenceCorrectionDelta.pathListSha256 = '0'.repeat(64);
+              }],
+              ['integrated-pr', (source) => { source.integratedPrDelta.pathCount = 71; }],
+              ['authorized-boundary', (source) => { source.authorizedSourceBoundary.maximumPathCount = 18; }],
+              ['execution-context', (source) => { source.executionContext.localSourceClosureContext = 'disabled-non-pr'; }],
+              ['authority', (source) => { source.authority.consequentialAuthorityGranted = true; }]
+            ];
+            for (const [mutationName, mutate] of sourceMutations) {
+              rejectReceiptMutation(receipt, state, `${directoryName}:source:${mutationName}`, (candidate) => {
+                mutate(candidate.source);
+              });
+            }
             rejectReceiptMutation(receipt, state, `${directoryName}:closure`, (candidate) => { candidate.closure.generation = 0; });
             rejectReceiptMutation(receipt, state, `${directoryName}:condition`, (candidate) => { candidate.conditionResults.exactUrlAndMethod.evidence = 'substituted'; });
             rejectReceiptMutation(receipt, state, `${directoryName}:blocking`, (candidate) => { candidate.blockingFindings.http4xxOr5xx = ['404 GET https://example.invalid/missing']; });
@@ -3033,7 +3678,7 @@ jobs:
               ['request-time', (candidate) => { candidate.closure.requestObservedAt = '2026-08-29T17:00:02.000Z'; }],
               ['github-time', (candidate) => { candidate.closure.githubObservedAt = '2026-08-29T17:00:02.000Z'; }],
               ['source-extra', (candidate) => { candidate.source.unreviewed = true; }],
-              ['source-missing', (candidate) => { delete candidate.source.candidateDelta; }]
+              ['source-missing', (candidate) => { delete candidate.source.ciEvidenceCorrectionDelta; }]
             ];
             for (const [mutationName, mutate] of testStateMutations) {
               rejectReceiptMutation(receipt, state, `${directoryName}:${mutationName}`, mutate);
@@ -3486,12 +4131,16 @@ jobs:
               status: 'exact-prior-occurrences-closed'
             },
             localSourceClosure: localSourceClosureSummary,
+            syntheticPrivacyFixtures: syntheticPrivacyFixtureProof.records,
             publicSanitized: true,
             privateDataAccessed: false,
             consequentialAuthorityGranted: false
           };
           const summaryPath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-evidence.json');
-          fs.writeFileSync(summaryPath, `${JSON.stringify(canonicalValue(summary), null, 2)}\n`, { mode: 0o644 });
+          const summaryBytes = Buffer.from(`${JSON.stringify(canonicalValue(summary), null, 2)}\n`, 'utf8');
+          assertPublicBrowserArtifactBytes(summaryBytes, 'browser evidence summary');
+          assertNoSyntheticPrivacyFixtureBody(summaryBytes, 'browser evidence summary');
+          fs.writeFileSync(summaryPath, summaryBytes, { mode: 0o644 });
           const provenancePath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-source-provenance.json');
           const manifestSources = [
             ...documents.map(({ project, target, document }) => ({
@@ -3521,6 +4170,7 @@ jobs:
           ];
           const manifestEntries = manifestSources.sort((left, right) => left.label < right.label ? -1 : left.label > right.label ? 1 : 0).map(({ artifactType, label, target, binding }) => {
             const { bytes, size } = readRegular(target);
+            assertNoSyntheticPrivacyFixtureBody(bytes, `browser artifact ${label}`);
             return { artifactType, path: label, size, sha256: sha256(bytes), binding };
           });
           requireCondition(manifestEntries.filter(({ artifactType }) => artifactType === 'local-source-closure-receipt').length === (exactPrLocalClosure ? 4 : 0), 'browser manifest local receipt count mismatch');
@@ -3533,7 +4183,10 @@ jobs:
             entries: manifestEntries
           };
           const manifest = { ...manifestBody, canonicalSha256: sha256(`${canonicalJson(manifestBody)}\n`) };
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-artifact-manifest.json'), `${JSON.stringify(canonicalValue(manifest), null, 2)}\n`, { mode: 0o644 });
+          const manifestBytes = Buffer.from(`${JSON.stringify(canonicalValue(manifest), null, 2)}\n`, 'utf8');
+          assertPublicBrowserArtifactBytes(manifestBytes, 'browser artifact manifest');
+          assertNoSyntheticPrivacyFixtureBody(manifestBytes, 'browser artifact manifest');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-artifact-manifest.json'), manifestBytes, { mode: 0o644 });
           NODE
 
       - name: Upload browser evidence
