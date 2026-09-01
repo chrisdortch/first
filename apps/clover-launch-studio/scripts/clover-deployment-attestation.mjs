@@ -1458,6 +1458,111 @@ function canonicalProtectionSnapshot(value, label) {
   };
 }
 
+function canonicalProviderEffectProject(value, label) {
+  exactKeys(value, [
+    "projectId", "teamId", "providerProjectUpdatedAt", "projectSettingsSha256", "accessPolicySha256", "bypassCount", "ssoProtection",
+    "passwordProtectionEnabled", "gitForkProtection", "skewProtectionMaxAge"
+  ], label);
+  if (
+    typeof value.projectSettingsSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.projectSettingsSha256) ||
+    typeof value.accessPolicySha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.accessPolicySha256)
+  ) {
+    throw new Error(`${label}_REJECTED`);
+  }
+  const protection = { ...value };
+  delete protection.projectSettingsSha256;
+  delete protection.accessPolicySha256;
+  canonicalProtectionSnapshot(protection, label);
+  return value;
+}
+
+function canonicalProviderDeploymentInventory(value, label) {
+  exactKeys(value, ["boundedLimit", "count", "entries", "inventorySha256", "paginationExhausted"], label);
+  if (
+    value.boundedLimit !== 100 || value.paginationExhausted !== true ||
+    !Number.isSafeInteger(value.count) || value.count < 0 || value.count > value.boundedLimit ||
+    !Array.isArray(value.entries) || value.entries.length !== value.count
+  ) {
+    throw new Error(`${label}_REJECTED`);
+  }
+  let previousId = null;
+  for (const entry of value.entries) {
+    exactKeys(entry, ["createdAt", "id", "state", "target"], `${label}_ENTRY`);
+    if (
+      typeof entry.id !== "string" || !/^dpl_[A-Za-z0-9]+$/u.test(entry.id) ||
+      previousId !== null && compareUtf8(previousId, entry.id) >= 0 ||
+      !Number.isSafeInteger(entry.createdAt) || entry.createdAt < 0 ||
+      typeof entry.state !== "string" || !/^[A-Z][A-Z_]{1,31}$/u.test(entry.state) ||
+      entry.target !== null && (typeof entry.target !== "string" || !/^[a-z][a-z0-9-]{0,63}$/u.test(entry.target))
+    ) throw new Error(`${label}_REJECTED`);
+    previousId = entry.id;
+  }
+  if (value.inventorySha256 !== sha256(`${canonicalJson(value.entries)}\n`)) throw new Error(`${label}_REJECTED`);
+  return value;
+}
+
+function canonicalProviderOpaqueInventory(value, projection, label, { boundedLimit, environmentVariables = false } = {}) {
+  const keys = ["boundedLimit", "count", "entries", "inventorySha256", "paginationExhausted", "projection"];
+  if (environmentVariables) keys.push("keyNamesPersisted", "valuesPersisted", "valuesRead");
+  exactKeys(value, keys, label);
+  if (
+    value.projection !== projection || value.boundedLimit !== boundedLimit || value.paginationExhausted !== true ||
+    !Number.isSafeInteger(value.count) || value.count < 0 || value.count > boundedLimit ||
+    !Array.isArray(value.entries) || value.entries.length !== value.count
+  ) throw new Error(`${label}_REJECTED`);
+  let previousIdentity = null;
+  for (const entry of value.entries) {
+    exactKeys(entry, ["identitySha256"], `${label}_ENTRY`);
+    if (
+      typeof entry.identitySha256 !== "string" || !/^[0-9a-f]{64}$/u.test(entry.identitySha256) ||
+      previousIdentity !== null && compareUtf8(previousIdentity, entry.identitySha256) >= 0
+    ) throw new Error(`${label}_REJECTED`);
+    previousIdentity = entry.identitySha256;
+  }
+  if (
+    value.inventorySha256 !== sha256(`${canonicalJson(value.entries)}\n`) ||
+    environmentVariables && (value.keyNamesPersisted !== false || value.valuesPersisted !== false || value.valuesRead !== false)
+  ) throw new Error(`${label}_REJECTED`);
+  return value;
+}
+
+function exactProviderEffectSnapshot(value, { readRequest, label }) {
+  exactKeys(value, ["aliases", "customEnvironments", "deployments", "domains", "environmentVariables", "project"], label);
+  const definitions = {
+    project: {
+      url: canonicalProviderUrl("v9", `projects/${VERCEL_PROJECT_ID}`, [["teamId", VERCEL_TEAM_ID]]),
+      validate: (response) => canonicalProviderEffectProject(response, `${label}_PROJECT_RESPONSE`)
+    },
+    deployments: {
+      url: canonicalProviderUrl("v6", "deployments", [["projectId", VERCEL_PROJECT_ID], ["limit", "100"], ["teamId", VERCEL_TEAM_ID]]),
+      validate: (response) => canonicalProviderDeploymentInventory(response, `${label}_DEPLOYMENTS_RESPONSE`)
+    },
+    domains: {
+      url: canonicalProviderUrl("v9", `projects/${VERCEL_PROJECT_ID}/domains`, [["limit", "100"], ["teamId", VERCEL_TEAM_ID]]),
+      validate: (response) => canonicalProviderOpaqueInventory(response, "project-domain-metadata-v1", `${label}_DOMAINS_RESPONSE`, { boundedLimit: 100 })
+    },
+    aliases: {
+      url: canonicalProviderUrl("v4", "aliases", [["projectId", VERCEL_PROJECT_ID], ["limit", "100"], ["teamId", VERCEL_TEAM_ID]]),
+      validate: (response) => canonicalProviderOpaqueInventory(response, "project-alias-metadata-v1", `${label}_ALIASES_RESPONSE`, { boundedLimit: 100 })
+    },
+    customEnvironments: {
+      url: canonicalProviderUrl("v9", `projects/${VERCEL_PROJECT_ID}/custom-environments`, [["teamId", VERCEL_TEAM_ID]]),
+      validate: (response) => canonicalProviderOpaqueInventory(response, "custom-environment-metadata-v1", `${label}_CUSTOM_ENVIRONMENTS_RESPONSE`, { boundedLimit: 12 })
+    },
+    environmentVariables: {
+      url: canonicalProviderUrl("v10", `projects/${VERCEL_PROJECT_ID}/env`, [["decrypt", "false"], ["teamId", VERCEL_TEAM_ID]]),
+      validate: (response) => canonicalProviderOpaqueInventory(response, "environment-variable-name-scope-and-update-metadata-v1", `${label}_ENVIRONMENT_VARIABLES_RESPONSE`, { boundedLimit: 1_000, environmentVariables: true })
+    }
+  };
+  const times = [];
+  for (const [key, definition] of Object.entries(definitions)) {
+    exactKeys(value[key], ["request", "response"], `${label}_${key.toUpperCase()}`);
+    definition.validate(value[key].response);
+    times.push(readRequest(value[key].request, { method: "GET", url: definition.url, response: value[key].response }, `${label}_${key.toUpperCase()}_REQUEST`));
+  }
+  return { ...value, earliestTime: Math.min(...times), latestTime: Math.max(...times) };
+}
+
 function exactProviderEvent(value, { action, url, readRequest }, label) {
   const keys = ["action", "eventId", "observedAt", "bypassCountBefore", "bypassCountAfter", "operation", "request", "requestSemantics"];
   if (action === "create") keys.push("createdEntry", "responseEntryCount");
@@ -1476,7 +1581,7 @@ function exactProviderEvent(value, { action, url, readRequest }, label) {
     if (
       value.requestSemantics.scope !== "automation-bypass" || value.requestSemantics.suppliedValue !== false || value.requestSemantics.valueSource !== "provider-generated" ||
       value.responseEntryCount !== 1 || value.createdEntry.scope !== "automation-bypass" ||
-      !Number.isSafeInteger(value.createdEntry.createdAt) || value.createdEntry.createdAt < 0 ||
+      !Number.isSafeInteger(value.createdEntry.createdAt) || value.createdEntry.createdAt !== time ||
       value.createdEntry.createdByPresent !== true
     ) throw new Error(`${label}_CREATED_ENTRY_REJECTED`);
     const requestTime = readRequest(value.request, {
@@ -1506,11 +1611,11 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     observationTimes.push(observedTime);
     return observedTime;
   };
-  exactKeys(providerDeployment, ["deployment", "deploymentInvocation", "fileTree", "contents", "protection"], "CLOVER_PROVIDER_EVIDENCE");
+  exactKeys(providerDeployment, ["deployment", "deploymentInvocation", "fileTree", "contents", "protection", "providerEffects"], "CLOVER_PROVIDER_EVIDENCE");
   exactKeys(providerDeployment.deployment, ["request", "response"], "CLOVER_PROVIDER_DEPLOYMENT_READBACK");
   const raw = providerDeployment.deployment.response;
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(providerDeployment.contents)) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_REJECTED");
-  const requiredRawKeys = ["id", "name", "url", "type", "state", "status", "readyState", "target", "alias", "automaticAliases", "project", "team", "meta", "source", "prebuilt", "nodeVersion", "userConfiguredDeploymentId"];
+  const requiredRawKeys = ["id", "name", "url", "createdAt", "type", "state", "status", "readyState", "target", "alias", "automaticAliases", "project", "team", "meta", "source", "prebuilt", "nodeVersion", "userConfiguredDeploymentId"];
   exactKeys(raw, requiredRawKeys, "CLOVER_PROVIDER_DEPLOYMENT_RESPONSE");
   if (!raw.project || typeof raw.project !== "object" || !raw.team || typeof raw.team !== "object" || !raw.meta || typeof raw.meta !== "object") throw new Error("CLOVER_PROVIDER_DEPLOYMENT_REJECTED");
   exactKeys(raw.project, ["framework", "id", "name"], "CLOVER_PROVIDER_PROJECT");
@@ -1521,6 +1626,7 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     raw.project.id !== VERCEL_PROJECT_ID || raw.project.name !== VERCEL_PROJECT_NAME || raw.project.framework !== VERCEL_PROJECT_FRAMEWORK ||
     raw.team.id !== VERCEL_TEAM_ID || raw.team.name !== VERCEL_TEAM_NAME || raw.team.slug !== VERCEL_TEAM_SLUG ||
     typeof raw.id !== "string" || !/^dpl_[A-Za-z0-9]+$/u.test(raw.id) || raw.name !== VERCEL_PROJECT_NAME ||
+    !Number.isSafeInteger(raw.createdAt) || raw.createdAt < 0 ||
     raw.type !== "LAMBDAS" || raw.state !== "READY" || raw.status !== "READY" || raw.readyState !== "READY" || raw.target !== null ||
     !Array.isArray(raw.alias) || raw.alias.length !== 0 || !Array.isArray(raw.automaticAliases) || raw.automaticAliases.length !== 0 ||
     raw.source !== "cli" || raw.prebuilt !== true || raw.nodeVersion !== "24.x" || raw.userConfiguredDeploymentId !== verifiedEvidence.sourceProvenance.runtimeDeploymentKey ||
@@ -1528,28 +1634,81 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     raw.meta.gitRemoteUrl !== "https://github.com/chrisdortch/first.git" || raw.meta.gitRootDirectory !== "apps/clover-launch-studio"
   ) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_REJECTED");
   if (typeof raw.url !== "string" || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+vercel\.app$/u.test(raw.url)) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_REJECTED");
-  readRequest(providerDeployment.deployment.request, {
+  const deploymentReadTime = readRequest(providerDeployment.deployment.request, {
     method: "GET",
     url: canonicalProviderUrl("v13", `deployments/${raw.id}`, [["teamId", VERCEL_TEAM_ID]]),
     response: raw
   }, "CLOVER_PROVIDER_DEPLOYMENT_REQUEST");
   const expectedDeploymentArgv = [
-    "npx", "--yes", `vercel@${VERCEL_CLI_VERSION}`, "deploy", "--prebuilt", "--yes", "--skip-domain",
+    "npx", "--yes", `vercel@${VERCEL_CLI_VERSION}`, "deploy", "--prebuilt", "--yes", "--target=preview",
     "--meta", `gitCommitSha=${expectedCommit}`,
     "--meta", "gitCommitRef=feature/clover-tree-command-center-launch-studio-v0.1-20260826",
     "--meta", "gitRemoteUrl=https://github.com/chrisdortch/first.git",
     "--meta", "gitRootDirectory=apps/clover-launch-studio"
   ];
-  exactKeys(providerDeployment.deploymentInvocation, ["argv", "outputRelativePath", "projectLinkSha256", "toolIntegrity", "toolPackage", "toolVersion", "workingDirectory"], "CLOVER_PROVIDER_DEPLOYMENT_INVOCATION");
+  exactKeys(providerDeployment.deploymentInvocation, [
+    "argv", "completedAt", "executedArgv", "executionCount", "exitCode", "outputRelativePath", "projectLinkSha256", "startedAt",
+    "returnedDeploymentId", "returnedImmutableUrl", "toolIntegrity", "toolPackage", "toolVersion", "workingDirectory"
+  ], "CLOVER_PROVIDER_DEPLOYMENT_INVOCATION");
+  const invocationStartedTime = Date.parse(providerDeployment.deploymentInvocation.startedAt);
+  const invocationCompletedTime = Date.parse(providerDeployment.deploymentInvocation.completedAt);
   if (
     canonicalJson(providerDeployment.deploymentInvocation.argv) !== canonicalJson(expectedDeploymentArgv) ||
+    canonicalJson(providerDeployment.deploymentInvocation.executedArgv) !== canonicalJson(expectedDeploymentArgv) ||
     providerDeployment.deploymentInvocation.workingDirectory !== "frozen-workspace-root" ||
     providerDeployment.deploymentInvocation.outputRelativePath !== ".vercel/output" ||
     providerDeployment.deploymentInvocation.projectLinkSha256 !== verifiedEvidence.sourceProvenance.buildProjectSettingsSha256 ||
     providerDeployment.deploymentInvocation.toolPackage !== "vercel" ||
     providerDeployment.deploymentInvocation.toolVersion !== VERCEL_CLI_VERSION ||
-    providerDeployment.deploymentInvocation.toolIntegrity !== VERCEL_CLI_INTEGRITY
+    providerDeployment.deploymentInvocation.toolIntegrity !== VERCEL_CLI_INTEGRITY ||
+    providerDeployment.deploymentInvocation.returnedDeploymentId !== raw.id ||
+    providerDeployment.deploymentInvocation.returnedImmutableUrl !== `https://${raw.url}/` ||
+    providerDeployment.deploymentInvocation.executionCount !== 1 || providerDeployment.deploymentInvocation.exitCode !== 0 ||
+    !Number.isFinite(invocationStartedTime) || new Date(invocationStartedTime).toISOString() !== providerDeployment.deploymentInvocation.startedAt ||
+    !Number.isFinite(invocationCompletedTime) || new Date(invocationCompletedTime).toISOString() !== providerDeployment.deploymentInvocation.completedAt ||
+    invocationStartedTime > invocationCompletedTime
   ) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED");
+
+  const effects = providerDeployment.providerEffects;
+  exactKeys(effects, ["afterDeployment", "beforeDeployment", "newDeploymentId"], "CLOVER_PROVIDER_EFFECTS");
+  if (effects.newDeploymentId !== raw.id) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
+  const effectsBefore = exactProviderEffectSnapshot(effects.beforeDeployment, { readRequest, label: "CLOVER_PROVIDER_EFFECT_BEFORE" });
+  const effectsAfter = exactProviderEffectSnapshot(effects.afterDeployment, { readRequest, label: "CLOVER_PROVIDER_EFFECT_AFTER" });
+  if (
+    effectsBefore.latestTime >= invocationStartedTime || invocationCompletedTime >= deploymentReadTime ||
+    deploymentReadTime > effectsAfter.earliestTime || invocationCompletedTime >= effectsAfter.earliestTime ||
+    effectsBefore.latestTime >= effectsAfter.earliestTime
+  ) throw new Error("CLOVER_PROVIDER_EFFECT_CHRONOLOGY_REJECTED");
+  const beforeDeployments = effectsBefore.deployments.response;
+  const afterDeployments = effectsAfter.deployments.response;
+  const priorAfterEntries = afterDeployments.entries.filter(({ id }) => id !== raw.id);
+  const addedEntries = afterDeployments.entries.filter(({ id }) => id === raw.id);
+  const beforeProduction = beforeDeployments.entries.filter(({ target }) => target === "production");
+  const afterProduction = afterDeployments.entries.filter(({ target }) => target === "production");
+  if (
+    beforeDeployments.count !== 9 || afterDeployments.count !== 10 ||
+    beforeDeployments.entries.some(({ id }) => id === raw.id) || addedEntries.length !== 1 ||
+    addedEntries[0].state !== raw.state || addedEntries[0].target !== raw.target ||
+    addedEntries[0].createdAt !== raw.createdAt || raw.createdAt < invocationStartedTime || raw.createdAt > invocationCompletedTime
+  ) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
+  if (canonicalJson(beforeProduction) !== canonicalJson(afterProduction)) throw new Error("CLOVER_PROVIDER_EFFECT_PRODUCTION_REJECTED");
+  if (canonicalJson(priorAfterEntries) !== canonicalJson(beforeDeployments.entries)) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
+  const stableProjectSnapshot = (value) => {
+    const stable = { ...value };
+    delete stable.providerProjectUpdatedAt;
+    return stable;
+  };
+  if (canonicalJson(stableProjectSnapshot(effectsBefore.project.response)) !== canonicalJson(stableProjectSnapshot(effectsAfter.project.response))) {
+    throw new Error("CLOVER_PROVIDER_EFFECT_PROJECT_CHANGED");
+  }
+  for (const [key, error] of [
+    ["domains", "CLOVER_PROVIDER_EFFECT_DOMAINS_CHANGED"],
+    ["aliases", "CLOVER_PROVIDER_EFFECT_ALIASES_CHANGED"],
+    ["customEnvironments", "CLOVER_PROVIDER_EFFECT_CUSTOM_ENVIRONMENTS_CHANGED"],
+    ["environmentVariables", "CLOVER_PROVIDER_EFFECT_ENVIRONMENT_VARIABLES_CHANGED"]
+  ]) {
+    if (canonicalJson(effectsBefore[key].response) !== canonicalJson(effectsAfter[key].response)) throw new Error(error);
+  }
 
   const protection = providerDeployment.protection;
   exactKeys(protection, [
@@ -1569,8 +1728,12 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   const baselineOrdinary = canonicalProtectionSnapshot(protection.baseline.response, "CLOVER_PROVIDER_PROTECTION_BASELINE");
   const createTime = exactProviderEvent(protection.create, { action: "create", url: bypassUrl, readRequest }, "CLOVER_PROVIDER_PROTECTION_CREATE");
   const revokeTime = exactProviderEvent(protection.revoke, { action: "revoke", url: bypassUrl, readRequest }, "CLOVER_PROVIDER_PROTECTION_REVOKE");
+  const afterDeploymentProtection = { ...effectsAfter.project.response };
+  delete afterDeploymentProtection.projectSettingsSha256;
+  delete afterDeploymentProtection.accessPolicySha256;
   if (
-    baselineTime > createTime || createTime > revokeTime ||
+    effectsAfter.latestTime >= baselineTime || baselineTime >= createTime || createTime >= revokeTime ||
+    canonicalJson(protection.baseline.response) !== canonicalJson(afterDeploymentProtection) ||
     canonicalJson(protection.bypassCountSequence) !== "[0,1,0]" ||
     protection.regenerationDisabled !== true || protection.shareUrlCreated !== false || protection.vercelCurlUsed !== false ||
     protection.bypassValueDisclosed !== false || protection.bypassValuePersisted !== false || protection.bypassValueUploaded !== false ||
@@ -1690,14 +1853,14 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   }))].sort(compareUtf8);
   const providerDirectories = rawEntries.filter(({ type }) => type === "directory").map(({ path: outputPath }) => outputPath).sort(compareUtf8);
   if (canonicalJson(providerEntries) !== canonicalJson(expectedEntries) || canonicalJson(providerDirectories) !== canonicalJson(expectedDirectories)) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH");
-  if (observationTimes.length < 5 || observationTimes.length !== 5 + providerEntries.length) throw new Error("CLOVER_PROVIDER_OBSERVATION_INVENTORY_REJECTED");
+  if (observationTimes.length < 17 || observationTimes.length !== 17 + providerEntries.length) throw new Error("CLOVER_PROVIDER_OBSERVATION_INVENTORY_REJECTED");
   const earliestObservationTime = Math.min(...observationTimes);
   const latestObservationTime = Math.max(...observationTimes);
   if (latestObservationTime - earliestObservationTime > 30 * 60_000) throw new Error("CLOVER_PROVIDER_OBSERVATION_WINDOW_REJECTED");
   if (latestObservationTime !== revokeTime) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED");
   const body = {
     documentType: "clover-tree-provider-deployment-receipt",
-    schemaVersion: "0.4.0",
+    schemaVersion: "0.5.0",
     provider: "vercel",
     generatedAt,
     providerObservationEarliestAt: new Date(earliestObservationTime).toISOString(),
@@ -1715,6 +1878,10 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     state: "READY",
     target: null,
     aliases: [],
+    automaticAliases: [],
+    deploymentSource: "cli",
+    prebuilt: true,
+    runtimeDeploymentKey: raw.userConfiguredDeploymentId,
     sourceRepository: "chrisdortch/first",
     sourceBranch: "feature/clover-tree-command-center-launch-studio-v0.1-20260826",
     sourceCommit: expectedCommit,
@@ -1730,6 +1897,47 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     providerFileTreeReadEndpoint: providerDeployment.fileTree.request.url,
     providerContentReadCount: providerEntries.length,
     deploymentInvocationSha256: sha256(`${canonicalJson(providerDeployment.deploymentInvocation)}\n`),
+    executedDeploymentArgvSha256: sha256(`${canonicalJson(providerDeployment.deploymentInvocation.executedArgv)}\n`),
+    deploymentExecutionCount: providerDeployment.deploymentInvocation.executionCount,
+    deploymentExecutionStartedAt: providerDeployment.deploymentInvocation.startedAt,
+    deploymentExecutionCompletedAt: providerDeployment.deploymentInvocation.completedAt,
+    deploymentExecutionExitCode: providerDeployment.deploymentInvocation.exitCode,
+    deploymentInvocationReturnedId: providerDeployment.deploymentInvocation.returnedDeploymentId,
+    deploymentInvocationReturnedImmutableUrl: providerDeployment.deploymentInvocation.returnedImmutableUrl,
+    providerEffectReadCount: 12,
+    deploymentCountBefore: beforeDeployments.count,
+    deploymentCountAfter: afterDeployments.count,
+    newDeploymentCount: 1,
+    newDeploymentId: raw.id,
+    productionDeploymentCountBefore: beforeProduction.length,
+    productionDeploymentCountAfter: afterProduction.length,
+    productionInventorySha256Before: sha256(`${canonicalJson(beforeProduction)}\n`),
+    productionInventorySha256After: sha256(`${canonicalJson(afterProduction)}\n`),
+    projectSettingsSha256Before: effectsBefore.project.response.projectSettingsSha256,
+    projectSettingsSha256After: effectsAfter.project.response.projectSettingsSha256,
+    accessPolicySha256Before: effectsBefore.project.response.accessPolicySha256,
+    accessPolicySha256After: effectsAfter.project.response.accessPolicySha256,
+    providerProjectUpdatedAtBeforeDeployment: effectsBefore.project.response.providerProjectUpdatedAt,
+    providerProjectUpdatedAtAfterDeployment: effectsAfter.project.response.providerProjectUpdatedAt,
+    domainInventorySha256Before: effectsBefore.domains.response.inventorySha256,
+    domainInventorySha256After: effectsAfter.domains.response.inventorySha256,
+    aliasInventorySha256Before: effectsBefore.aliases.response.inventorySha256,
+    aliasInventorySha256After: effectsAfter.aliases.response.inventorySha256,
+    persistentEnvironmentCountBefore: effectsBefore.customEnvironments.response.count,
+    persistentEnvironmentCountAfter: effectsAfter.customEnvironments.response.count,
+    persistentEnvironmentInventorySha256Before: effectsBefore.customEnvironments.response.inventorySha256,
+    persistentEnvironmentInventorySha256After: effectsAfter.customEnvironments.response.inventorySha256,
+    environmentVariableCountBefore: effectsBefore.environmentVariables.response.count,
+    environmentVariableCountAfter: effectsAfter.environmentVariables.response.count,
+    environmentVariableMetadataInventorySha256Before: effectsBefore.environmentVariables.response.inventorySha256,
+    environmentVariableMetadataInventorySha256After: effectsAfter.environmentVariables.response.inventorySha256,
+    productionTrafficChanged: false,
+    projectSettingsChanged: false,
+    accessPolicyChanged: false,
+    domainsChanged: false,
+    aliasesChanged: false,
+    persistentEnvironmentsChanged: false,
+    environmentVariableMetadataChanged: false,
     providerProjectUpdatedAtBefore: protection.baseline.response.providerProjectUpdatedAt,
     ordinaryProtectionBaselineSha256: sha256(`${canonicalJson(baselineOrdinary)}\n`),
     ordinaryProtectionPreservationBasis: "authenticated-baseline-plus-scoped-protection-bypass-only-operations",

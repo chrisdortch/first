@@ -2002,7 +2002,7 @@ function providerUrl(version, route, query = []) {
   return `https://api.vercel.com/${version}/${encodedRoute}${suffix}`;
 }
 
-const providerReceiptNow = new Date("2026-08-29T20:00:03.000Z");
+const providerReceiptNow = new Date("2026-08-29T20:00:04.000Z");
 
 function providerRequest(method, url, response, observedAt = "2026-08-29T20:00:00.000Z") {
   const bytes = Buffer.from(`${canonicalJson(response)}\n`, "utf8");
@@ -2021,12 +2021,37 @@ function providerRequest(method, url, response, observedAt = "2026-08-29T20:00:0
   };
 }
 
+function providerDeploymentInventory(entries) {
+  const sortedEntries = structuredClone(entries).sort((left, right) => Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8")));
+  return {
+    boundedLimit: 100,
+    count: sortedEntries.length,
+    entries: sortedEntries,
+    inventorySha256: sha256(`${canonicalJson(sortedEntries)}\n`),
+    paginationExhausted: true
+  };
+}
+
+function providerOpaqueInventory(projection, identities, { boundedLimit = 100, environmentVariables = false } = {}) {
+  const entries = identities.map((identitySha256) => ({ identitySha256 })).sort((left, right) => Buffer.compare(Buffer.from(left.identitySha256, "utf8"), Buffer.from(right.identitySha256, "utf8")));
+  return {
+    boundedLimit,
+    count: entries.length,
+    entries,
+    inventorySha256: sha256(`${canonicalJson(entries)}\n`),
+    paginationExhausted: true,
+    projection,
+    ...(environmentVariables ? { keyNamesPersisted: false, valuesPersisted: false, valuesRead: false } : {})
+  };
+}
+
 function providerDeploymentFixture(outputRoot, sealed) {
   const deploymentId = "dpl_ExactPreview123";
   const deploymentResponse = {
     id: deploymentId,
     name: VERCEL_PROJECT_NAME,
     url: "clover-tree-command-center-exact-preview.vercel.app",
+    createdAt: Date.parse("2026-08-29T19:59:57.500Z"),
     type: "LAMBDAS",
     state: "READY",
     status: "READY",
@@ -2101,31 +2126,95 @@ function providerDeploymentFixture(outputRoot, sealed) {
   const baselineResponse = {
     projectId: VERCEL_PROJECT_ID,
     teamId: VERCEL_TEAM_ID,
-    providerProjectUpdatedAt: 1_787_944_731_108,
+    providerProjectUpdatedAt: 1_787_944_731_208,
     bypassCount: 0,
     ssoProtection: { deploymentType: "all_except_custom_domains" },
     passwordProtectionEnabled: false,
     gitForkProtection: true,
     skewProtectionMaxAge: 43_200
   };
-  const createdEntry = { createdAt: 1_787_944_800_000, createdByPresent: true, scope: "automation-bypass" };
+  const effectProjectBeforeResponse = {
+    ...baselineResponse,
+    providerProjectUpdatedAt: 1_787_944_731_108,
+    projectSettingsSha256: hex64("9"),
+    accessPolicySha256: hex64("8")
+  };
+  const effectProjectAfterResponse = {
+    ...baselineResponse,
+    projectSettingsSha256: hex64("9"),
+    accessPolicySha256: hex64("8")
+  };
+  const beforeDeployments = providerDeploymentInventory([
+    { createdAt: 1_787_944_100_001, id: "dpl_BaselinePreview001", state: "READY", target: null },
+    { createdAt: 1_787_944_100_002, id: "dpl_BaselinePreview002", state: "READY", target: null },
+    { createdAt: 1_787_944_100_003, id: "dpl_BaselinePreview003", state: "READY", target: null },
+    { createdAt: 1_787_944_100_004, id: "dpl_BaselinePreview004", state: "READY", target: null },
+    { createdAt: 1_787_944_100_005, id: "dpl_BaselinePreview005", state: "READY", target: null },
+    { createdAt: 1_787_944_100_006, id: "dpl_BaselinePreview006", state: "READY", target: null },
+    { createdAt: 1_787_944_100_007, id: "dpl_BaselinePreview007", state: "READY", target: null },
+    { createdAt: 1_787_944_100_008, id: "dpl_BaselinePreview008", state: "READY", target: null },
+    { createdAt: 1_787_944_100_009, id: "dpl_ProductionBaseline009", state: "READY", target: "production" }
+  ]);
+  const afterDeployments = providerDeploymentInventory([
+    ...beforeDeployments.entries,
+    { createdAt: deploymentResponse.createdAt, id: deploymentId, state: "READY", target: null }
+  ]);
+  const domains = providerOpaqueInventory("project-domain-metadata-v1", [hex64("1")]);
+  const aliases = providerOpaqueInventory("project-alias-metadata-v1", [hex64("2")]);
+  const customEnvironments = providerOpaqueInventory("custom-environment-metadata-v1", [], { boundedLimit: 12 });
+  const environmentVariables = providerOpaqueInventory("environment-variable-name-scope-and-update-metadata-v1", [], { boundedLimit: 1_000, environmentVariables: true });
+  const providerEffectSnapshot = (deployments, projectResponse, observedAt) => ({
+    project: {
+      request: providerRequest("GET", providerUrl("v9", `projects/${VERCEL_PROJECT_ID}`, [["teamId", VERCEL_TEAM_ID]]), projectResponse, observedAt),
+      response: structuredClone(projectResponse)
+    },
+    deployments: {
+      request: providerRequest("GET", providerUrl("v6", "deployments", [["projectId", VERCEL_PROJECT_ID], ["limit", "100"], ["teamId", VERCEL_TEAM_ID]]), deployments, observedAt),
+      response: structuredClone(deployments)
+    },
+    domains: {
+      request: providerRequest("GET", providerUrl("v9", `projects/${VERCEL_PROJECT_ID}/domains`, [["limit", "100"], ["teamId", VERCEL_TEAM_ID]]), domains, observedAt),
+      response: structuredClone(domains)
+    },
+    aliases: {
+      request: providerRequest("GET", providerUrl("v4", "aliases", [["projectId", VERCEL_PROJECT_ID], ["limit", "100"], ["teamId", VERCEL_TEAM_ID]]), aliases, observedAt),
+      response: structuredClone(aliases)
+    },
+    customEnvironments: {
+      request: providerRequest("GET", providerUrl("v9", `projects/${VERCEL_PROJECT_ID}/custom-environments`, [["teamId", VERCEL_TEAM_ID]]), customEnvironments, observedAt),
+      response: structuredClone(customEnvironments)
+    },
+    environmentVariables: {
+      request: providerRequest("GET", providerUrl("v10", `projects/${VERCEL_PROJECT_ID}/env`, [["decrypt", "false"], ["teamId", VERCEL_TEAM_ID]]), environmentVariables, observedAt),
+      response: structuredClone(environmentVariables)
+    }
+  });
+  const deploymentArgv = [
+    "npx", "--yes", `vercel@${VERCEL_CLI_VERSION}`, "deploy", "--prebuilt", "--yes", "--target=preview",
+    "--meta", `gitCommitSha=${sealed.sourceProvenance.commit}`,
+    "--meta", `gitCommitRef=${STACK_B_BRANCH}`,
+    "--meta", "gitRemoteUrl=https://github.com/chrisdortch/first.git",
+    "--meta", "gitRootDirectory=apps/clover-launch-studio"
+  ];
+  const createdEntry = { createdAt: Date.parse("2026-08-29T20:00:02.000Z"), createdByPresent: true, scope: "automation-bypass" };
   const createResponseProjection = { createdEntry, responseEntryCount: 1 };
   const revokeResponse = { protectionBypass: {} };
   const projectReadUrl = providerUrl("v9", `projects/${VERCEL_PROJECT_ID}`, [["teamId", VERCEL_TEAM_ID]]);
   const bypassUrl = providerUrl("v1", `projects/${VERCEL_PROJECT_ID}/protection-bypass`, [["teamId", VERCEL_TEAM_ID]]);
   return {
     deployment: {
-      request: providerRequest("GET", providerUrl("v13", `deployments/${deploymentId}`, [["teamId", VERCEL_TEAM_ID]]), deploymentResponse),
+      request: providerRequest("GET", providerUrl("v13", `deployments/${deploymentId}`, [["teamId", VERCEL_TEAM_ID]]), deploymentResponse, "2026-08-29T19:59:59.000Z"),
       response: deploymentResponse
     },
     deploymentInvocation: {
-      argv: [
-        "npx", "--yes", `vercel@${VERCEL_CLI_VERSION}`, "deploy", "--prebuilt", "--yes", "--skip-domain",
-        "--meta", `gitCommitSha=${sealed.sourceProvenance.commit}`,
-        "--meta", `gitCommitRef=${STACK_B_BRANCH}`,
-        "--meta", "gitRemoteUrl=https://github.com/chrisdortch/first.git",
-        "--meta", "gitRootDirectory=apps/clover-launch-studio"
-      ],
+      argv: [...deploymentArgv],
+      startedAt: "2026-08-29T19:59:57.000Z",
+      completedAt: "2026-08-29T19:59:58.000Z",
+      executedArgv: [...deploymentArgv],
+      executionCount: 1,
+      exitCode: 0,
+      returnedDeploymentId: deploymentId,
+      returnedImmutableUrl: `https://${deploymentResponse.url}/`,
       workingDirectory: "frozen-workspace-root",
       outputRelativePath: ".vercel/output",
       projectLinkSha256: sealed.sourceProvenance.buildProjectSettingsSha256,
@@ -2138,21 +2227,26 @@ function providerDeploymentFixture(outputRoot, sealed) {
       response: fileTreeResponse
     },
     contents,
+    providerEffects: {
+      beforeDeployment: providerEffectSnapshot(beforeDeployments, effectProjectBeforeResponse, "2026-08-29T19:59:56.000Z"),
+      afterDeployment: providerEffectSnapshot(afterDeployments, effectProjectAfterResponse, "2026-08-29T20:00:00.000Z"),
+      newDeploymentId: deploymentId
+    },
     protection: {
       deploymentId,
       baseline: {
-        observedAt: "2026-08-29T20:00:00.000Z",
-        request: providerRequest("GET", projectReadUrl, baselineResponse),
+        observedAt: "2026-08-29T20:00:01.000Z",
+        request: providerRequest("GET", projectReadUrl, baselineResponse, "2026-08-29T20:00:01.000Z"),
         response: baselineResponse
       },
       create: {
         action: "create",
         eventId: "bypass:create:0001",
-        observedAt: "2026-08-29T20:00:01.000Z",
+        observedAt: "2026-08-29T20:00:02.000Z",
         bypassCountBefore: 0,
         bypassCountAfter: 1,
         operation: "create-one-automation-bypass",
-        request: providerRequest("PATCH", bypassUrl, createResponseProjection, "2026-08-29T20:00:01.000Z"),
+        request: providerRequest("PATCH", bypassUrl, createResponseProjection, "2026-08-29T20:00:02.000Z"),
         requestSemantics: { scope: "automation-bypass", suppliedValue: false, valueSource: "provider-generated" },
         createdEntry,
         responseEntryCount: 1
@@ -2160,11 +2254,11 @@ function providerDeploymentFixture(outputRoot, sealed) {
       revoke: {
         action: "revoke",
         eventId: "bypass:revoke:0001",
-        observedAt: "2026-08-29T20:00:02.000Z",
+        observedAt: "2026-08-29T20:00:03.000Z",
         bypassCountBefore: 1,
         bypassCountAfter: 0,
         operation: "revoke-exact-automation-bypass-without-regeneration",
-        request: providerRequest("PATCH", bypassUrl, revokeResponse, "2026-08-29T20:00:02.000Z"),
+        request: providerRequest("PATCH", bypassUrl, revokeResponse, "2026-08-29T20:00:03.000Z"),
         requestSemantics: { exactCreatedBypass: true, regenerate: false },
         response: revokeResponse
       },
@@ -2319,11 +2413,37 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     assert.equal(receipt.postRevocationAuthenticatedRequestCount, 0);
     assert.equal(receipt.ssoProtectionPreserved, true);
     assert.equal(receipt.publicSanitized, true);
+    assert.equal(receipt.schemaVersion, "0.5.0");
+    assert.deepEqual(receipt.aliases, []);
+    assert.deepEqual(receipt.automaticAliases, []);
+    assert.equal(receipt.deploymentSource, "cli");
+    assert.equal(receipt.prebuilt, true);
+    assert.equal(receipt.runtimeDeploymentKey, verifiedEvidence.sourceProvenance.runtimeDeploymentKey);
+    assert.equal(receipt.deploymentExecutionCount, 1);
+    assert.equal(receipt.deploymentExecutionExitCode, 0);
+    assert.equal(receipt.deploymentExecutionStartedAt, "2026-08-29T19:59:57.000Z");
+    assert.equal(receipt.deploymentExecutionCompletedAt, "2026-08-29T19:59:58.000Z");
+    assert.equal(receipt.deploymentInvocationReturnedId, provider.deployment.response.id);
+    assert.equal(receipt.deploymentInvocationReturnedImmutableUrl, `https://${provider.deployment.response.url}/`);
+    assert.equal(receipt.providerEffectReadCount, 12);
+    assert.equal(receipt.deploymentCountBefore, 9);
+    assert.equal(receipt.deploymentCountAfter, 10);
+    assert.equal(receipt.newDeploymentCount, 1);
+    assert.equal(receipt.newDeploymentId, provider.deployment.response.id);
+    assert.equal(receipt.productionDeploymentCountBefore, receipt.productionDeploymentCountAfter);
+    assert.equal(receipt.productionInventorySha256Before, receipt.productionInventorySha256After);
+    assert.equal(receipt.projectSettingsSha256Before, receipt.projectSettingsSha256After);
+    assert.equal(receipt.accessPolicySha256Before, receipt.accessPolicySha256After);
+    assert.notEqual(receipt.providerProjectUpdatedAtBeforeDeployment, receipt.providerProjectUpdatedAtAfterDeployment);
+    for (const field of [
+      "productionTrafficChanged", "projectSettingsChanged", "accessPolicyChanged", "domainsChanged", "aliasesChanged",
+      "persistentEnvironmentsChanged", "environmentVariableMetadataChanged"
+    ]) assert.equal(receipt[field], false);
     assert.equal(receipt.generatedAt, providerReceiptNow.toISOString());
-    assert.equal(receipt.providerObservationEarliestAt, "2026-08-29T20:00:00.000Z");
-    assert.equal(receipt.providerObservationLatestAt, "2026-08-29T20:00:02.000Z");
-    assert.equal(receipt.providerObservationSpanMilliseconds, 2_000);
-    assert.equal(receipt.providerObservationCount, 5 + receipt.providerContentReadCount);
+    assert.equal(receipt.providerObservationEarliestAt, "2026-08-29T19:59:56.000Z");
+    assert.equal(receipt.providerObservationLatestAt, "2026-08-29T20:00:03.000Z");
+    assert.equal(receipt.providerObservationSpanMilliseconds, 7_000);
+    assert.equal(receipt.providerObservationCount, 17 + receipt.providerContentReadCount);
     assert.equal(receipt.privateDataAccessed, false);
     assert.equal(receipt.secretsIncluded, false);
     assert.equal(receipt.consequentialAuthorityGranted, false);
@@ -2332,10 +2452,10 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     explicitUtf8.deployment.request.responseCharset = "utf-8";
     assert.equal(createProviderDeploymentReceipt({ providerDeployment: explicitUtf8, verifiedEvidence, now: providerReceiptNow }).deploymentId, receipt.deploymentId);
 
-    const reject = (mutate, expected) => {
+    const reject = (mutate, expected, message) => {
       const candidate = structuredClone(provider);
       mutate(candidate);
-      assert.throws(() => createProviderDeploymentReceipt({ providerDeployment: candidate, verifiedEvidence, now: providerReceiptNow }), expected);
+      assert.throws(() => createProviderDeploymentReceipt({ providerDeployment: candidate, verifiedEvidence, now: providerReceiptNow }), expected, message);
     };
     const providerOutput = (candidate) => candidate.fileTree.response[0].children.find(({ name }) => name === ".vercel").children.find(({ name }) => name === "output");
     const findProviderNode = (candidate, outputPath) => outputPath.split("/").reduce((directory, segment) => directory.children.find(({ name }) => name === segment), providerOutput(candidate));
@@ -2346,7 +2466,20 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
       content.request = providerRequest("GET", providerUrl("v8", `deployments/${candidate.deployment.response.id}/files/${content.uid}`, [["path", content.path], ["teamId", VERCEL_TEAM_ID]]), content.response);
     };
     const rebindBaseline = (candidate) => {
-      candidate.protection.baseline.request = providerRequest("GET", candidate.protection.baseline.request.url, candidate.protection.baseline.response);
+      candidate.protection.baseline.request = providerRequest("GET", candidate.protection.baseline.request.url, candidate.protection.baseline.response, candidate.protection.baseline.observedAt);
+    };
+    const rebindDeployment = (candidate) => {
+      candidate.deployment.request = providerRequest("GET", candidate.deployment.request.url, candidate.deployment.response, candidate.deployment.request.observedAt);
+    };
+    const rebindProviderEffect = (candidate, phase, key) => {
+      const observation = candidate.providerEffects[phase][key];
+      observation.request = providerRequest("GET", observation.request.url, observation.response, observation.request.observedAt);
+    };
+    const replaceInvocation = (candidate, mutateArgv) => {
+      const nextArgv = [...candidate.deploymentInvocation.argv];
+      mutateArgv(nextArgv);
+      candidate.deploymentInvocation.argv = [...nextArgv];
+      candidate.deploymentInvocation.executedArgv = [...nextArgv];
     };
     const runtimeSlash = String.fromCharCode(47);
     const providerLocalPathPrefix = [runtimeSlash, "Users", runtimeSlash].join("");
@@ -2383,14 +2516,14 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     reject((candidate) => { candidate.deployment.request.responseProjectionBytes += 1; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
     reject((candidate) => { candidate.deployment.request.responseProjectionSha256 = hex64("f"); }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
     reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T19:29:59.000Z"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
-    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T20:00:08.001Z"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
-    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T20:00:02.500Z"; }, /CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED/u);
-    reject((candidate) => { candidate.contents[0].request.observedAt = "2026-08-29T20:00:02.500Z"; }, /CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T20:00:09.001Z"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
+    reject((candidate) => { candidate.deployment.request.observedAt = "2026-08-29T20:00:03.500Z"; }, /CLOVER_PROVIDER_EFFECT_CHRONOLOGY_REJECTED/u);
+    reject((candidate) => { candidate.contents[0].request.observedAt = "2026-08-29T20:00:03.500Z"; }, /CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED/u);
     reject((candidate) => {
       candidate.protection.baseline.observedAt = "2026-08-29T19:30:03.000Z";
       candidate.protection.baseline.request.observedAt = candidate.protection.baseline.observedAt;
       candidate.contents[0].request.observedAt = "2026-08-29T20:00:07.000Z";
-    }, /CLOVER_PROVIDER_OBSERVATION_WINDOW_REJECTED/u);
+    }, /CLOVER_PROVIDER_PROTECTION_BASELINE_REQUEST_REJECTED/u);
     reject((candidate) => { candidate.protection.create.request.observedAt = "2026-08-29T20:00:00.999Z"; }, /CLOVER_PROVIDER_PROTECTION_CREATE_TIME_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.project.id = "prj_substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.team.slug = "substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
@@ -2405,7 +2538,105 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     reject((candidate) => { candidate.deployment.response.project.name = "substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.project.framework = "other"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.team.name = "Private account"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
-    reject((candidate) => { candidate.deploymentInvocation.argv.splice(6, 1); }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u);
+    for (const [name, mutateArgv] of [
+      ["production flag", (argv) => argv.splice(6, 1, "--prod")],
+      ["production-only skip-domain flag", (argv) => argv.splice(6, 1, "--skip-domain")],
+      ["production plus skip-domain flags", (argv) => argv.splice(6, 1, "--prod", "--skip-domain")],
+      ["missing preview target", (argv) => argv.splice(6, 1)],
+      ["production target", (argv) => { argv[6] = "--target=production"; }],
+      ["custom target", (argv) => { argv[6] = "--target=staging"; }],
+      ["duplicate target", (argv) => argv.splice(7, 0, "--target=preview")],
+      ["reordered deployment flags", (argv) => { [argv[4], argv[5]] = [argv[5], argv[4]]; }],
+      ["missing prebuilt flag", (argv) => argv.splice(4, 1)],
+      ["missing deploy yes flag", (argv) => argv.splice(5, 1)],
+      ["alias command", (argv) => { argv[3] = "alias"; }],
+      ["promote command", (argv) => { argv[3] = "promote"; }],
+      ["rollback command", (argv) => { argv[3] = "rollback"; }],
+      ["custom domain argument", (argv) => argv.splice(7, 0, "--domain=example.invalid")],
+      ["wrong metadata commit", (argv) => { argv[8] = `gitCommitSha=${hex40("f")}`; }],
+      ["wrong metadata branch", (argv) => { argv[10] = "gitCommitRef=main"; }],
+      ["wrong metadata repository", (argv) => { argv[12] = "gitRemoteUrl=https://github.com/example/substitute.git"; }],
+      ["wrong metadata root", (argv) => { argv[14] = "gitRootDirectory=apps/substitute"; }],
+      ["wrong CLI version", (argv) => { argv[2] = "vercel@59.6.1"; }]
+    ]) reject((candidate) => replaceInvocation(candidate, mutateArgv), /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, name);
+    reject((candidate) => { candidate.deploymentInvocation.toolIntegrity = "sha512-substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "wrong CLI integrity");
+    reject((candidate) => {
+      candidate.deploymentInvocation.argv[6] = "--skip-domain";
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "receipt claims skip-domain while executed argv remains preview");
+    reject((candidate) => {
+      candidate.deploymentInvocation.executedArgv[6] = "--target=staging";
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "recorded argv differs from executed argv");
+    reject((candidate) => { candidate.deploymentInvocation.executionCount = 2; }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "second execution");
+    reject((candidate) => { candidate.deploymentInvocation.exitCode = 1; }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "nonzero execution");
+    reject((candidate) => { candidate.deploymentInvocation.returnedDeploymentId = "dpl_Substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "CLI-returned deployment ID substitution");
+    reject((candidate) => { candidate.deploymentInvocation.returnedImmutableUrl = "https://substituted.vercel.app/"; }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "CLI-returned immutable URL substitution");
+    reject((candidate) => { candidate.deploymentInvocation.startedAt = "2026-08-29T19:59:55.000Z"; }, /CLOVER_PROVIDER_EFFECT_CHRONOLOGY_REJECTED/u, "start before before-read completion");
+    reject((candidate) => { candidate.deploymentInvocation.completedAt = "2026-08-29T20:00:00.000Z"; }, /CLOVER_PROVIDER_EFFECT_CHRONOLOGY_REJECTED/u, "completion after deployment readback");
+    reject((candidate) => { candidate.deployment.response.automaticAliases.push("automatic.example"); }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.source = "git"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.prebuilt = false; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => {
+      candidate.deployment.response.state = "ERROR";
+      candidate.deployment.response.status = "ERROR";
+      candidate.deployment.response.readyState = "ERROR";
+    }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => {
+      const observation = candidate.providerEffects.afterDeployment.deployments;
+      observation.response = providerDeploymentInventory([
+        ...observation.response.entries,
+        { createdAt: 1_787_944_799_001, id: "dpl_UnexpectedExtra999", state: "READY", target: null }
+      ]);
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "deployment count changes by two");
+    reject((candidate) => {
+      const observation = candidate.providerEffects.afterDeployment.deployments;
+      const outOfRange = Date.parse("2026-08-29T19:59:56.999Z");
+      candidate.deployment.response.createdAt = outOfRange;
+      observation.response.entries.find(({ id }) => id === candidate.deployment.response.id).createdAt = outOfRange;
+      observation.response = providerDeploymentInventory(observation.response.entries);
+      rebindDeployment(candidate);
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "new deployment created before invocation");
+    reject((candidate) => {
+      const outOfRange = Date.parse("2026-08-29T19:59:58.001Z");
+      const observation = candidate.providerEffects.afterDeployment.deployments;
+      candidate.deployment.response.createdAt = outOfRange;
+      observation.response.entries.find(({ id }) => id === candidate.deployment.response.id).createdAt = outOfRange;
+      observation.response = providerDeploymentInventory(observation.response.entries);
+      rebindDeployment(candidate);
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "new deployment created after invocation completion");
+    reject((candidate) => {
+      const observation = candidate.providerEffects.afterDeployment.deployments;
+      const entries = observation.response.entries.map((entry) => entry.target === "production" ? { ...entry, state: "ERROR" } : entry);
+      observation.response = providerDeploymentInventory(entries);
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_PRODUCTION_REJECTED/u, "production inventory mutation");
+    reject((candidate) => {
+      candidate.providerEffects.afterDeployment.project.response.projectSettingsSha256 = hex64("7");
+      rebindProviderEffect(candidate, "afterDeployment", "project");
+    }, /CLOVER_PROVIDER_EFFECT_PROJECT_CHANGED/u, "project settings mutation");
+    reject((candidate) => {
+      candidate.providerEffects.afterDeployment.project.response.accessPolicySha256 = hex64("6");
+      rebindProviderEffect(candidate, "afterDeployment", "project");
+    }, /CLOVER_PROVIDER_EFFECT_PROJECT_CHANGED/u, "access policy mutation");
+    for (const [key, projection, identities, options, expected] of [
+      ["domains", "project-domain-metadata-v1", [hex64("3")], {}, /CLOVER_PROVIDER_EFFECT_DOMAINS_CHANGED/u],
+      ["aliases", "project-alias-metadata-v1", [hex64("4")], {}, /CLOVER_PROVIDER_EFFECT_ALIASES_CHANGED/u],
+      ["customEnvironments", "custom-environment-metadata-v1", [hex64("5")], { boundedLimit: 12 }, /CLOVER_PROVIDER_EFFECT_CUSTOM_ENVIRONMENTS_CHANGED/u],
+      ["environmentVariables", "environment-variable-name-scope-and-update-metadata-v1", [hex64("6")], { boundedLimit: 1_000, environmentVariables: true }, /CLOVER_PROVIDER_EFFECT_ENVIRONMENT_VARIABLES_CHANGED/u]
+    ]) reject((candidate) => {
+      candidate.providerEffects.afterDeployment[key].response = providerOpaqueInventory(projection, identities, options);
+      rebindProviderEffect(candidate, "afterDeployment", key);
+    }, expected, `${key} inventory mutation`);
+    reject((candidate) => {
+      candidate.providerEffects.afterDeployment.domains.response.paginationExhausted = false;
+      rebindProviderEffect(candidate, "afterDeployment", "domains");
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_DOMAINS_RESPONSE_REJECTED/u, "unexhausted pagination");
+    reject((candidate) => {
+      candidate.providerEffects.afterDeployment.environmentVariables.response.valuesRead = true;
+      rebindProviderEffect(candidate, "afterDeployment", "environmentVariables");
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_ENVIRONMENT_VARIABLES_RESPONSE_REJECTED/u, "environment values read");
     reject((candidate) => { candidate.fileTree.request.url += "&substituted=1"; }, /CLOVER_PROVIDER_FILE_TREE_REQUEST_REJECTED/u);
     reject((candidate) => { candidate.fileTree.response[0].children.pop(); candidate.fileTree.request = providerRequest("GET", candidate.fileTree.request.url, candidate.fileTree.response); }, /CLOVER_PROVIDER_FILE_TREE_REJECTED/u);
     reject((candidate) => { candidate.contents.pop(); }, /CLOVER_PROVIDER_UID_REJECTED|CLOVER_PROVIDER_CONTENT_INVENTORY_REJECTED/u);
@@ -2498,6 +2729,19 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     reject((candidate) => { candidate.protection.baseline.response.ssoProtection.deploymentType = "none"; rebindBaseline(candidate); }, /CLOVER_PROVIDER_PROTECTION_BASELINE_REJECTED/u);
     reject((candidate) => { candidate.protection.create.responseEntryCount = 2; }, /CLOVER_PROVIDER_PROTECTION_CREATE_CREATED_ENTRY_REJECTED/u);
     reject((candidate) => { candidate.protection.create.createdEntry.scope = "integration"; }, /CLOVER_PROVIDER_PROTECTION_CREATE_CREATED_ENTRY_REJECTED/u);
+    reject((candidate) => { candidate.protection.create.createdEntry.createdAt -= 1; }, /CLOVER_PROVIDER_PROTECTION_CREATE_CREATED_ENTRY_REJECTED/u, "stale bypass creation timestamp");
+    reject((candidate) => {
+      candidate.protection.create.observedAt = candidate.protection.baseline.observedAt;
+      candidate.protection.create.createdEntry.createdAt = Date.parse(candidate.protection.create.observedAt);
+      candidate.protection.create.request = providerRequest("PATCH", candidate.protection.create.request.url, {
+        createdEntry: candidate.protection.create.createdEntry,
+        responseEntryCount: candidate.protection.create.responseEntryCount
+      }, candidate.protection.create.observedAt);
+    }, /CLOVER_PROVIDER_PROTECTION_REJECTED/u, "protection baseline equals bypass creation");
+    reject((candidate) => {
+      candidate.protection.revoke.observedAt = candidate.protection.create.observedAt;
+      candidate.protection.revoke.request = providerRequest("PATCH", candidate.protection.revoke.request.url, candidate.protection.revoke.response, candidate.protection.revoke.observedAt);
+    }, /CLOVER_PROVIDER_PROTECTION_REJECTED/u, "bypass creation equals revocation");
     for (const field of [
       "shareUrlCreated", "vercelCurlUsed", "bypassValueDisclosed", "bypassValuePersisted", "bypassValueUploaded",
       "bypassValueAttached", "bypassValueScreenshotted", "ownerLoginRequested"
