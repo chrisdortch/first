@@ -31,6 +31,7 @@ import {
   EXPECTED_STACK_B_CHANGED_PATH_COUNT,
   EXPECTED_STACK_B_PATH_LIST_SHA256,
   GITHUB_CACHE_REVALIDATE_SECONDS,
+  GITHUB_FAILURE_RETRY_SECONDS,
   GITHUB_REVALIDATE_SECONDS,
   GITHUB_ORIGIN,
   GITHUB_REPOSITORY,
@@ -384,6 +385,14 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
   assert.equal(observation.ruleset?.bypassActorCount, null);
   assert.deepEqual(observation.exactHeadChecks?.requiredNames, REQUIRED_EXACT_HEAD_CHECKS);
   assert.equal(fixture.calls.length, 10);
+  assert.equal(GITHUB_REVALIDATE_SECONDS, 20 * 60);
+  assert.equal(GITHUB_CACHE_REVALIDATE_SECONDS, 15 * 60);
+  assert.equal(GITHUB_FAILURE_RETRY_SECONDS, GITHUB_CACHE_REVALIDATE_SECONDS);
+  const maximumSharedCacheMissesPerHour = Math.ceil(60 * 60 / GITHUB_CACHE_REVALIDATE_SECONDS);
+  const baselineUnauthenticatedRequestsPerHour = fixture.calls.length * maximumSharedCacheMissesPerHour;
+  assert.equal(maximumSharedCacheMissesPerHour, 4);
+  assert.equal(baselineUnauthenticatedRequestsPerHour, 40);
+  assert.ok(baselineUnauthenticatedRequestsPerHour < 60);
   for (const { endpoint, options } of fixture.calls) {
     assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|rulesets/${EXPECTED_MAIN_RULESET_ID}|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1|actions/workflows/(?:${EXPECTED_GITHUB_WORKFLOWS.map(({ id }) => id).join("|")})/runs\\?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1)$)`, "u"));
     assert.equal(options.method, "GET");
