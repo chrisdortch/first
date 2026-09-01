@@ -66,7 +66,8 @@ async function loadCompiledRuntime() {
     import(pathToFileURL(join(directory, "acl.mjs")).href),
     import(pathToFileURL(join(directory, "crypto.mjs")).href),
     import(pathToFileURL(join(directory, "storage.mjs")).href),
-    import(pathToFileURL(join(directory, "launch-session-service.mjs")).href)
+    import(pathToFileURL(join(directory, "launch-session-service.mjs")).href),
+    import(pathToFileURL(join(directory, "handoff-codex-adapter.mjs")).href)
   ]);
   return {
     directory,
@@ -75,7 +76,8 @@ async function loadCompiledRuntime() {
     acl: imported[2],
     crypto: imported[3],
     storage: imported[4],
-    service: imported[5]
+    service: imported[5],
+    handoff: imported[6]
   };
 }
 
@@ -1031,20 +1033,20 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       "handoff snapshot source",
       "handoff-snapshot-create-0001"
     );
-    let signalProgressEntered;
-    let releaseProgress;
-    const progressEntered = new Promise((resolve) => { signalProgressEntered = resolve; });
-    const progressGate = new Promise((resolve) => { releaseProgress = resolve; });
+    let signalHandoffEntered;
+    let releaseHandoff;
+    const handoffEntered = new Promise((resolve) => { signalHandoffEntered = resolve; });
+    const handoffGate = new Promise((resolve) => { releaseHandoff = resolve; });
     const staleHandoffService = new LaunchSessionService(identity, {
       getSession: (...args) => handoffStore.getSession(...args),
-      appendProgress: async (...args) => {
-        signalProgressEntered();
-        await progressGate;
-        return handoffStore.appendProgress(...args);
+      appendHandoffProposal: async (...args) => {
+        signalHandoffEntered();
+        await handoffGate;
+        return handoffStore.appendHandoffProposal(...args);
       }
     });
     const staleHandoff = staleHandoffService.prepareHandoff(handoffSession.sessionId);
-    await progressEntered;
+    await handoffEntered;
     await handoffStore.appendEvent(identity, handoffSession.sessionId, {
       type: "owner-feedback-recorded",
       expectedVersion: handoffSession.version,
@@ -1053,29 +1055,40 @@ test("event and restore runtime boundaries reject substitutions before mutation"
       idempotencyKey: "handoff-snapshot-race-0001",
       payload: { reviewedText: "concurrent owner edit" }
     });
-    releaseProgress();
+    releaseHandoff();
     await assert.rejects(staleHandoff, AppendOnlyViolationError);
     const afterStaleHandoff = JSON.parse((await handoffStore.exportSession(identity, handoffSession.sessionId)).toString("utf8"));
     assert.equal(afterStaleHandoff.progress.length, 0);
+    assert.equal(afterStaleHandoff.events.some((event) => event.type === "handoff-proposal-prepared"), false);
 
-    let currentProgressExpectation;
+    let currentHandoffInput;
     const currentHandoffService = new LaunchSessionService(identity, {
       getSession: (...args) => handoffStore.getSession(...args),
-      appendProgress: async (...args) => {
-        currentProgressExpectation = structuredClone(args[2]);
-        return handoffStore.appendProgress(...args);
+      appendHandoffProposal: async (...args) => {
+        currentHandoffInput = structuredClone(args[2]);
+        return handoffStore.appendHandoffProposal(...args);
       }
     });
     const currentHandoffSnapshot = await handoffStore.getSession(identity, handoffSession.sessionId);
     const currentProposal = await currentHandoffService.prepareHandoff(handoffSession.sessionId);
     assert.equal(currentProposal.sessionId, currentHandoffSnapshot.sessionId);
-    assert.equal(currentProposal.sessionVersion, currentProgressExpectation.expectedSessionVersion);
-    assert.equal(currentProposal.lastEventHash, currentProgressExpectation.expectedLastEventHash);
-    assert.equal(currentProgressExpectation.expectedLastEventId, currentHandoffSnapshot.lastEventId);
-    assert.equal(currentProgressExpectation.evidenceRef, currentProposal.proposalHash);
+    assert.equal(currentProposal.sessionVersion, currentHandoffInput.expectedSessionVersion);
+    assert.equal(currentProposal.lastEventHash, currentHandoffInput.expectedLastEventHash);
+    assert.equal(currentHandoffInput.expectedLastEventId, currentHandoffSnapshot.lastEventId);
+    assert.deepEqual(currentHandoffInput.proposal, currentProposal);
     const afterCurrentHandoff = JSON.parse((await handoffStore.exportSession(identity, handoffSession.sessionId)).toString("utf8"));
     assert.equal(afterCurrentHandoff.progress.length, 1);
-    assert.equal(afterCurrentHandoff.progress[0].evidenceRef, currentProposal.proposalHash);
+    const persistedHandoffEvent = afterCurrentHandoff.events.at(-1);
+    const persistedHandoffProgress = afterCurrentHandoff.progress[0];
+    assert.equal(persistedHandoffEvent.type, "handoff-proposal-prepared");
+    assert.equal(persistedHandoffProgress.evidenceRef, persistedHandoffEvent.eventId);
+    assert.equal(persistedHandoffProgress.sessionVersion, persistedHandoffEvent.sequence);
+    assert.equal(persistedHandoffProgress.lastEventId, persistedHandoffEvent.eventId);
+    assert.equal(persistedHandoffProgress.lastEventHash, persistedHandoffEvent.canonicalHash);
+    assert.equal(
+      canonicalJson(await handoffStore.readPayload(identity, persistedHandoffEvent)),
+      canonicalJson(currentProposal)
+    );
 
     const growthStore = new InMemorySyntheticLaunchStudioStore(keys);
     const growthService = new LaunchSessionService(identity, growthStore);
@@ -1381,6 +1394,582 @@ test("event and restore runtime boundaries reject substitutions before mutation"
     assert.equal(restoreCalls, 1);
     exportedArchive = oversizedArchive;
     await assert.rejects(boundaryService.export(session.sessionId), RequestRejectedError);
+  } finally {
+    rmSync(runtime.directory, { recursive: true, force: true });
+  }
+});
+
+test("recoverable handoff evidence is atomic, self-contained, and restore-closed", async () => {
+  const runtime = await loadCompiledRuntime();
+  try {
+    const { MAX_EXPORT_BYTES, PROJECT_ID } = runtime.config;
+    const { ownerScope } = runtime.acl;
+    const { ExplicitSyntheticKeyProvider, encryptPrivateBytes } = runtime.crypto;
+    const {
+      AppendOnlyViolationError,
+      InMemorySyntheticLaunchStudioStore,
+      SessionNotFoundError,
+      canonicalJson,
+      sha256
+    } = runtime.storage;
+    const { LaunchSessionService } = runtime.service;
+    const { prepareProposalOnlyHandoff } = runtime.handoff;
+    const identity = {
+      providerSubject: "synthetic-handoff-owner",
+      participantId: `participant:${"6".repeat(64)}`,
+      projectId: PROJECT_ID,
+      authenticationMode: "synthetic"
+    };
+    const archiveKey = Buffer.alloc(32, 37);
+    const keyRef = "synthetic-handoff-archive-key";
+    const keyVersion = 4;
+    const keyMaterial = { keyRef, version: keyVersion, key: archiveKey };
+    const keys = new ExplicitSyntheticKeyProvider(archiveKey, keyRef, keyVersion);
+    const create = (store, label) => store.createSession(
+      identity,
+      ownerScope(identity),
+      `recoverable handoff ${label}`,
+      `recoverable-handoff-${sha256(label).slice(0, 24)}`
+    );
+    const seal = (document) => {
+      const unsigned = {
+        format: document.format,
+        session: document.session,
+        events: document.events,
+        progress: document.progress,
+        artifacts: document.artifacts
+      };
+      const derived = Buffer.from(hkdfSync(
+        "sha256",
+        archiveKey,
+        Buffer.from("clover-launch-studio:archive-seal:kdf:v2", "utf8"),
+        Buffer.from(`clover-launch-studio:archive-seal:key:v2\0${keyRef}\0${keyVersion}`, "utf8"),
+        32
+      ));
+      document.archiveSeal = {
+        algorithm: "hmac-sha256-hkdf-v1",
+        keyRef,
+        keyVersion,
+        digest: createHmac("sha256", derived)
+          .update(Buffer.from("clover-launch-studio:archive-seal:data:v2\0", "utf8"))
+          .update(canonicalJson(unsigned), "utf8")
+          .digest("hex")
+      };
+      return Buffer.from(canonicalJson(document), "utf8");
+    };
+    const progressId = (item) => {
+      const unsigned = { ...item };
+      delete unsigned.progressId;
+      return `progress:${sha256(canonicalJson(unsigned))}`;
+    };
+    const assertRestoreRejected = async (candidate, label, expectedSessionId) => {
+      const destination = new InMemorySyntheticLaunchStudioStore(keys);
+      await assert.rejects(
+        destination.restoreSession(identity, expectedSessionId, candidate),
+        AppendOnlyViolationError,
+        label
+      );
+      await assert.rejects(destination.getSession(identity, expectedSessionId), SessionNotFoundError, label);
+    };
+
+    const sourceStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const sourceService = new LaunchSessionService(identity, sourceStore);
+    const initial = await create(sourceStore, "source");
+    await sourceStore.appendProgress(identity, initial.sessionId, {
+      sessionId: initial.sessionId,
+      expectedSessionVersion: initial.version,
+      expectedLastEventId: initial.lastEventId,
+      expectedLastEventHash: initial.lastEventHash,
+      label: "Earlier material evidence",
+      state: "proposed",
+      evidenceRef: "synthetic-earlier-material-evidence"
+    });
+    const preHandoff = await sourceStore.getSession(identity, initial.sessionId);
+    const proposal = await sourceService.prepareHandoff(initial.sessionId);
+    const postHandoff = await sourceStore.getSession(identity, initial.sessionId);
+    const events = await sourceStore.readEvents(identity, initial.sessionId);
+    const handoffEvents = events.filter((event) => event.type === "handoff-proposal-prepared");
+    assert.equal(handoffEvents.length, 1);
+    const handoffEvent = handoffEvents[0];
+    const archive = await sourceStore.exportSession(identity, initial.sessionId);
+    const document = JSON.parse(archive.toString("utf8"));
+    const handoffProgress = document.progress.filter((item) => item.label === "Handoff proposal prepared");
+    assert.equal(handoffProgress.length, 1);
+    assert.equal(document.events.length, preHandoff.version + 1);
+    assert.equal(document.progress.length, 2);
+    assert.equal(document.artifacts.length, 0);
+    assert.equal(postHandoff.version, preHandoff.version + 1);
+    assert.equal(postHandoff.lastEventId, handoffEvent.eventId);
+    assert.equal(postHandoff.lastEventHash, handoffEvent.canonicalHash);
+    assert.equal(handoffEvent.expectedVersion, preHandoff.version);
+    assert.equal(handoffEvent.predecessorEventId, preHandoff.lastEventId);
+    assert.equal(handoffEvent.predecessorHash, preHandoff.lastEventHash);
+    assert.equal(handoffEvent.createdAt, proposal.proposedAt);
+    assert.equal(handoffProgress[0].evidenceRef, handoffEvent.eventId);
+    assert.equal(handoffProgress[0].sessionVersion, postHandoff.version);
+    assert.equal(handoffProgress[0].lastEventId, postHandoff.lastEventId);
+    assert.equal(handoffProgress[0].lastEventHash, postHandoff.lastEventHash);
+    assert.equal(handoffProgress[0].recordedAt, proposal.proposedAt);
+    const recoveredPayload = await sourceStore.readPayload(identity, handoffEvent);
+    assert.equal(canonicalJson(recoveredPayload), canonicalJson(proposal));
+    const { proposalHash, ...unsignedProposal } = proposal;
+    assert.equal(proposalHash, sha256(canonicalJson(unsignedProposal)));
+    assert.equal(proposal.proposalOnly, true);
+    assert.equal(proposal.executable, false);
+    assert.equal(proposal.approvalInherited, false);
+
+    const exactRetryInput = {
+      expectedSessionVersion: preHandoff.version,
+      expectedLastEventId: preHandoff.lastEventId,
+      expectedLastEventHash: preHandoff.lastEventHash,
+      proposal,
+      progress: { label: "Handoff proposal prepared", state: "proposed" }
+    };
+    const archiveBeforeRetry = await sourceStore.exportSession(identity, initial.sessionId);
+    const retry = await sourceStore.appendHandoffProposal(identity, initial.sessionId, exactRetryInput);
+    assert.equal(retry.event.eventId, handoffEvent.eventId);
+    assert.equal(retry.progress.progressId, handoffProgress[0].progressId);
+    assert.deepEqual(await sourceStore.exportSession(identity, initial.sessionId), archiveBeforeRetry);
+    await assert.rejects(sourceStore.appendHandoffProposal(identity, initial.sessionId, {
+      ...exactRetryInput,
+      progress: { label: "Substituted handoff", state: "proposed" }
+    }), AppendOnlyViolationError);
+    assert.deepEqual(await sourceStore.exportSession(identity, initial.sessionId), archiveBeforeRetry);
+    await assert.rejects(sourceStore.appendEvent(identity, initial.sessionId, {
+      type: "handoff-proposal-prepared",
+      expectedVersion: postHandoff.version,
+      predecessorEventId: postHandoff.lastEventId,
+      predecessorHash: postHandoff.lastEventHash,
+      idempotencyKey: "generic-handoff-event-0001",
+      payload: proposal
+    }), AppendOnlyViolationError);
+    await assert.rejects(sourceStore.appendProgress(identity, initial.sessionId, {
+      sessionId: initial.sessionId,
+      expectedSessionVersion: postHandoff.version,
+      expectedLastEventId: postHandoff.lastEventId,
+      expectedLastEventHash: postHandoff.lastEventHash,
+      label: "Handoff proposal prepared",
+      state: "proposed",
+      evidenceRef: proposal.proposalHash
+    }), AppendOnlyViolationError);
+    assert.deepEqual(await sourceStore.exportSession(identity, initial.sessionId), archiveBeforeRetry);
+
+    const restoredStore = new InMemorySyntheticLaunchStudioStore(keys);
+    await restoredStore.restoreSession(identity, initial.sessionId, archive);
+    const restoredEvents = await restoredStore.readEvents(identity, initial.sessionId);
+    const restoredHandoff = restoredEvents.find((event) => event.eventId === handoffEvent.eventId);
+    assert.ok(restoredHandoff);
+    assert.equal(canonicalJson(await restoredStore.readPayload(identity, restoredHandoff)), canonicalJson(proposal));
+    assert.deepEqual(await restoredStore.exportSession(identity, initial.sessionId), archive);
+    assert.deepEqual(
+      await restoredStore.appendHandoffProposal(identity, initial.sessionId, exactRetryInput),
+      retry
+    );
+    assert.deepEqual(await restoredStore.exportSession(identity, initial.sessionId), archive);
+
+    const lostResponseStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const lostResponseService = new LaunchSessionService(identity, lostResponseStore);
+    const lostResponseSession = await create(lostResponseStore, "lost-response");
+    await lostResponseService.prepareHandoff(lostResponseSession.sessionId);
+    const lostEvents = await lostResponseStore.readEvents(identity, lostResponseSession.sessionId);
+    const lostEvent = lostEvents.at(-1);
+    assert.equal(lostEvent.type, "handoff-proposal-prepared");
+    const lostPayload = await lostResponseStore.readPayload(identity, lostEvent);
+    const { proposalHash: lostHash, ...lostUnsigned } = lostPayload;
+    assert.equal(lostHash, sha256(canonicalJson(lostUnsigned)));
+    const lostArchive = await lostResponseStore.exportSession(identity, lostResponseSession.sessionId);
+    const lostDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await lostDestination.restoreSession(identity, lostResponseSession.sessionId, lostArchive);
+    assert.equal(
+      canonicalJson(await lostDestination.readPayload(identity, (await lostDestination.readEvents(identity, lostResponseSession.sessionId)).at(-1))),
+      canonicalJson(lostPayload)
+    );
+    assert.deepEqual(await lostDestination.exportSession(identity, lostResponseSession.sessionId), lostArchive);
+
+    const resealed = (mutate) => {
+      const candidate = structuredClone(document);
+      mutate(candidate);
+      return seal(candidate);
+    };
+    await assertRestoreRejected(resealed((candidate) => { candidate.events.pop(); }), "missing event", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => { candidate.progress.pop(); }), "missing handoff progress", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      const item = candidate.progress.at(-1);
+      item.evidenceRef = `event:${"f".repeat(64)}`;
+      item.lastEventId = item.evidenceRef;
+      item.progressId = progressId(item);
+    }), "wrong evidence reference", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      const event = candidate.events.at(-1);
+      event.type = "owner-feedback-recorded";
+      const unsigned = { ...event };
+      delete unsigned.canonicalHash;
+      event.canonicalHash = sha256(canonicalJson(unsigned));
+      candidate.session.lastEventHash = event.canonicalHash;
+      const item = candidate.progress.at(-1);
+      item.lastEventHash = event.canonicalHash;
+      item.progressId = progressId(item);
+    }), "wrong event type", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      const encrypted = candidate.events.at(-1).encryptedPayload;
+      encrypted.ciphertext = `${encrypted.ciphertext[0] === "A" ? "B" : "A"}${encrypted.ciphertext.slice(1)}`;
+    }), "proposal ciphertext authentication failure", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      candidate.events.at(-1).canonicalHash = "0".repeat(64);
+      candidate.session.lastEventHash = "0".repeat(64);
+      const item = candidate.progress.at(-1);
+      item.lastEventHash = "0".repeat(64);
+      item.progressId = progressId(item);
+    }), "wrong event canonical hash", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      candidate.events.at(-1).expectedVersion += 1;
+    }), "wrong proposal event version", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      candidate.events.at(-1).predecessorHash = "1".repeat(64);
+    }), "wrong proposal predecessor", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      candidate.events.at(-1).createdAt = new Date(Date.parse(candidate.events.at(-1).createdAt) + 1).toISOString();
+    }), "wrong proposal event timestamp", initial.sessionId);
+    for (const [field, replacement] of [
+      ["workspaceId", "workspace:substituted"],
+      ["projectId", "project:substituted"],
+      ["participantId", `participant:${"5".repeat(64)}`]
+    ]) {
+      await assertRestoreRejected(resealed((candidate) => {
+        candidate.events.at(-1)[field] = replacement;
+      }), `cross-scope ${field}`, initial.sessionId);
+    }
+    await assertRestoreRejected(resealed((candidate) => {
+      candidate.events.push(structuredClone(candidate.events.at(-1)));
+    }), "duplicate event", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      const duplicate = structuredClone(candidate.progress.at(-1));
+      duplicate.cursor += 1;
+      duplicate.progressId = progressId(duplicate);
+      candidate.progress.push(duplicate);
+    }), "duplicate handoff progress", initial.sessionId);
+    await assertRestoreRejected(resealed((candidate) => {
+      candidate.progress.reverse();
+    }), "reordered progress", initial.sessionId);
+
+    const twoHandoffStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const twoHandoffService = new LaunchSessionService(identity, twoHandoffStore);
+    const twoHandoffSession = await create(twoHandoffStore, "two-handoff-order");
+    await twoHandoffService.prepareHandoff(twoHandoffSession.sessionId);
+    await twoHandoffService.prepareHandoff(twoHandoffSession.sessionId);
+    const twoHandoffDocument = JSON.parse((await twoHandoffStore.exportSession(identity, twoHandoffSession.sessionId)).toString("utf8"));
+    assert.equal(twoHandoffDocument.progress.length, 2);
+    twoHandoffDocument.progress.reverse();
+    for (const [offset, item] of twoHandoffDocument.progress.entries()) {
+      item.cursor = offset + 1;
+      item.progressId = progressId(item);
+    }
+    await assertRestoreRejected(
+      seal(twoHandoffDocument),
+      "rehashed event-backed progress order substitution",
+      twoHandoffSession.sessionId
+    );
+    for (const [label, mutate] of [
+      ["progress resulting version", (item) => { item.sessionVersion += 1; }],
+      ["progress resulting event ID", (item) => { item.lastEventId = `event:${"a".repeat(64)}`; }],
+      ["progress resulting event hash", (item) => { item.lastEventHash = "a".repeat(64); }]
+    ]) {
+      await assertRestoreRejected(resealed((candidate) => {
+        const item = candidate.progress.at(-1);
+        mutate(item);
+        item.progressId = progressId(item);
+      }), label, initial.sessionId);
+    }
+    const staleSeal = structuredClone(document);
+    staleSeal.progress.at(-1).lastEventHash = "2".repeat(64);
+    await assertRestoreRejected(Buffer.from(canonicalJson(staleSeal), "utf8"), "archive seal substitution", initial.sessionId);
+
+    const rewritePayload = async (mutate) => {
+      const candidate = structuredClone(document);
+      const event = candidate.events.at(-1);
+      const item = candidate.progress.at(-1);
+      const changed = structuredClone(proposal);
+      mutate(changed);
+      event.idempotencyKey = `handoff-proposal:${changed.proposalHash}`;
+      const payloadBytes = Buffer.from(canonicalJson(changed), "utf8");
+      event.payloadDigest = sha256(payloadBytes);
+      event.eventId = `event:${sha256(`${event.sessionId}\0${event.sequence}\0${event.payloadDigest}\0${event.idempotencyKey}`)}`;
+      event.encryptedPayload = await encryptPrivateBytes(
+        payloadBytes,
+        `${event.sessionId}:${event.eventId}:${event.type}`,
+        keys
+      );
+      const unsignedEvent = { ...event };
+      delete unsignedEvent.canonicalHash;
+      event.canonicalHash = sha256(canonicalJson(unsignedEvent));
+      candidate.session.lastEventId = event.eventId;
+      candidate.session.lastEventHash = event.canonicalHash;
+      item.evidenceRef = event.eventId;
+      item.lastEventId = event.eventId;
+      item.lastEventHash = event.canonicalHash;
+      item.progressId = progressId(item);
+      return seal(candidate);
+    };
+    const wrongPayloadDigestDocument = structuredClone(document);
+    const wrongDigestEvent = wrongPayloadDigestDocument.events.at(-1);
+    const wrongDigestProgress = wrongPayloadDigestDocument.progress.at(-1);
+    const originalPayloadBytes = Buffer.from(canonicalJson(proposal), "utf8");
+    wrongDigestEvent.payloadDigest = "b".repeat(64);
+    assert.notEqual(wrongDigestEvent.payloadDigest, sha256(originalPayloadBytes));
+    wrongDigestEvent.eventId = `event:${sha256(`${wrongDigestEvent.sessionId}\0${wrongDigestEvent.sequence}\0${wrongDigestEvent.payloadDigest}\0${wrongDigestEvent.idempotencyKey}`)}`;
+    wrongDigestEvent.encryptedPayload = await encryptPrivateBytes(
+      originalPayloadBytes,
+      `${wrongDigestEvent.sessionId}:${wrongDigestEvent.eventId}:${wrongDigestEvent.type}`,
+      keys
+    );
+    const unsignedWrongDigestEvent = { ...wrongDigestEvent };
+    delete unsignedWrongDigestEvent.canonicalHash;
+    wrongDigestEvent.canonicalHash = sha256(canonicalJson(unsignedWrongDigestEvent));
+    wrongPayloadDigestDocument.session.lastEventId = wrongDigestEvent.eventId;
+    wrongPayloadDigestDocument.session.lastEventHash = wrongDigestEvent.canonicalHash;
+    wrongDigestProgress.evidenceRef = wrongDigestEvent.eventId;
+    wrongDigestProgress.lastEventId = wrongDigestEvent.eventId;
+    wrongDigestProgress.lastEventHash = wrongDigestEvent.canonicalHash;
+    wrongDigestProgress.progressId = progressId(wrongDigestProgress);
+    await assertRestoreRejected(
+      seal(wrongPayloadDigestDocument),
+      "event payloadDigest mismatch with authentic ciphertext",
+      initial.sessionId
+    );
+    const rehashProposal = (changed) => {
+      const unsigned = { ...changed };
+      delete unsigned.proposalHash;
+      changed.proposalHash = sha256(canonicalJson(unsigned));
+    };
+    await assertRestoreRejected(await rewritePayload((changed) => {
+      changed.proposalHash = "3".repeat(64);
+    }), "wrong proposal hash", initial.sessionId);
+    await assertRestoreRejected(await rewritePayload((changed) => {
+      changed.proposedAt = new Date(Date.parse(changed.proposedAt) + 1).toISOString();
+      rehashProposal(changed);
+    }), "proposal and event timestamp mismatch", initial.sessionId);
+    await assertRestoreRejected(await rewritePayload((changed) => {
+      changed.sessionId = `session:${"4".repeat(64)}`;
+      rehashProposal(changed);
+    }), "proposal cross-session substitution", initial.sessionId);
+    for (const [label, mutate] of [
+      ["proposal-only boundary", (changed) => { changed.proposalOnly = false; }],
+      ["proposal executable boundary", (changed) => { changed.executable = true; }],
+      ["proposal inherited approval boundary", (changed) => { changed.approvalInherited = true; }],
+      ["proposal Action ID", (changed) => { changed.actionId = "CLOVER-SUBSTITUTED"; }],
+      ["proposal envelope ID", (changed) => { changed.envelopeId = "handoff-action:substituted"; }],
+      ["proposal source repository", (changed) => { changed.source.repository = "substituted/repository"; }],
+      ["proposal source branch", (changed) => { changed.source.branchProvenance = "substituted"; }],
+      ["proposal source commit", (changed) => { changed.source.commit = "0".repeat(40); }],
+      ["proposal source tree", (changed) => { changed.source.tree = "0".repeat(40); }],
+      ["proposal pre-event version", (changed) => { changed.sessionVersion += 1; }],
+      ["proposal pre-event hash", (changed) => { changed.lastEventHash = "0".repeat(64); }]
+    ]) {
+      await assertRestoreRejected(await rewritePayload((changed) => {
+        mutate(changed);
+        rehashProposal(changed);
+      }), label, initial.sessionId);
+    }
+
+    const legacySource = new InMemorySyntheticLaunchStudioStore(keys);
+    const legacySession = await create(legacySource, "legacy-hash-only");
+    await legacySource.appendProgress(identity, legacySession.sessionId, {
+      sessionId: legacySession.sessionId,
+      expectedSessionVersion: legacySession.version,
+      expectedLastEventId: legacySession.lastEventId,
+      expectedLastEventHash: legacySession.lastEventHash,
+      label: "Legacy evidence",
+      state: "proposed",
+      evidenceRef: "legacy-evidence-reference"
+    });
+    const legacyDocument = JSON.parse((await legacySource.exportSession(identity, legacySession.sessionId)).toString("utf8"));
+    legacyDocument.progress[0].label = "Handoff proposal prepared";
+    legacyDocument.progress[0].evidenceRef = "4".repeat(64);
+    legacyDocument.progress[0].progressId = progressId(legacyDocument.progress[0]);
+    const legacyArchive = seal(legacyDocument);
+    const legacyDestination = new InMemorySyntheticLaunchStudioStore(keys);
+    await legacyDestination.restoreSession(identity, legacySession.sessionId, legacyArchive);
+    assert.deepEqual(await legacyDestination.exportSession(identity, legacySession.sessionId), legacyArchive);
+    assert.equal((await legacyDestination.readEvents(identity, legacySession.sessionId)).some((event) => event.type === "handoff-proposal-prepared"), false);
+
+    let failEncryption = false;
+    const failingKeys = {
+      current: async () => {
+        if (failEncryption) {
+          failEncryption = false;
+          throw new Error("synthetic encryption failure");
+        }
+        return keyMaterial;
+      },
+      resolve: async (candidateRef, candidateVersion) =>
+        candidateRef === keyRef && candidateVersion === keyVersion ? keyMaterial : null
+    };
+    const encryptionStore = new InMemorySyntheticLaunchStudioStore(failingKeys);
+    const encryptionSession = await create(encryptionStore, "encryption-failure");
+    const encryptionBefore = await encryptionStore.exportSession(identity, encryptionSession.sessionId);
+    const encryptionProposal = prepareProposalOnlyHandoff(encryptionSession);
+    failEncryption = true;
+    const encryptionInput = {
+      expectedSessionVersion: encryptionSession.version,
+      expectedLastEventId: encryptionSession.lastEventId,
+      expectedLastEventHash: encryptionSession.lastEventHash,
+      proposal: encryptionProposal,
+      progress: { label: "Handoff proposal prepared", state: "proposed" }
+    };
+    await assert.rejects(encryptionStore.appendHandoffProposal(identity, encryptionSession.sessionId, encryptionInput));
+    assert.deepEqual(await encryptionStore.exportSession(identity, encryptionSession.sessionId), encryptionBefore);
+    const encryptionRetry = await encryptionStore.appendHandoffProposal(identity, encryptionSession.sessionId, encryptionInput);
+    assert.equal(encryptionRetry.event.type, "handoff-proposal-prepared");
+    assert.equal(encryptionRetry.progress.evidenceRef, encryptionRetry.event.eventId);
+    const encryptionAfterRetry = JSON.parse((await encryptionStore.exportSession(identity, encryptionSession.sessionId)).toString("utf8"));
+    assert.equal(encryptionAfterRetry.events.filter((event) => event.type === "handoff-proposal-prepared").length, 1);
+    assert.equal(encryptionAfterRetry.progress.filter((item) => item.evidenceRef === encryptionRetry.event.eventId).length, 1);
+
+    const progressFailureStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const progressFailureSession = await create(progressFailureStore, "progress-construction-failure");
+    const progressFailureBefore = await progressFailureStore.exportSession(identity, progressFailureSession.sessionId);
+    const progressFailureProposal = prepareProposalOnlyHandoff(progressFailureSession);
+    const progressFailureInput = {
+      expectedSessionVersion: progressFailureSession.version,
+      expectedLastEventId: progressFailureSession.lastEventId,
+      expectedLastEventHash: progressFailureSession.lastEventHash,
+      proposal: progressFailureProposal,
+      progress: { label: "Wrong progress", state: "complete" }
+    };
+    await assert.rejects(
+      progressFailureStore.appendHandoffProposal(identity, progressFailureSession.sessionId, progressFailureInput),
+      AppendOnlyViolationError
+    );
+    assert.deepEqual(await progressFailureStore.exportSession(identity, progressFailureSession.sessionId), progressFailureBefore);
+    const progressRetry = await progressFailureStore.appendHandoffProposal(identity, progressFailureSession.sessionId, {
+      ...progressFailureInput,
+      progress: { label: "Handoff proposal prepared", state: "proposed" }
+    });
+    assert.equal(progressRetry.progress.evidenceRef, progressRetry.event.eventId);
+    const progressAfterRetry = JSON.parse((await progressFailureStore.exportSession(identity, progressFailureSession.sessionId)).toString("utf8"));
+    assert.equal(progressAfterRetry.events.filter((event) => event.type === "handoff-proposal-prepared").length, 1);
+    assert.equal(progressAfterRetry.progress.filter((item) => item.evidenceRef === progressRetry.event.eventId).length, 1);
+
+    let failProspectiveSeal = false;
+    let prospectiveCurrentCalls = 0;
+    const prospectiveKeys = {
+      current: async () => {
+        if (failProspectiveSeal) {
+          prospectiveCurrentCalls += 1;
+          if (prospectiveCurrentCalls === 2) {
+            failProspectiveSeal = false;
+            throw new Error("synthetic prospective archive seal failure");
+          }
+        }
+        return keyMaterial;
+      },
+      resolve: async (candidateRef, candidateVersion) =>
+        candidateRef === keyRef && candidateVersion === keyVersion ? keyMaterial : null
+    };
+    const prospectiveStore = new InMemorySyntheticLaunchStudioStore(prospectiveKeys);
+    const prospectiveSession = await create(prospectiveStore, "prospective-seal-failure");
+    const prospectiveBefore = await prospectiveStore.exportSession(identity, prospectiveSession.sessionId);
+    const prospectiveProposal = prepareProposalOnlyHandoff(prospectiveSession);
+    const prospectiveInput = {
+      expectedSessionVersion: prospectiveSession.version,
+      expectedLastEventId: prospectiveSession.lastEventId,
+      expectedLastEventHash: prospectiveSession.lastEventHash,
+      proposal: prospectiveProposal,
+      progress: { label: "Handoff proposal prepared", state: "proposed" }
+    };
+    prospectiveCurrentCalls = 0;
+    failProspectiveSeal = true;
+    await assert.rejects(prospectiveStore.appendHandoffProposal(identity, prospectiveSession.sessionId, prospectiveInput));
+    assert.deepEqual(await prospectiveStore.exportSession(identity, prospectiveSession.sessionId), prospectiveBefore);
+    const prospectiveRetry = await prospectiveStore.appendHandoffProposal(identity, prospectiveSession.sessionId, prospectiveInput);
+    assert.equal(prospectiveRetry.progress.evidenceRef, prospectiveRetry.event.eventId);
+    const prospectiveAfterRetry = JSON.parse((await prospectiveStore.exportSession(identity, prospectiveSession.sessionId)).toString("utf8"));
+    assert.equal(prospectiveAfterRetry.events.filter((event) => event.type === "handoff-proposal-prepared").length, 1);
+    assert.equal(prospectiveAfterRetry.progress.filter((item) => item.evidenceRef === prospectiveRetry.event.eventId).length, 1);
+
+    let low = 0;
+    let high = MAX_EXPORT_BYTES;
+    let overflowStore = null;
+    let overflowSession = null;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      const probe = new InMemorySyntheticLaunchStudioStore(keys);
+      const probeSession = await create(probe, `size-probe-${middle}`);
+      try {
+        await probe.putArtifact(identity, probeSession.sessionId, Buffer.alloc(middle, 0xa6), "application/octet-stream");
+        low = middle;
+        overflowStore = probe;
+        overflowSession = probeSession;
+      } catch {
+        high = middle - 1;
+      }
+    }
+    assert.ok(overflowStore);
+    assert.ok(overflowSession);
+    const overflowBefore = await overflowStore.exportSession(identity, overflowSession.sessionId);
+    const overflowProposal = prepareProposalOnlyHandoff(overflowSession);
+    await assert.rejects(overflowStore.appendHandoffProposal(identity, overflowSession.sessionId, {
+      expectedSessionVersion: overflowSession.version,
+      expectedLastEventId: overflowSession.lastEventId,
+      expectedLastEventHash: overflowSession.lastEventHash,
+      proposal: overflowProposal,
+      progress: { label: "Handoff proposal prepared", state: "proposed" }
+    }), AppendOnlyViolationError);
+    assert.deepEqual(await overflowStore.exportSession(identity, overflowSession.sessionId), overflowBefore);
+
+    const orderingStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const orderingSession = await create(orderingStore, "ordinary-concurrency");
+    const orderingProposal = prepareProposalOnlyHandoff(
+      orderingSession,
+      new Date(Date.parse(orderingSession.updatedAt) + 1).toISOString()
+    );
+    const orderedResults = await Promise.allSettled([
+      orderingStore.appendHandoffProposal(identity, orderingSession.sessionId, {
+        expectedSessionVersion: orderingSession.version,
+        expectedLastEventId: orderingSession.lastEventId,
+        expectedLastEventHash: orderingSession.lastEventHash,
+        proposal: orderingProposal,
+        progress: { label: "Handoff proposal prepared", state: "proposed" }
+      }),
+      orderingStore.appendEvent(identity, orderingSession.sessionId, {
+        type: "owner-feedback-recorded",
+        expectedVersion: orderingSession.version,
+        predecessorEventId: orderingSession.lastEventId,
+        predecessorHash: orderingSession.lastEventHash,
+        idempotencyKey: "concurrent-ordinary-event-0001",
+        payload: { reviewedText: "orders wholly before or after" }
+      })
+    ]);
+    assert.equal(orderedResults.filter(({ status }) => status === "fulfilled").length, 1);
+    const orderingArchive = JSON.parse((await orderingStore.exportSession(identity, orderingSession.sessionId)).toString("utf8"));
+    assert.equal(
+      orderingArchive.events.filter((event) => event.type === "handoff-proposal-prepared").length,
+      orderingArchive.progress.filter((item) => item.label === "Handoff proposal prepared").length
+    );
+
+    const competingStore = new InMemorySyntheticLaunchStudioStore(keys);
+    const competingSession = await create(competingStore, "competing-handoffs");
+    const competingInputs = [1, 2].map((offset) => ({
+      expectedSessionVersion: competingSession.version,
+      expectedLastEventId: competingSession.lastEventId,
+      expectedLastEventHash: competingSession.lastEventHash,
+      proposal: prepareProposalOnlyHandoff(
+        competingSession,
+        new Date(Date.parse(competingSession.updatedAt) + offset).toISOString()
+      ),
+      progress: { label: "Handoff proposal prepared", state: "proposed" }
+    }));
+    const competingResults = await Promise.allSettled(competingInputs.map((input) =>
+      competingStore.appendHandoffProposal(identity, competingSession.sessionId, input)
+    ));
+    assert.equal(competingResults.filter(({ status }) => status === "fulfilled").length, 1);
+    const competingArchive = JSON.parse((await competingStore.exportSession(identity, competingSession.sessionId)).toString("utf8"));
+    assert.equal(competingArchive.events.filter((event) => event.type === "handoff-proposal-prepared").length, 1);
+    assert.equal(competingArchive.progress.filter((item) => item.label === "Handoff proposal prepared").length, 1);
+    assert.equal(
+      competingArchive.progress.find((item) => item.label === "Handoff proposal prepared").evidenceRef,
+      competingArchive.events.find((event) => event.type === "handoff-proposal-prepared").eventId
+    );
   } finally {
     rmSync(runtime.directory, { recursive: true, force: true });
   }

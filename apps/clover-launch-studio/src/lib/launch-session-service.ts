@@ -218,14 +218,15 @@ export class LaunchSessionService {
   async prepareHandoff(sessionId: string) {
     const session = await this.repository.getSession(this.identity, sessionId);
     const proposal = prepareProposalOnlyHandoff(session);
-    await this.repository.appendProgress(this.identity, sessionId, {
-      sessionId,
+    await this.repository.appendHandoffProposal(this.identity, sessionId, {
       expectedSessionVersion: session.version,
       expectedLastEventId: session.lastEventId,
       expectedLastEventHash: session.lastEventHash,
-      label: "Handoff proposal prepared",
-      state: "proposed",
-      evidenceRef: proposal.proposalHash
+      proposal,
+      progress: {
+        label: "Handoff proposal prepared",
+        state: "proposed"
+      }
     });
     return proposal;
   }

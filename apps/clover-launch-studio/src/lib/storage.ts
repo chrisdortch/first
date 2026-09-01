@@ -57,7 +57,7 @@ export type AppendEventInput = {
   createdAt?: string;
 };
 
-export type MaterialProgress = {
+type MaterialProgressCore = {
   progressId: string;
   sessionId: string;
   cursor: number;
@@ -67,10 +67,59 @@ export type MaterialProgress = {
   recordedAt: string;
 };
 
-export type AppendProgressInput = Omit<MaterialProgress, "progressId" | "cursor" | "recordedAt"> & {
+export type LegacyMaterialProgress = MaterialProgressCore;
+
+export type EventBackedMaterialProgress = MaterialProgressCore & {
+  sessionVersion: number;
+  lastEventId: string;
+  lastEventHash: string;
+};
+
+export type MaterialProgress = LegacyMaterialProgress | EventBackedMaterialProgress;
+
+export type AppendProgressInput = {
+  sessionId: string;
+  label: string;
+  state: MaterialProgressCore["state"];
+  evidenceRef: string;
   expectedSessionVersion: number;
   expectedLastEventId: string | null;
   expectedLastEventHash: string | null;
+};
+
+export type HandoffProposalEvidence = {
+  proposalOnly: true;
+  executable: false;
+  approvalInherited: false;
+  actionId: "CLOVER-2026-08-24-006";
+  envelopeId: "handoff-action:006:launch-studio-phase-b-source";
+  source: {
+    repository: "chrisdortch/first";
+    branchProvenance: "main";
+    commit: "e5688c771d384d80a8c723cfa655298ce8257889";
+    tree: "4c84129b4fb5ea098ac9d2325bc2cb387857a471";
+  };
+  sessionId: string;
+  sessionVersion: number;
+  lastEventHash: string | null;
+  proposedAt: string;
+  proposalHash: string;
+};
+
+export type AppendHandoffProposalInput = {
+  expectedSessionVersion: number;
+  expectedLastEventId: string | null;
+  expectedLastEventHash: string | null;
+  proposal: HandoffProposalEvidence;
+  progress: {
+    label: "Handoff proposal prepared";
+    state: "proposed";
+  };
+};
+
+export type PersistedHandoffProposal = {
+  event: LaunchEvent;
+  progress: EventBackedMaterialProgress;
 };
 
 export const LAUNCH_ARCHIVE_FORMAT = "clover-launch-studio-export-v2" as const;
@@ -277,6 +326,7 @@ async function completeArchiveBytes(
   progress: MaterialProgress[],
   artifacts: ArchivedArtifact[]
 ): Promise<Buffer> {
+  await assertEvidenceReferenceIntegrity(keys, session, events, progress);
   const document = await sealArchive({ format: LAUNCH_ARCHIVE_FORMAT, session, events, progress, artifacts }, keys);
   const bytes = Buffer.from(canonicalJson(document), "utf8");
   if (bytes.byteLength > MAX_EXPORT_BYTES) throw new AppendOnlyViolationError();
@@ -301,11 +351,17 @@ const MATERIAL_PROGRESS_STATES = new Set<MaterialProgress["state"]>(["proposed",
 
 function assertProgressRecord(item: MaterialProgress, sessionId: string, offset: number) {
   const cursor = offset + 1;
+  const eventBacked = Object.prototype.hasOwnProperty.call(item, "sessionVersion") ||
+    Object.prototype.hasOwnProperty.call(item, "lastEventId") ||
+    Object.prototype.hasOwnProperty.call(item, "lastEventHash");
+  const exactKeySignature = eventBacked
+    ? "cursor\0evidenceRef\0label\0lastEventHash\0lastEventId\0progressId\0recordedAt\0sessionId\0sessionVersion\0state"
+    : "cursor\0evidenceRef\0label\0progressId\0recordedAt\0sessionId\0state";
   if (
     !item ||
     typeof item !== "object" ||
     Array.isArray(item) ||
-    Object.keys(item).sort().join("\0") !== "cursor\0evidenceRef\0label\0progressId\0recordedAt\0sessionId\0state" ||
+    Object.keys(item).sort().join("\0") !== exactKeySignature ||
     item.sessionId !== sessionId ||
     item.cursor !== cursor ||
     typeof item.label !== "string" ||
@@ -320,6 +376,15 @@ function assertProgressRecord(item: MaterialProgress, sessionId: string, offset:
     !Number.isFinite(Date.parse(item.recordedAt)) ||
     new Date(Date.parse(item.recordedAt)).toISOString() !== item.recordedAt
   ) throw new AppendOnlyViolationError();
+  if (eventBacked) {
+    const linked = item as EventBackedMaterialProgress;
+    if (
+      !Number.isSafeInteger(linked.sessionVersion) ||
+      linked.sessionVersion < 1 ||
+      !/^event:[a-f0-9]{64}$/u.test(linked.lastEventId) ||
+      !/^[a-f0-9]{64}$/u.test(linked.lastEventHash)
+    ) throw new AppendOnlyViolationError();
+  }
   const { progressId, ...unsigned } = item;
   if (progressId !== `progress:${sha256(canonicalJson(unsigned))}`) throw new AppendOnlyViolationError();
 }
@@ -399,6 +464,158 @@ function assertCreationPayload(value: unknown): { text: string; transcriptDigest
   return { text, transcriptDigest: value.transcriptSha256 as string };
 }
 
+const HANDOFF_PROGRESS_LABEL = "Handoff proposal prepared";
+const HANDOFF_PROGRESS_STATE = "proposed" as const;
+const HANDOFF_ACTION_ID = "CLOVER-2026-08-24-006" as const;
+const HANDOFF_ENVELOPE_ID = "handoff-action:006:launch-studio-phase-b-source" as const;
+const HANDOFF_SOURCE = Object.freeze({
+  repository: "chrisdortch/first" as const,
+  branchProvenance: "main" as const,
+  commit: "e5688c771d384d80a8c723cfa655298ce8257889" as const,
+  tree: "4c84129b4fb5ea098ac9d2325bc2cb387857a471" as const
+});
+
+function assertHandoffProposalEvidence(value: unknown): HandoffProposalEvidence {
+  if (!exactKeys(value, [
+    "proposalOnly", "executable", "approvalInherited", "actionId", "envelopeId", "source",
+    "sessionId", "sessionVersion", "lastEventHash", "proposedAt", "proposalHash"
+  ])) throw new AppendOnlyViolationError();
+  const proposal = value as Record<string, unknown>;
+  if (!exactKeys(proposal.source, ["repository", "branchProvenance", "commit", "tree"])) {
+    throw new AppendOnlyViolationError();
+  }
+  const source = proposal.source as Record<string, unknown>;
+  if (
+    proposal.proposalOnly !== true ||
+    proposal.executable !== false ||
+    proposal.approvalInherited !== false ||
+    proposal.actionId !== HANDOFF_ACTION_ID ||
+    proposal.envelopeId !== HANDOFF_ENVELOPE_ID ||
+    source.repository !== HANDOFF_SOURCE.repository ||
+    source.branchProvenance !== HANDOFF_SOURCE.branchProvenance ||
+    source.commit !== HANDOFF_SOURCE.commit ||
+    source.tree !== HANDOFF_SOURCE.tree ||
+    typeof proposal.sessionId !== "string" ||
+    !/^session:[a-f0-9]{64}$/u.test(proposal.sessionId) ||
+    !Number.isSafeInteger(proposal.sessionVersion) ||
+    (proposal.sessionVersion as number) < 1 ||
+    typeof proposal.lastEventHash !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(proposal.lastEventHash) ||
+    typeof proposal.proposalHash !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(proposal.proposalHash)
+  ) throw new AppendOnlyViolationError();
+  canonicalTimestamp(proposal.proposedAt);
+  const { proposalHash, ...unsigned } = proposal;
+  if (proposalHash !== sha256(canonicalJson(unsigned))) throw new AppendOnlyViolationError();
+  return clone(value as HandoffProposalEvidence);
+}
+
+function assertHandoffEventPayload(
+  session: LaunchSession,
+  event: LaunchEvent,
+  payload: unknown,
+  progress: MaterialProgress
+): void {
+  const proposal = assertHandoffProposalEvidence(payload);
+  const eventBacked = progress as EventBackedMaterialProgress;
+  if (
+    event.type !== "handoff-proposal-prepared" ||
+    event.sessionId !== session.sessionId ||
+    event.workspaceId !== session.workspaceId ||
+    event.projectId !== session.projectId ||
+    event.participantId !== session.participantId ||
+    event.sequence !== event.expectedVersion + 1 ||
+    proposal.sessionId !== event.sessionId ||
+    proposal.sessionVersion !== event.expectedVersion ||
+    proposal.lastEventHash !== event.predecessorHash ||
+    proposal.proposedAt !== event.createdAt ||
+    event.idempotencyKey !== `handoff-proposal:${proposal.proposalHash}` ||
+    progress.sessionId !== event.sessionId ||
+    progress.label !== HANDOFF_PROGRESS_LABEL ||
+    progress.state !== HANDOFF_PROGRESS_STATE ||
+    progress.evidenceRef !== event.eventId ||
+    progress.recordedAt !== event.createdAt ||
+    eventBacked.sessionVersion !== event.sequence ||
+    eventBacked.lastEventId !== event.eventId ||
+    eventBacked.lastEventHash !== event.canonicalHash
+  ) throw new AppendOnlyViolationError();
+}
+
+async function assertEvidenceReferenceIntegrity(
+  keys: KeyProvider,
+  session: LaunchSession,
+  events: LaunchEvent[],
+  progress: MaterialProgress[],
+  knownPayloads: readonly unknown[] | null = null
+): Promise<void> {
+  if (knownPayloads !== null && knownPayloads.length !== events.length) throw new AppendOnlyViolationError();
+  const eventById = new Map<string, { event: LaunchEvent; offset: number }>();
+  for (const [offset, event] of events.entries()) {
+    if (eventById.has(event.eventId)) throw new AppendOnlyViolationError();
+    eventById.set(event.eventId, { event, offset });
+  }
+  const progressByEventId = new Map<string, MaterialProgress[]>();
+  let priorReferencedEventOffset = -1;
+  for (const item of progress) {
+    if (/^event:[a-f0-9]{64}$/u.test(item.evidenceRef)) {
+      const referenced = eventById.get(item.evidenceRef);
+      if (!referenced || referenced.event.sessionId !== item.sessionId) throw new AppendOnlyViolationError();
+      const linked = item as EventBackedMaterialProgress;
+      if (
+        !Object.prototype.hasOwnProperty.call(item, "sessionVersion") ||
+        linked.sessionVersion !== referenced.event.sequence ||
+        linked.lastEventId !== referenced.event.eventId ||
+        linked.lastEventHash !== referenced.event.canonicalHash
+      ) throw new AppendOnlyViolationError();
+      if (referenced.offset <= priorReferencedEventOffset) throw new AppendOnlyViolationError();
+      priorReferencedEventOffset = referenced.offset;
+      const references = progressByEventId.get(item.evidenceRef) ?? [];
+      references.push(item);
+      progressByEventId.set(item.evidenceRef, references);
+    } else if (Object.prototype.hasOwnProperty.call(item, "sessionVersion")) {
+      throw new AppendOnlyViolationError();
+    } else if (
+      item.label === HANDOFF_PROGRESS_LABEL &&
+      (item.state !== HANDOFF_PROGRESS_STATE || !/^[a-f0-9]{64}$/u.test(item.evidenceRef))
+    ) {
+      // Historical proposal-hash-only progress remains structurally valid, but no other
+      // non-event reference can claim the recoverable handoff evidence label.
+      throw new AppendOnlyViolationError();
+    }
+  }
+  for (const [offset, event] of events.entries()) {
+    const references = progressByEventId.get(event.eventId) ?? [];
+    if (references.length > 1) throw new AppendOnlyViolationError();
+    if (event.type !== "handoff-proposal-prepared") {
+      if (references.some((item) => item.label === HANDOFF_PROGRESS_LABEL)) throw new AppendOnlyViolationError();
+      continue;
+    }
+    if (references.length !== 1) throw new AppendOnlyViolationError();
+    let payload = knownPayloads?.[offset];
+    if (knownPayloads === null) {
+      let payloadBytes: Buffer;
+      try {
+        payloadBytes = await decryptPrivateBytes(
+          event.encryptedPayload,
+          `${event.sessionId}:${event.eventId}:${event.type}`,
+          keys
+        );
+      } catch {
+        throw new AppendOnlyViolationError();
+      }
+      if (sha256(payloadBytes) !== event.payloadDigest) throw new AppendOnlyViolationError();
+      try {
+        const source = new TextDecoder("utf-8", { fatal: true }).decode(payloadBytes);
+        payload = parseJsonWithoutDuplicateKeys(source);
+        if (canonicalJson(payload) !== source) throw new AppendOnlyViolationError();
+      } catch {
+        throw new AppendOnlyViolationError();
+      }
+    }
+    assertHandoffEventPayload(session, event, payload, references[0]);
+  }
+}
+
 export interface LaunchStudioStore {
   createSession(identity: OwnerIdentity, scope: OwnerScope, reviewedTranscript: string, idempotencyKey: string): Promise<LaunchSession>;
   getSession(identity: OwnerIdentity, sessionId: string): Promise<LaunchSession>;
@@ -408,6 +625,7 @@ export interface LaunchStudioStore {
   putArtifact(identity: OwnerIdentity, sessionId: string, bytes: Uint8Array, mediaType: string): Promise<{ artifactId: string; digest: string; byteLength: number; mediaType: string }>;
   readArtifact(identity: OwnerIdentity, sessionId: string, artifactId: string): Promise<Buffer>;
   appendProgress(identity: OwnerIdentity, sessionId: string, item: AppendProgressInput): Promise<MaterialProgress>;
+  appendHandoffProposal(identity: OwnerIdentity, sessionId: string, item: AppendHandoffProposalInput): Promise<PersistedHandoffProposal>;
   exportSession(identity: OwnerIdentity, sessionId: string): Promise<Buffer>;
   restoreSession(identity: OwnerIdentity, expectedSessionId: string, archive: Uint8Array): Promise<LaunchSession>;
 }
@@ -437,6 +655,12 @@ type EventIdempotencyBinding = {
   idempotencyKey: string;
   payloadDigest: string;
   resultEvent: LaunchEvent;
+};
+
+type PreparedHandoffProposalInput = {
+  proposal: HandoffProposalEvidence;
+  event: PreparedAppendEventInput;
+  progress: { label: unknown; state: unknown };
 };
 
 function prepareAppendEventInput(input: AppendEventInput): PreparedAppendEventInput {
@@ -479,6 +703,37 @@ function prepareAppendEventInput(input: AppendEventInput): PreparedAppendEventIn
       payloadBytes,
       payloadDigest: sha256(payloadBytes),
       requestedCreatedAt
+    };
+  } catch (error) {
+    if (error instanceof AppendOnlyViolationError) throw error;
+    throw new AppendOnlyViolationError();
+  }
+}
+
+function prepareHandoffProposalInput(input: AppendHandoffProposalInput): PreparedHandoffProposalInput {
+  try {
+    if (!exactKeys(input, ["expectedSessionVersion", "expectedLastEventId", "expectedLastEventHash", "proposal", "progress"]) ||
+      !exactKeys(input.progress, ["label", "state"])) {
+      throw new AppendOnlyViolationError();
+    }
+    const proposal = assertHandoffProposalEvidence(input.proposal);
+    if (
+      input.expectedSessionVersion !== proposal.sessionVersion ||
+      input.expectedLastEventHash !== proposal.lastEventHash
+    ) throw new AppendOnlyViolationError();
+    const event = prepareAppendEventInput({
+      type: "handoff-proposal-prepared",
+      expectedVersion: input.expectedSessionVersion,
+      predecessorEventId: input.expectedLastEventId,
+      predecessorHash: input.expectedLastEventHash,
+      idempotencyKey: `handoff-proposal:${proposal.proposalHash}`,
+      payload: proposal,
+      createdAt: proposal.proposedAt
+    });
+    return {
+      proposal,
+      event,
+      progress: { label: input.progress.label, state: input.progress.state }
     };
   } catch (error) {
     if (error instanceof AppendOnlyViolationError) throw error;
@@ -627,6 +882,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
 
   async appendEvent(identity: OwnerIdentity, sessionId: string, input: AppendEventInput) {
     const prepared = prepareAppendEventInput(input);
+    if (prepared.type === "handoff-proposal-prepared") throw new AppendOnlyViolationError();
     return this.#withSessionMutation(sessionId, async () => {
       const session = this.#sessions.get(sessionId);
       if (!session) throw new SessionNotFoundError();
@@ -682,6 +938,104 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
     });
   }
 
+  async appendHandoffProposal(identity: OwnerIdentity, sessionId: string, input: AppendHandoffProposalInput) {
+    const prepared = prepareHandoffProposalInput(input);
+    return this.#withSessionMutation(sessionId, async () => {
+      const session = this.#sessions.get(sessionId);
+      if (!session) throw new SessionNotFoundError();
+      assertOwnerScope(identity, session);
+      if (prepared.proposal.sessionId !== sessionId) throw new AppendOnlyViolationError();
+      if (
+        prepared.progress.label !== HANDOFF_PROGRESS_LABEL ||
+        prepared.progress.state !== HANDOFF_PROGRESS_STATE
+      ) throw new AppendOnlyViolationError();
+      const scopedIdempotency = `${sessionId}\0${prepared.event.idempotencyKey}`;
+      const priorResult = this.#idempotency.get(scopedIdempotency);
+      if (priorResult) {
+        if (!exactEventRetry(priorResult, sessionId, prepared.event)) throw new AppendOnlyViolationError();
+        const event = priorResult.resultEvent;
+        const matching = (this.#progress.get(sessionId) ?? []).filter((item) => item.evidenceRef === event.eventId);
+        if (matching.length !== 1) throw new AppendOnlyViolationError();
+        await assertEvidenceReferenceIntegrity(
+          this.keys,
+          session,
+          this.#events.get(sessionId) ?? [],
+          this.#progress.get(sessionId) ?? []
+        );
+        return { event: clone(event), progress: clone(matching[0] as EventBackedMaterialProgress) };
+      }
+      if (session.terminal) throw new AppendOnlyViolationError();
+      if (
+        prepared.event.expectedVersion !== session.version ||
+        prepared.event.predecessorEventId !== session.lastEventId ||
+        prepared.event.predecessorHash !== session.lastEventHash
+      ) throw new AppendOnlyViolationError();
+
+      const sequence = session.version + 1;
+      const createdAt = prepared.event.requestedCreatedAt;
+      if (createdAt === null || Date.parse(createdAt) < Date.parse(session.updatedAt)) throw new AppendOnlyViolationError();
+      const eventId = `event:${sha256(`${sessionId}\0${sequence}\0${prepared.event.payloadDigest}\0${prepared.event.idempotencyKey}`)}`;
+      const encryptedPayload = await encryptPrivateBytes(
+        prepared.event.payloadBytes,
+        `${sessionId}:${eventId}:${prepared.event.type}`,
+        this.keys
+      );
+      const unsignedEvent: Omit<LaunchEvent, "canonicalHash"> = {
+        workspaceId: session.workspaceId,
+        projectId: session.projectId,
+        participantId: session.participantId,
+        sessionId,
+        eventId,
+        type: "handoff-proposal-prepared",
+        sequence,
+        expectedVersion: prepared.event.expectedVersion,
+        predecessorEventId: prepared.event.predecessorEventId,
+        predecessorHash: prepared.event.predecessorHash,
+        idempotencyKey: prepared.event.idempotencyKey,
+        payloadDigest: prepared.event.payloadDigest,
+        encryptedPayload,
+        createdAt
+      };
+      const event: LaunchEvent = { ...unsignedEvent, canonicalHash: eventHash(unsignedEvent) };
+      const nextSession: LaunchSession = {
+        ...session,
+        version: sequence,
+        lastEventId: eventId,
+        lastEventHash: event.canonicalHash,
+        updatedAt: createdAt
+      };
+      const currentProgress = this.#progress.get(sessionId) ?? [];
+      const unsignedProgress: Omit<EventBackedMaterialProgress, "progressId"> = {
+        sessionId,
+        cursor: currentProgress.length + 1,
+        label: prepared.progress.label,
+        state: prepared.progress.state,
+        evidenceRef: eventId,
+        recordedAt: createdAt,
+        sessionVersion: sequence,
+        lastEventId: eventId,
+        lastEventHash: event.canonicalHash
+      };
+      const progress: EventBackedMaterialProgress = {
+        ...unsignedProgress,
+        progressId: `progress:${sha256(canonicalJson(unsignedProgress))}`
+      };
+      assertProgressRecord(progress, sessionId, currentProgress.length);
+
+      const nextEvents = [...(this.#events.get(sessionId) ?? []), event];
+      const nextProgress = [...currentProgress, progress];
+      await completeArchiveBytes(this.keys, nextSession, nextEvents, nextProgress, this.#archivedArtifacts(sessionId));
+
+      // All asynchronous validation and sealing has completed; these synchronous map
+      // updates are the single commit point for the session-scoped transaction.
+      this.#events.set(sessionId, nextEvents);
+      this.#progress.set(sessionId, nextProgress);
+      this.#sessions.set(sessionId, nextSession);
+      this.#idempotency.set(scopedIdempotency, eventBinding(event));
+      return { event: clone(event), progress: clone(progress) };
+    });
+  }
+
   async readEvents(identity: OwnerIdentity, sessionId: string) {
     await this.getSession(identity, sessionId);
     return clone(this.#events.get(sessionId) ?? []);
@@ -692,7 +1046,14 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
     assertOwnerScope(identity, session);
     const bytes = await decryptPrivateBytes(event.encryptedPayload, `${event.sessionId}:${event.eventId}:${event.type}`, this.keys);
     if (sha256(bytes) !== event.payloadDigest) throw new AppendOnlyViolationError();
-    return JSON.parse(bytes.toString("utf8"));
+    try {
+      const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const payload = parseJsonWithoutDuplicateKeys(source);
+      if (canonicalJson(payload) !== source) throw new AppendOnlyViolationError();
+      return payload;
+    } catch {
+      throw new AppendOnlyViolationError();
+    }
   }
 
   async putArtifact(identity: OwnerIdentity, sessionId: string, bytes: Uint8Array, mediaType: string) {
@@ -758,6 +1119,9 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
         Array.isArray(item) ||
         Object.keys(item).sort().join("\0") !== "evidenceRef\0expectedLastEventHash\0expectedLastEventId\0expectedSessionVersion\0label\0sessionId\0state"
       ) throw new AppendOnlyViolationError();
+      if (item.label === HANDOFF_PROGRESS_LABEL || /^event:[a-f0-9]{64}$/u.test(item.evidenceRef)) {
+        throw new AppendOnlyViolationError();
+      }
       const session = this.#sessions.get(sessionId);
       if (!session) throw new SessionNotFoundError();
       assertOwnerScope(identity, session);
@@ -901,6 +1265,7 @@ export class InMemorySyntheticLaunchStudioStore implements LaunchStudioStore {
       }
       if (parsed.events[0].type !== "owner-transcript-captured") throw new AppendOnlyViolationError();
       parsed.progress.forEach((item, offset) => assertProgressRecord(item, parsed.session!.sessionId, offset));
+      await assertEvidenceReferenceIntegrity(this.keys, parsed.session, parsed.events, parsed.progress, restoredPayloads);
       if (
         parsed.session.version !== parsed.events.length ||
         parsed.session.lastEventId !== predecessorId ||

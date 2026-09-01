@@ -103,18 +103,32 @@ const exactSixthCiEvidenceCorrectionPaths = [
   "apps/clover-launch-studio/src/lib/live-truth.ts",
   "apps/clover-launch-studio/test/live-truth-attestation.test.mjs"
 ] as const;
-const exactPrimaryTailCorrectionPathListSha256 = "bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b";
-const exactPrimaryTailCorrectionPaths = [
+const exactSeventhCiEvidenceCorrectionCommit = "5c00b9fe47fee532ca3aa66801835bd925d81231";
+const exactSeventhCiEvidenceCorrectionTree = "c058bdb229a253d1547836bbbd38616715a7f856";
+const exactSeventhCiEvidenceCorrectionParent = exactSixthCiEvidenceCorrectionCommit;
+const exactSeventhCiEvidenceCorrectionPathListSha256 = "bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b";
+const exactSeventhCiEvidenceCorrectionPaths = [
   ".github/workflows/validate-clover-tree-command-center.yml",
   "apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs",
   "apps/clover-launch-studio/test/live-truth-attestation.test.mjs",
   "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
 ] as const;
-const exactCiEvidenceCorrectionPathListSha256 = "00d0752ab02b3937352b1d7ef9c6061a56900e38706b1841a25e477e442f3eca";
+const exactPrimaryTailCorrectionPathListSha256 = "cce1b57681008e0ba00cad0739daae3019383d82667d261e01bdfb3d8311b33f";
+const exactPrimaryTailCorrectionPaths = [
+  ".github/workflows/validate-clover-tree-command-center.yml",
+  "apps/clover-launch-studio/src/lib/launch-session-service.ts",
+  "apps/clover-launch-studio/src/lib/storage.ts",
+  "apps/clover-launch-studio/test/launch-studio-app.test.mjs",
+  "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
+] as const;
+const exactCiEvidenceCorrectionPathListSha256 = "2742cef520281742f3c02e06f9e1a8052aadb0d57260150a22a4fa48a0240379";
 const exactCiEvidenceCorrectionPaths = [
   ".github/workflows/validate-clover-tree-command-center.yml",
   "apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs",
+  "apps/clover-launch-studio/src/lib/launch-session-service.ts",
   "apps/clover-launch-studio/src/lib/live-truth.ts",
+  "apps/clover-launch-studio/src/lib/storage.ts",
+  "apps/clover-launch-studio/test/launch-studio-app.test.mjs",
   "apps/clover-launch-studio/test/live-truth-attestation.test.mjs",
   "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
 ] as const;
@@ -1392,6 +1406,7 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   const fourthAuthorizedPaths = exactSortedPaths(exactFourthCiEvidenceCorrectionPaths);
   const fifthAuthorizedPaths = exactSortedPaths(exactFifthCiEvidenceCorrectionPaths);
   const sixthAuthorizedPaths = exactSortedPaths(exactSixthCiEvidenceCorrectionPaths);
+  const seventhAuthorizedPaths = exactSortedPaths(exactSeventhCiEvidenceCorrectionPaths);
   const primaryTailPaths = exactSortedPaths(exactPrimaryTailCorrectionPaths);
   const cumulativeAuthorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
   if (exactPathListSha256(initialAuthorizedPaths) !== exactInitialCiEvidenceCorrectionPathListSha256
@@ -1400,6 +1415,7 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
     || exactPathListSha256(fourthAuthorizedPaths) !== exactFourthCiEvidenceCorrectionPathListSha256
     || exactPathListSha256(fifthAuthorizedPaths) !== exactFifthCiEvidenceCorrectionPathListSha256
     || exactPathListSha256(sixthAuthorizedPaths) !== exactSixthCiEvidenceCorrectionPathListSha256
+    || exactPathListSha256(seventhAuthorizedPaths) !== exactSeventhCiEvidenceCorrectionPathListSha256
     || exactPathListSha256(primaryTailPaths) !== exactPrimaryTailCorrectionPathListSha256
     || exactPathListSha256(cumulativeAuthorizedPaths) !== exactCiEvidenceCorrectionPathListSha256) {
     throw new Error("CI-evidence correction boundary constants are inconsistent");
@@ -1417,7 +1433,7 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   const ancestryText = exactGitTextAt(repositoryRoot, ["rev-list", "--ancestry-path", "--reverse", `${sourceClosureCommit}..${head}`]);
   const ancestryCommitIds = ancestryText === "" ? [] : ancestryText.split("\n");
   if (canonicalJson(ancestryCommitIds) !== canonicalJson(correctionCommitIds)
-    || ![7, 8, 9].includes(correctionCommitIds.length)) {
+    || ![8, 9, 10, 11].includes(correctionCommitIds.length)) {
     throw new Error("CI-evidence correction chain depth or first-parent topology mismatch");
   }
   const fixedPrefix = [
@@ -1456,6 +1472,12 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
       tree: exactSixthCiEvidenceCorrectionTree,
       parent: exactSixthCiEvidenceCorrectionParent,
       paths: sixthAuthorizedPaths
+    },
+    {
+      commit: exactSeventhCiEvidenceCorrectionCommit,
+      tree: exactSeventhCiEvidenceCorrectionTree,
+      parent: exactSeventhCiEvidenceCorrectionParent,
+      paths: seventhAuthorizedPaths
     }
   ] as const;
   let expectedParent = sourceClosureCommit;
@@ -1474,10 +1496,10 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
       }
     } else if (index === fixedPrefix.length) {
       if (canonicalJson(paths) !== canonicalJson(primaryTailPaths)) {
-        throw new Error("Primary preview-contract correction did not change the exact four-path boundary");
+        throw new Error("Primary handoff-evidence correction did not change the exact five-path boundary");
       }
     } else if (paths.some((file) => !primaryTailPaths.includes(file))) {
-      throw new Error("Optional preview-contract correction changed an unauthorized path");
+      throw new Error("Optional handoff-evidence correction changed an unauthorized path");
     }
     expectedParent = commit;
   }
@@ -1752,7 +1774,8 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactThirdCiEvidenceCorrectionCommit,
       exactFourthCiEvidenceCorrectionCommit,
       exactFifthCiEvidenceCorrectionCommit,
-      exactSixthCiEvidenceCorrectionCommit
+      exactSixthCiEvidenceCorrectionCommit,
+      exactSeventhCiEvidenceCorrectionCommit
     ];
     for (const [index, fixedHead] of fixedHeads.entries()) {
       reject(`fixed-prefix-only depth ${index + 1} as a final authoritative correction head`, () => {
@@ -1760,44 +1783,49 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       });
     }
 
-    git(["switch", "-c", "matrix-tail", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-tail", exactSeventhCiEvidenceCorrectionCommit]);
     for (const [index, file] of exactPrimaryTailCorrectionPaths.entries()) {
       change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic primary tail ${index}\n`);
     }
-    const correctionSeven = commit("synthetic primary preview contract", exactPrimaryTailCorrectionPaths);
-    const seven = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionSeven, {
-      expectedHead: correctionSeven
+    const correctionEight = commit("synthetic primary handoff evidence", exactPrimaryTailCorrectionPaths);
+    const eight = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionEight, {
+      expectedHead: correctionEight
     });
-    if (seven.depth !== 7
-      || canonicalJson(seven.commitIds) !== canonicalJson([...fixedHeads, correctionSeven])) {
-      throw new Error("Seven-commit ancestry matrix case failed");
+    if (eight.depth !== 8
+      || canonicalJson(eight.commitIds) !== canonicalJson([...fixedHeads, correctionEight])) {
+      throw new Error("Eight-commit ancestry matrix case failed");
     }
     const exactPrEnvironment = {
       GITHUB_ACTIONS: "true",
       CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "exact-pr-head",
-      CLOVER_TREE_HEAD: correctionSeven,
-      CLOVER_TREE_EXACT_PR_HEAD: correctionSeven
+      CLOVER_TREE_HEAD: correctionEight,
+      CLOVER_TREE_EXACT_PR_HEAD: correctionEight
     };
-    git(["switch", "--detach", correctionSeven]);
-    if (authoritativeChain(correctionSeven, exactPrEnvironment).depth !== 7) {
+    git(["switch", "--detach", correctionEight]);
+    if (authoritativeChain(correctionEight, exactPrEnvironment).depth !== 8) {
       throw new Error("Exact PR-head authority matrix case failed");
     }
 
-    change(exactPrimaryTailCorrectionPaths[1], "\n// synthetic optional tail eight\n");
-    const correctionEight = commit("synthetic optional preview contract eight", [exactPrimaryTailCorrectionPaths[1]]);
-    const eight = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionEight, { expectedHead: correctionEight });
-    if (eight.depth !== 8) throw new Error("Eight-commit ancestry matrix case failed");
-
-    change(exactPrimaryTailCorrectionPaths[0], "\n# synthetic optional tail nine\n");
-    const correctionNine = commit("synthetic optional preview contract nine", [exactPrimaryTailCorrectionPaths[0]]);
+    change(exactPrimaryTailCorrectionPaths[1], "\n// synthetic optional handoff evidence nine\n");
+    const correctionNine = commit("synthetic optional handoff evidence nine", [exactPrimaryTailCorrectionPaths[1]]);
     const nine = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionNine, { expectedHead: correctionNine });
     if (nine.depth !== 9) throw new Error("Nine-commit ancestry matrix case failed");
 
-    change(exactPrimaryTailCorrectionPaths[3], "\n// synthetic forbidden tail ten\n");
-    const correctionTen = commit("synthetic forbidden preview contract ten", [exactPrimaryTailCorrectionPaths[3]]);
-    reject("a tenth correction commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionTen));
+    change(exactPrimaryTailCorrectionPaths[0], "\n# synthetic optional handoff evidence ten\n");
+    const correctionTen = commit("synthetic optional handoff evidence ten", [exactPrimaryTailCorrectionPaths[0]]);
+    const ten = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionTen, { expectedHead: correctionTen });
+    if (ten.depth !== 10) throw new Error("Ten-commit ancestry matrix case failed");
 
-    git(["switch", "-c", "matrix-primary-missing-path", exactSixthCiEvidenceCorrectionCommit]);
+    change(exactPrimaryTailCorrectionPaths[4], "\n// synthetic optional handoff evidence eleven\n");
+    const correctionEleven = commit("synthetic optional handoff evidence eleven", [exactPrimaryTailCorrectionPaths[4]]);
+    const eleven = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionEleven, { expectedHead: correctionEleven });
+    if (eleven.depth !== 11) throw new Error("Eleven-commit ancestry matrix case failed");
+
+    change(exactPrimaryTailCorrectionPaths[3], "\n// synthetic forbidden handoff evidence twelve\n");
+    const correctionTwelve = commit("synthetic forbidden handoff evidence twelve", [exactPrimaryTailCorrectionPaths[3]]);
+    reject("a twelfth correction commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionTwelve));
+
+    git(["switch", "-c", "matrix-primary-missing-path", exactSeventhCiEvidenceCorrectionCommit]);
     for (const [index, file] of exactPrimaryTailCorrectionPaths.slice(0, -1).entries()) {
       change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic missing primary path ${index}\n`);
     }
@@ -1806,15 +1834,15 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, missingPrimaryPath);
     });
 
-    git(["switch", "-c", "matrix-fifth-path", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-sixth-path", exactSeventhCiEvidenceCorrectionCommit]);
     for (const [index, file] of exactPrimaryTailCorrectionPaths.entries()) {
-      change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic fifth-path primary ${index}\n`);
+      change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic sixth-path primary ${index}\n`);
     }
     change(".gitignore", "\n# synthetic unauthorized path\n");
-    const fifthPath = commit("synthetic unauthorized path", [...exactPrimaryTailCorrectionPaths, ".gitignore"]);
-    reject("a correction touching a fifth path", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, fifthPath));
+    const sixthPath = commit("synthetic unauthorized path", [...exactPrimaryTailCorrectionPaths, ".gitignore"]);
+    reject("a correction touching a sixth path", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, sixthPath));
 
-    git(["switch", "-c", "matrix-deleted-primary-path", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-deleted-primary-path", exactSeventhCiEvidenceCorrectionCommit]);
     for (const [index, file] of exactPrimaryTailCorrectionPaths.slice(0, -1).entries()) {
       change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic deletion sibling ${index}\n`);
     }
@@ -1824,7 +1852,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, deletedPrimaryPath);
     });
 
-    git(["switch", "-c", "matrix-renamed-primary-path", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-renamed-primary-path", exactSeventhCiEvidenceCorrectionCommit]);
     const renamedSource = exactPrimaryTailCorrectionPaths.at(-1)!;
     const renamedDestination = "apps/clover-launch-studio/test/tree-command-center.renamed.spec.ts";
     execFileSync("git", ["mv", "--", renamedSource, renamedDestination], { cwd: repositoryRoot, stdio: "ignore" });
@@ -1836,7 +1864,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, renamedPrimaryPath);
     });
 
-    git(["switch", "-c", "matrix-mode-substitution", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-mode-substitution", exactSeventhCiEvidenceCorrectionCommit]);
     for (const [index, file] of exactPrimaryTailCorrectionPaths.entries()) {
       change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic mode substitution ${index}\n`);
     }
@@ -1849,7 +1877,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, modeSubstitution);
     });
 
-    git(["switch", "-c", "matrix-symlink-substitution", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-symlink-substitution", exactSeventhCiEvidenceCorrectionCommit]);
     const symlinkPath = exactPrimaryTailCorrectionPaths.at(-1)!;
     for (const [index, file] of exactPrimaryTailCorrectionPaths.slice(0, -1).entries()) {
       change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic symlink sibling ${index}\n`);
@@ -1861,7 +1889,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, symlinkSubstitution);
     });
 
-    git(["switch", "-c", "matrix-empty-optional", correctionSeven]);
+    git(["switch", "-c", "matrix-empty-optional", correctionEight]);
     execFileSync("git", ["commit", "--quiet", "--allow-empty", "-m", "synthetic empty optional correction"], {
       cwd: repositoryRoot,
       stdio: "ignore"
@@ -1869,7 +1897,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     const emptyOptional = git(["rev-parse", "HEAD^{commit}"]);
     reject("an empty optional correction", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, emptyOptional));
 
-    git(["switch", "-c", "matrix-historical-path-tail", correctionSeven]);
+    git(["switch", "-c", "matrix-historical-path-tail", correctionEight]);
     change("apps/clover-launch-studio/src/lib/live-truth.ts", "\n// synthetic historical-only tail path\n");
     const historicalTail = commit("synthetic historical-only tail path", [
       "apps/clover-launch-studio/src/lib/live-truth.ts"
@@ -1879,14 +1907,14 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     });
 
     const mergeSide = execFileSync("git", [
-      "commit-tree", `${exactSixthCiEvidenceCorrectionCommit}^{tree}`, "-p", exactSixthCiEvidenceCorrectionCommit
+      "commit-tree", `${exactSeventhCiEvidenceCorrectionCommit}^{tree}`, "-p", exactSeventhCiEvidenceCorrectionCommit
     ], {
       cwd: repositoryRoot,
       input: "synthetic merge side\n",
       encoding: "utf8"
     }).trim();
     const mergeHead = execFileSync("git", [
-      "commit-tree", `${correctionSeven}^{tree}`, "-p", correctionSeven, "-p", mergeSide
+      "commit-tree", `${correctionEight}^{tree}`, "-p", correctionEight, "-p", mergeSide
     ], {
       cwd: repositoryRoot,
       input: "synthetic merge correction\n",
@@ -1921,42 +1949,42 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     reject("a rebased or substituted source-closure commit", () => {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, substituteCandidate);
     });
-    reject("a wrong current immediate parent", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionSeven, {
+    reject("a wrong current immediate parent", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionEight, {
       claimedImmediateParent: "0".repeat(40)
     }));
-    reject("a stale exact-head environment", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionSeven, {
-      expectedHead: correctionEight
+    reject("a stale exact-head environment", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionEight, {
+      expectedHead: correctionNine
     }));
 
-    const substitutedSixth = execFileSync("git", [
-      "commit-tree", exactSixthCiEvidenceCorrectionTree, "-p", exactFifthCiEvidenceCorrectionCommit
+    const substitutedSeventh = execFileSync("git", [
+      "commit-tree", exactSeventhCiEvidenceCorrectionTree, "-p", exactSixthCiEvidenceCorrectionCommit
     ], {
       cwd: repositoryRoot,
-      input: "synthetic same-tree substituted sixth correction\n",
+      input: "synthetic same-tree substituted seventh correction\n",
       encoding: "utf8"
     }).trim();
-    const substitutedSeven = execFileSync("git", [
-      "commit-tree", `${correctionSeven}^{tree}`, "-p", substitutedSixth
+    const substitutedEight = execFileSync("git", [
+      "commit-tree", `${correctionEight}^{tree}`, "-p", substitutedSeventh
     ], {
       cwd: repositoryRoot,
-      input: "synthetic candidate after substituted sixth correction\n",
+      input: "synthetic candidate after substituted seventh correction\n",
       encoding: "utf8"
     }).trim();
     reject("a same-tree different-ancestry correction prefix", () => {
-      exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, substitutedSeven);
+      exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, substitutedEight);
     });
-    git(["switch", "--detach", substitutedSeven]);
+    git(["switch", "--detach", substitutedEight]);
     reject("a same-tree different-ancestry container claiming exact PR-head authority", () => {
-      authoritativeChain(substitutedSeven, {
+      authoritativeChain(substitutedEight, {
         GITHUB_ACTIONS: "true",
         CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "exact-pr-head",
-        CLOVER_TREE_HEAD: substitutedSeven,
-        CLOVER_TREE_EXACT_PR_HEAD: substitutedSeven
+        CLOVER_TREE_HEAD: substitutedEight,
+        CLOVER_TREE_EXACT_PR_HEAD: substitutedEight
       });
     });
 
     const syntheticGithubMerge = execFileSync("git", [
-      "commit-tree", `${correctionSeven}^{tree}`, "-p", exactProtectedMainCommit, "-p", correctionSeven
+      "commit-tree", `${correctionEight}^{tree}`, "-p", exactProtectedMainCommit, "-p", correctionEight
     ], {
       cwd: repositoryRoot,
       input: "synthetic GitHub merge container\n",
@@ -1976,7 +2004,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     });
 
     const syntheticCodexReview = execFileSync("git", [
-      "commit-tree", `${correctionSeven}^{tree}`, "-p", correctionSeven
+      "commit-tree", `${correctionEight}^{tree}`, "-p", correctionEight
     ], {
       cwd: repositoryRoot,
       input: "synthetic Codex review container\n",
@@ -1999,13 +2027,13 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     if (nonAuthoritativeLocal.role !== "non-authoritative-local-validation-container") {
       throw new Error("Local validation container role matrix case failed");
     }
-    git(["switch", "--detach", correctionSeven]);
+    git(["switch", "--detach", correctionEight]);
     reject("a fabricated local review container issuing an authoritative receipt", () => {
-      authoritativeChain(correctionSeven, {
+      authoritativeChain(correctionEight, {
         GITHUB_ACTIONS: "false",
         CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "non-authoritative-local-validation-container",
-        CLOVER_TREE_HEAD: correctionSeven,
-        CLOVER_TREE_EXACT_PR_HEAD: correctionSeven
+        CLOVER_TREE_HEAD: correctionEight,
+        CLOVER_TREE_EXACT_PR_HEAD: correctionEight
       });
     });
 
@@ -2017,11 +2045,11 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     }
     const syntheticMainMergeParents = exactCommitParentsAt(repositoryRoot, syntheticGithubMerge);
     if (disabledPush.receiptIssuance !== "disabled"
-      || canonicalJson(syntheticMainMergeParents) !== canonicalJson([exactProtectedMainCommit, correctionSeven])) {
+      || canonicalJson(syntheticMainMergeParents) !== canonicalJson([exactProtectedMainCommit, correctionEight])) {
       throw new Error("Protected-main merge context was forced through the PR correction-chain contract");
     }
 
-    git(["switch", "-c", "matrix-submodule-substitution", exactSixthCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-submodule-substitution", exactSeventhCiEvidenceCorrectionCommit]);
     const gitlinkPath = exactPrimaryTailCorrectionPaths.at(-1)!;
     for (const [index, file] of exactPrimaryTailCorrectionPaths.slice(0, -1).entries()) {
       change(file, `${file.endsWith(".yml") ? "\n#" : "\n//"} synthetic submodule sibling ${index}\n`);
@@ -2035,7 +2063,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     ], { cwd: repositoryRoot, stdio: "ignore" });
     const gitlinkTree = git(["write-tree"]);
     const submoduleSubstitution = execFileSync("git", [
-      "commit-tree", gitlinkTree, "-p", exactSixthCiEvidenceCorrectionCommit
+      "commit-tree", gitlinkTree, "-p", exactSeventhCiEvidenceCorrectionCommit
     ], {
       cwd: repositoryRoot,
       input: "synthetic submodule substitution\n",
@@ -2793,7 +2821,7 @@ function assertExactLocalSourceEvidence(
       && value.currentCandidate.role !== "non-authoritative-local-validation-container")
     || typeof value.currentCandidate.correctionChainDepth !== "number"
     || !Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-    || ![7, 8, 9].includes(value.currentCandidate.correctionChainDepth)
+    || ![8, 9, 10, 11].includes(value.currentCandidate.correctionChainDepth)
     || value.currentCandidate.correctionCommitIds.length !== value.currentCandidate.correctionChainDepth) {
     throw new Error(`${label}.currentCandidate:identity`);
   }
@@ -3242,7 +3270,7 @@ function assertLocalReceiptMutationResistance(
       (source.currentCandidate as Record<string, unknown>).immediateParent = "0".repeat(40);
     }],
     ["correction-depth", (source: Record<string, unknown>) => {
-      (source.currentCandidate as Record<string, unknown>).correctionChainDepth = 10;
+      (source.currentCandidate as Record<string, unknown>).correctionChainDepth = 12;
     }],
     ["correction-ids", (source: Record<string, unknown>) => {
       (source.correctionChain as Record<string, unknown>).commitIds = ["0".repeat(40)];
