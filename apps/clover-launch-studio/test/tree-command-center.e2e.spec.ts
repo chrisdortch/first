@@ -42,9 +42,19 @@ const exactSourceClosureDeltaPathCount = 16;
 const exactSourceClosureDeltaPathListSha256 = "9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba";
 const exactIntegratedPrPathCount = 72;
 const exactIntegratedPrPathListSha256 = "9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8";
-const exactCiEvidenceCorrectionPathListSha256 = "3bf6eb010674c0a9b9bbcad44c636b5bf01e2c5762eb7319a1e5aa2bb5f6a07b";
+const exactFirstCiEvidenceCorrectionCommit = "5ad65259fe86e0167fa4a35ed13c19306c2de7ad";
+const exactFirstCiEvidenceCorrectionTree = "47304047ba835a81dbbf12262142d269725ad9e6";
+const exactFirstCiEvidenceCorrectionParent = exactSourceClosureCommit;
+const exactInitialCiEvidenceCorrectionPathListSha256 = "3bf6eb010674c0a9b9bbcad44c636b5bf01e2c5762eb7319a1e5aa2bb5f6a07b";
+const exactInitialCiEvidenceCorrectionPaths = [
+  ".github/workflows/validate-clover-tree-command-center.yml",
+  "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
+] as const;
+const exactCiEvidenceCorrectionPathListSha256 = "bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b";
 const exactCiEvidenceCorrectionPaths = [
   ".github/workflows/validate-clover-tree-command-center.yml",
+  "apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs",
+  "apps/clover-launch-studio/test/live-truth-attestation.test.mjs",
   "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
 ] as const;
 const exactAuthorizedBoundaryPathListSha256 = "bcc3f4c93d2e74400602f3b688e69714d1550b22ff8edf7de0049f2f0bf793a0";
@@ -1294,7 +1304,16 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   claimedImmediateParent?: string;
   authorizedPaths?: readonly string[];
 }) {
+  const usesExactCorrectionBoundary = options?.authorizedPaths === undefined;
   const authorizedPaths = exactSortedPaths(options?.authorizedPaths ?? exactCiEvidenceCorrectionPaths);
+  const initialAuthorizedPaths = usesExactCorrectionBoundary
+    ? exactSortedPaths(exactInitialCiEvidenceCorrectionPaths)
+    : authorizedPaths;
+  if (usesExactCorrectionBoundary
+    && (exactPathListSha256(initialAuthorizedPaths) !== exactInitialCiEvidenceCorrectionPathListSha256
+      || exactPathListSha256(authorizedPaths) !== exactCiEvidenceCorrectionPathListSha256)) {
+    throw new Error("CI-evidence correction boundary constants are inconsistent");
+  }
   try {
     execFileSync("git", ["merge-base", "--is-ancestor", sourceClosureCommit, head], { cwd: repositoryRoot, stdio: "ignore" });
   } catch {
@@ -1308,8 +1327,14 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   const ancestryText = exactGitTextAt(repositoryRoot, ["rev-list", "--ancestry-path", "--reverse", `${sourceClosureCommit}..${head}`]);
   const ancestryCommitIds = ancestryText === "" ? [] : ancestryText.split("\n");
   if (canonicalJson(ancestryCommitIds) !== canonicalJson(correctionCommitIds)
-    || !(options?.allowedDepths ?? [1, 2]).includes(correctionCommitIds.length)) {
+    || !(options?.allowedDepths ?? [1, 2, 3]).includes(correctionCommitIds.length)) {
     throw new Error("CI-evidence correction chain depth or first-parent topology mismatch");
+  }
+  if (usesExactCorrectionBoundary && correctionCommitIds.length > 0
+    && (correctionCommitIds[0] !== exactFirstCiEvidenceCorrectionCommit
+      || exactFirstCiEvidenceCorrectionParent !== sourceClosureCommit
+      || exactGitTextAt(repositoryRoot, ["rev-parse", `${correctionCommitIds[0]}^{tree}`]) !== exactFirstCiEvidenceCorrectionTree)) {
+    throw new Error("First CI-evidence correction commit identity mismatch");
   }
   let expectedParent = sourceClosureCommit;
   for (const [index, commit] of correctionCommitIds.entries()) {
@@ -1320,8 +1345,11 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
     if (paths.length === 0 || paths.some((file) => !authorizedPaths.includes(file))) {
       throw new Error("Correction commit changed an unauthorized path");
     }
-    if (index === 0 && canonicalJson(paths) !== canonicalJson(authorizedPaths)) {
-      throw new Error("Primary correction commit did not change the exact two-path boundary");
+    if (index === 0 && canonicalJson(paths) !== canonicalJson(initialAuthorizedPaths)) {
+      throw new Error("First correction commit did not change the exact initial two-path boundary");
+    }
+    if (index === 1 && canonicalJson(paths) !== canonicalJson(authorizedPaths)) {
+      throw new Error("Second correction commit did not change the exact expanded four-path boundary");
     }
     expectedParent = commit;
   }
@@ -1332,8 +1360,14 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   }
   const cumulativeEntries = exactRawDiffEntriesAt(repositoryRoot, sourceClosureCommit, head, ["M"]);
   const cumulativePaths = cumulativeEntries.map(({ path: file }) => file);
-  if (canonicalJson(cumulativePaths) !== canonicalJson(authorizedPaths)
-    || exactPathListSha256(cumulativePaths) !== exactPathListSha256(authorizedPaths)) {
+  const expectedCumulativePaths = correctionCommitIds.length <= 1 ? initialAuthorizedPaths : authorizedPaths;
+  const expectedCumulativePathListSha256 = usesExactCorrectionBoundary
+    ? correctionCommitIds.length <= 1
+      ? exactInitialCiEvidenceCorrectionPathListSha256
+      : exactCiEvidenceCorrectionPathListSha256
+    : exactPathListSha256(expectedCumulativePaths);
+  if (canonicalJson(cumulativePaths) !== canonicalJson(expectedCumulativePaths)
+    || exactPathListSha256(cumulativePaths) !== expectedCumulativePathListSha256) {
     throw new Error("Cumulative CI-evidence correction boundary mismatch");
   }
   return {
@@ -1423,10 +1457,16 @@ function exactLocalSourceEvidence(testFile: ExactTestState["file"]) {
   const correctionChain = exactCorrectionChainAt(exactRepositoryRoot, exactSourceClosureCommit, head, {
     expectedHead: execution.role === "exact-pr-head" ? execution.exactPrHead ?? undefined : undefined
   });
+  const expectedCiEvidenceCorrectionPaths = correctionChain.depth === 1
+    ? exactInitialCiEvidenceCorrectionPaths
+    : exactCiEvidenceCorrectionPaths;
+  const expectedCiEvidenceCorrectionPathListSha256 = correctionChain.depth === 1
+    ? exactInitialCiEvidenceCorrectionPathListSha256
+    : exactCiEvidenceCorrectionPathListSha256;
   const ciEvidenceCorrectionDelta = exactDeltaEvidenceAt(
-    exactRepositoryRoot, exactSourceClosureCommit, head, exactCiEvidenceCorrectionPaths, "CI-evidence correction"
+    exactRepositoryRoot, exactSourceClosureCommit, head, expectedCiEvidenceCorrectionPaths, "CI-evidence correction"
   );
-  if (ciEvidenceCorrectionDelta.pathListSha256 !== exactCiEvidenceCorrectionPathListSha256) {
+  if (ciEvidenceCorrectionDelta.pathListSha256 !== expectedCiEvidenceCorrectionPathListSha256) {
     throw new Error("CI-evidence correction path-list identity mismatch");
   }
   const integratedEntries = exactRawDiffEntriesAt(exactRepositoryRoot, exactProtectedMainCommit, head, ["A", "M"]);
@@ -1572,14 +1612,18 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, exactSourceClosureCommit);
     });
 
-    git(["switch", "-c", "matrix-linear", exactSourceClosureCommit]);
-    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix correction one\n");
-    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix correction one\n");
-    const correctionOne = commit("synthetic correction one", exactCiEvidenceCorrectionPaths);
+    git(["switch", "-c", "matrix-linear", exactFirstCiEvidenceCorrectionCommit]);
+    const correctionOne = git(["rev-parse", "HEAD^{commit}"]);
     const one = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionOne, {
       expectedHead: correctionOne
     });
-    if (one.depth !== 1 || one.commitIds[0] !== correctionOne) throw new Error("One-commit ancestry matrix case failed");
+    if (correctionOne !== exactFirstCiEvidenceCorrectionCommit
+      || git(["rev-parse", `${correctionOne}^{tree}`]) !== exactFirstCiEvidenceCorrectionTree
+      || canonicalJson(exactCommitParentsAt(repositoryRoot, correctionOne))
+        !== canonicalJson([exactFirstCiEvidenceCorrectionParent])
+      || one.depth !== 1 || one.commitIds[0] !== correctionOne) {
+      throw new Error("One-commit ancestry matrix case failed");
+    }
     const exactPrContext = exactExecutionContext({
       GITHUB_ACTIONS: "true",
       CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: "exact-pr-head",
@@ -1590,8 +1634,11 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       throw new Error("Exact PR role matrix case failed");
     }
 
-    change(exactCiEvidenceCorrectionPaths[0], "# synthetic matrix correction two\n");
-    const correctionTwo = commit("synthetic correction two", [exactCiEvidenceCorrectionPaths[0]]);
+    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix correction two\n");
+    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix correction two\n");
+    change(exactCiEvidenceCorrectionPaths[2], "\n// synthetic matrix correction two\n");
+    change(exactCiEvidenceCorrectionPaths[3], "\n// synthetic matrix correction two\n");
+    const correctionTwo = commit("synthetic correction two", exactCiEvidenceCorrectionPaths);
     const two = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionTwo, {
       expectedHead: correctionTwo
     });
@@ -1599,32 +1646,44 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       throw new Error("Two-commit ancestry matrix case failed");
     }
 
-    change(exactCiEvidenceCorrectionPaths[1], "// synthetic matrix forbidden correction three\n");
-    const correctionThree = commit("synthetic correction three", [exactCiEvidenceCorrectionPaths[1]]);
-    reject("a third correction commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionThree));
-
-    git(["switch", "--detach", exactSourceClosureCommit]);
-    git(["switch", "-c", "matrix-third-path"]);
-    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix third-path case\n");
-    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix third-path case\n");
-    change(".gitignore", "\n# synthetic unauthorized path\n");
-    const thirdPath = commit("synthetic unauthorized path", [...exactCiEvidenceCorrectionPaths, ".gitignore"]);
-    reject("a correction touching a third path", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, thirdPath));
-
-    git(["switch", "--detach", exactSourceClosureCommit]);
-    git(["switch", "-c", "matrix-left"]);
-    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix merge left\n");
-    commit("synthetic merge left", [exactCiEvidenceCorrectionPaths[0]]);
-    git(["switch", "--detach", exactSourceClosureCommit]);
-    git(["switch", "-c", "matrix-right"]);
-    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix merge right\n");
-    commit("synthetic merge right", [exactCiEvidenceCorrectionPaths[1]]);
-    git(["switch", "matrix-left"]);
-    execFileSync("git", ["merge", "--quiet", "--no-ff", "matrix-right", "-m", "synthetic merge correction"], {
-      cwd: repositoryRoot,
-      stdio: "ignore"
+    change(exactCiEvidenceCorrectionPaths[2], "// synthetic matrix authorized correction three\n");
+    const correctionThree = commit("synthetic correction three", [exactCiEvidenceCorrectionPaths[2]]);
+    const three = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionThree, {
+      expectedHead: correctionThree
     });
-    const mergeHead = git(["rev-parse", "HEAD^{commit}"]);
+    if (three.depth !== 3
+      || canonicalJson(three.commitIds) !== canonicalJson([correctionOne, correctionTwo, correctionThree])) {
+      throw new Error("Three-commit ancestry matrix case failed");
+    }
+
+    change(exactCiEvidenceCorrectionPaths[0], "# synthetic matrix forbidden correction four\n");
+    const correctionFour = commit("synthetic correction four", [exactCiEvidenceCorrectionPaths[0]]);
+    reject("a fourth correction commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, correctionFour));
+
+    git(["switch", "--detach", exactFirstCiEvidenceCorrectionCommit]);
+    git(["switch", "-c", "matrix-fifth-path"]);
+    change(exactCiEvidenceCorrectionPaths[0], "\n# synthetic matrix fifth-path case\n");
+    change(exactCiEvidenceCorrectionPaths[1], "\n// synthetic matrix fifth-path case\n");
+    change(exactCiEvidenceCorrectionPaths[2], "\n// synthetic matrix fifth-path case\n");
+    change(exactCiEvidenceCorrectionPaths[3], "\n// synthetic matrix fifth-path case\n");
+    change(".gitignore", "\n# synthetic unauthorized path\n");
+    const fifthPath = commit("synthetic unauthorized path", [...exactCiEvidenceCorrectionPaths, ".gitignore"]);
+    reject("a correction touching a fifth path", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, fifthPath));
+
+    const mergeSide = execFileSync("git", [
+      "commit-tree", `${correctionTwo}^{tree}`, "-p", exactFirstCiEvidenceCorrectionCommit
+    ], {
+      cwd: repositoryRoot,
+      input: "synthetic merge side\n",
+      encoding: "utf8"
+    }).trim();
+    const mergeHead = execFileSync("git", [
+      "commit-tree", `${correctionTwo}^{tree}`, "-p", correctionTwo, "-p", mergeSide
+    ], {
+      cwd: repositoryRoot,
+      input: "synthetic merge correction\n",
+      encoding: "utf8"
+    }).trim();
     reject("a merge commit", () => exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, mergeHead));
 
     const substituteBaseline = execFileSync("git", [
@@ -1668,7 +1727,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       throw new Error("Non-PR push context did not disable authoritative receipt issuance");
     }
     const syntheticMainMerge = execFileSync("git", [
-      "commit-tree", `${correctionTwo}^{tree}`, "-p", exactProtectedMainCommit, "-p", correctionTwo
+      "commit-tree", `${correctionThree}^{tree}`, "-p", exactProtectedMainCommit, "-p", correctionThree
     ], {
       cwd: repositoryRoot,
       input: "synthetic protected-main merge\n",
@@ -1676,7 +1735,7 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
     }).trim();
     const syntheticMainMergeParents = exactCommitParentsAt(repositoryRoot, syntheticMainMerge);
     if (disabledPush.receiptIssuance !== "disabled"
-      || canonicalJson(syntheticMainMergeParents) !== canonicalJson([exactProtectedMainCommit, correctionTwo])) {
+      || canonicalJson(syntheticMainMergeParents) !== canonicalJson([exactProtectedMainCommit, correctionThree])) {
       throw new Error("Protected-main merge context was forced through the PR correction-chain contract");
     }
   } finally {
@@ -2428,7 +2487,7 @@ function assertExactLocalSourceEvidence(
       && value.currentCandidate.role !== "non-authoritative-local-validation-container")
     || typeof value.currentCandidate.correctionChainDepth !== "number"
     || !Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-    || ![1, 2].includes(value.currentCandidate.correctionChainDepth)
+    || ![1, 2, 3].includes(value.currentCandidate.correctionChainDepth)
     || value.currentCandidate.correctionCommitIds.length !== value.currentCandidate.correctionChainDepth) {
     throw new Error(`${label}.currentCandidate:identity`);
   }
@@ -2877,7 +2936,7 @@ function assertLocalReceiptMutationResistance(
       (source.currentCandidate as Record<string, unknown>).immediateParent = "0".repeat(40);
     }],
     ["correction-depth", (source: Record<string, unknown>) => {
-      (source.currentCandidate as Record<string, unknown>).correctionChainDepth = 3;
+      (source.currentCandidate as Record<string, unknown>).correctionChainDepth = 4;
     }],
     ["correction-ids", (source: Record<string, unknown>) => {
       (source.correctionChain as Record<string, unknown>).commitIds = ["0".repeat(40)];
@@ -2917,25 +2976,44 @@ function assertLocalReceiptMutationResistance(
   const badSelfHash = structuredClone(receipt);
   badSelfHash.canonicalSha256 = "0".repeat(64);
   expect(() => assertExactLocalSourceClosureReceipt(badSelfHash, expectedSource), "receipt self-hash substitution must be rejected").toThrow();
-  for (const [label, serialized] of [
-    ["mac-user-path", '{"finding":"/Users/example/private"}'],
-    ["linux-home-path", '{"finding":"/home/example/private"}'],
-    ["private-tmp-path", '{"finding":"/private/tmp/clover-private"}'],
-    ["private-var-path", '{"finding":"/private/var/folders/aa/private"}'],
-    ["tmp-path", '{"finding":"/tmp/clover-private"}'],
-    ["windows-path", '{"finding":"C:\\\\work\\\\private"}'],
-    ["windows-path-one-backslash", String.raw`C:\work\private`],
-    ["bearer", '{"finding":"Bearer abcdefghijklmnopqrstuvwxyz012345"}'],
-    ["github-pat", '{"finding":"github_pat_abcdefghijklmnopqrstuvwxyz0123456789"}'],
-    ["json-token", '{"access_token":"abcdefghijklmnopqrstuvwxyz012345"}'],
-    ["json-key", '{"apiKey":"abcdefghijklmnopqrstuvwxyz012345"}'],
-    ["private-key", '-----BEGIN PRIVATE KEY-----'],
-    ["private-data-claim", '{"privateDataAccessed":true}'],
-    ["secret-claim", '{"secretsIncluded":true}'],
-    ["authority-claim", '{"consequentialAuthorityGranted":true}']
-  ] as const) {
-    expect(() => expectPublicBrowserArtifactSerialization(serialized, `synthetic ${label}`),
-      `serialized ${label} must be rejected`).toThrow();
+  const privacyFixtures = runtimeSyntheticPrivacyFixtures();
+  expect(privacyFixtures.map(({ id }) => id), "synthetic privacy fixture ID inventory").toEqual([
+    "mac-user-path", "linux-home-path", "private-tmp-path", "private-var-path", "tmp-path",
+    "windows-path", "windows-path-one-backslash", "bearer", "github-pat", "json-token", "json-key",
+    "private-key", "private-data-claim", "secret-claim", "authority-claim"
+  ]);
+  for (const fixture of privacyFixtures) {
+    const positive = fixture.positive();
+    const positiveClasses = publicBrowserArtifactFindingClasses(positive);
+    expect({
+      id: fixture.id,
+      class: positiveClasses.join(","),
+      byteCount: Buffer.byteLength(positive, "utf8"),
+      sha256: sha256(positive)
+    }, `synthetic ${fixture.id} positive identity`).toEqual({
+      id: fixture.id,
+      class: fixture.expectedClass,
+      byteCount: fixture.positiveByteCount,
+      sha256: fixture.positiveSha256
+    });
+    expect(() => expectPublicBrowserArtifactSerialization(positive, `synthetic ${fixture.id}`),
+      `serialized ${fixture.id} must be rejected`).toThrow();
+
+    const neutral = fixture.neutral();
+    const neutralClasses = publicBrowserArtifactFindingClasses(neutral);
+    expect({
+      id: `${fixture.id}-neutral`,
+      class: neutralClasses.length === 0 ? "none" : neutralClasses.join(","),
+      byteCount: Buffer.byteLength(neutral, "utf8"),
+      sha256: sha256(neutral)
+    }, `synthetic ${fixture.id} neutral identity`).toEqual({
+      id: `${fixture.id}-neutral`,
+      class: "none",
+      byteCount: fixture.neutralByteCount,
+      sha256: fixture.neutralSha256
+    });
+    expect(() => expectPublicBrowserArtifactSerialization(neutral, `synthetic ${fixture.id} neutral`),
+      `neutralized ${fixture.id} must be accepted`).not.toThrow();
   }
   expect(() => expectPublicBrowserArtifactSerialization('{"url":"http://127.0.0.1:3117/api/tree"}', "synthetic safe HTTP URL"),
     "a legitimate HTTP URL must not be classified as a Windows local path").not.toThrow();
@@ -6248,13 +6326,135 @@ function assertExactGateScanAttemptSidecar(
   if (canonicalJson(value.summary) !== canonicalJson(expectedSummary)) throw new Error("Gate scan-attempt summary mismatch");
 }
 
-function expectPublicBrowserArtifactSerialization(serialized: string, label: string) {
-  const findings = [
+type PublicBrowserArtifactFinding = "absolute-local-path" | "credential" | "secret" | "affirmative-private-or-authority-claim";
+
+function publicBrowserArtifactFindingClasses(serialized: string): PublicBrowserArtifactFinding[] {
+  const patterns: Array<[RegExp, PublicBrowserArtifactFinding]> = [
     [exactLocalPathPattern, "absolute-local-path"],
     [exactCredentialPattern, "credential"],
     [exactSecretAssignmentPattern, "secret"],
     [exactAffirmativePrivateClaimPattern, "affirmative-private-or-authority-claim"]
-  ].filter(([pattern]) => (pattern as RegExp).test(serialized)).map(([, finding]) => finding);
+  ];
+  return patterns.filter(([pattern]) => pattern.test(serialized)).map(([, finding]) => finding);
+}
+
+function runtimeSyntheticPrivacyFixtures() {
+  const slash = String.fromCharCode(47);
+  const backslash = String.fromCharCode(92);
+  const alphabet = "abcdefghijklmnopqrstuvwxyz";
+  const digits = "0123456789";
+  const serializeFinding = (finding: string) => JSON.stringify({ finding });
+  return [
+    {
+      id: "mac-user-path", expectedClass: "absolute-local-path", positiveByteCount: 36,
+      positiveSha256: "028ab5df87aecf117cf976eb49484c68ff2634a0bdada2b338ecdc7a4d1b09f2",
+      neutralByteCount: 35, neutralSha256: "d06a5a94e7644af64239ef1f14f85fabc92ed9c0cfb8e222dc7925e84080fb53",
+      positive: () => serializeFinding([slash, "Users", slash, "example", slash, "private"].join("")),
+      neutral: () => serializeFinding([slash, "User", slash, "example", slash, "private"].join(""))
+    },
+    {
+      id: "linux-home-path", expectedClass: "absolute-local-path", positiveByteCount: 35,
+      positiveSha256: "d00132f95eb17c42159429a66e6a2ae02eec91ad0d17c98b833204b71aa833ca",
+      neutralByteCount: 36, neutralSha256: "0260627393814d74f0355c3563338a46f0873e0cd149c04b1a1d61251275dfb3",
+      positive: () => serializeFinding([slash, "home", slash, "example", slash, "private"].join("")),
+      neutral: () => serializeFinding([slash, "homes", slash, "example", slash, "private"].join(""))
+    },
+    {
+      id: "private-tmp-path", expectedClass: "absolute-local-path", positiveByteCount: 41,
+      positiveSha256: "42746659c188ea610ee110f804a42e10d3f42f388be6d44a98c99246b7039980",
+      neutralByteCount: 43, neutralSha256: "6ecf4b5bed75b0acc393dba9f9923dc9d05c6cb80bc21d98dae0ca2377a82a1a",
+      positive: () => serializeFinding([slash, "private", slash, "tmp", slash, "clover-private"].join("")),
+      neutral: () => serializeFinding([slash, "private", slash, "cache", slash, "clover-private"].join(""))
+    },
+    {
+      id: "private-var-path", expectedClass: "absolute-local-path", positiveByteCount: 45,
+      positiveSha256: "7d71a659122f536379893736e3253e885fd9556a05eb9cfcadf35eec0bcf5517",
+      neutralByteCount: 44, neutralSha256: "dff6f7596c942e111ec03c98faf3e625c43dff460d9ad749029ccdc80491f593",
+      positive: () => serializeFinding([slash, "private", slash, "var", slash, "folders", slash, "aa", slash, "private"].join("")),
+      neutral: () => serializeFinding([slash, "private", slash, "var", slash, "folder", slash, "aa", slash, "private"].join(""))
+    },
+    {
+      id: "tmp-path", expectedClass: "absolute-local-path", positiveByteCount: 33,
+      positiveSha256: "b286d8256b472b9f785a196974e749c31ef4108d0be53c13ba8e73b52f52a37d",
+      neutralByteCount: 35, neutralSha256: "b89858e064923c87b8d95a97f864f8c9ee7264c3c90c9405adf7896aef33c7c7",
+      positive: () => serializeFinding([slash, "tmp", slash, "clover-private"].join("")),
+      neutral: () => serializeFinding([slash, "cache", slash, "clover-private"].join(""))
+    },
+    {
+      id: "windows-path", expectedClass: "absolute-local-path", positiveByteCount: 31,
+      positiveSha256: "0e09be9612becba6318c77a9ed6b5af6628382cc17246bb68a64c736cce6d8ae",
+      neutralByteCount: 30, neutralSha256: "853a0c35e53b66acc23cb75c9bdc9cecbbc3f1747d185a86040ba73ec8969e55",
+      positive: () => serializeFinding(["C", ":", backslash, "work", backslash, "private"].join("")),
+      neutral: () => serializeFinding(["C", backslash, "work", backslash, "private"].join(""))
+    },
+    {
+      id: "windows-path-one-backslash", expectedClass: "absolute-local-path", positiveByteCount: 15,
+      positiveSha256: "5bfebc5492e5b2ff8e5360fbe3ab67afcfb1569309bbf64070903a0395dca078",
+      neutralByteCount: 14, neutralSha256: "4695eb03473014d4dd91100603bbc8f37b71d74d258b679352073e6e41078911",
+      positive: () => ["C", ":", backslash, "work", backslash, "private"].join(""),
+      neutral: () => ["C", backslash, "work", backslash, "private"].join("")
+    },
+    {
+      id: "bearer", expectedClass: "credential", positiveByteCount: 53,
+      positiveSha256: "997f4cf7efeb2aa0d15f23e95e0c997ab95f7a729bdae1223232e15184d1f9fe",
+      neutralByteCount: 36, neutralSha256: "aad3cb43e6af283a6609c8b0fc7ea34b9c2e1ce5018bb530ea658e4c9e12b7cd",
+      positive: () => serializeFinding(["Bea", "rer ", alphabet, digits.slice(0, 6)].join("")),
+      neutral: () => serializeFinding(["Bea", "rer ", alphabet.slice(0, 15)].join(""))
+    },
+    {
+      id: "github-pat", expectedClass: "credential", positiveByteCount: 61,
+      positiveSha256: "137a686da9501723d517e718d0e5c18225aca03eefb36c52c996a210d0d16864",
+      neutralByteCount: 44, neutralSha256: "5b61ef6f86fe01a99f51debf16f39f94cecc926b2774aff7075a0158d111bf99",
+      positive: () => serializeFinding(["github", "_pat_", alphabet, digits].join("")),
+      neutral: () => serializeFinding(["github", "_pat_", alphabet.slice(0, 19)].join(""))
+    },
+    {
+      id: "json-token", expectedClass: "secret", positiveByteCount: 51,
+      positiveSha256: "76d636ebd63e7e44289733d7541e46bda0a4732d18fe165e0887de4b211fcae0",
+      neutralByteCount: 26, neutralSha256: "7cf137a2d8af6ee1563d1b8a720f352297519a4fd382a60121ca69859179ffca",
+      positive: () => JSON.stringify({ [["access", "token"].join("_")]: [alphabet, digits.slice(0, 6)].join("") }),
+      neutral: () => JSON.stringify({ [["access", "token"].join("_")]: alphabet.slice(0, 7) })
+    },
+    {
+      id: "json-key", expectedClass: "secret", positiveByteCount: 45,
+      positiveSha256: "3470b6fd82b9426a6236f44b0393af7c7db0533f01242656081d905cfa5f7131",
+      neutralByteCount: 20, neutralSha256: "e2b1db0269f7db8c5e99a5c2275363380164cc5bd2d43b37eb4d5ad339c4d219",
+      positive: () => JSON.stringify({ [["api", "Key"].join("")]: [alphabet, digits.slice(0, 6)].join("") }),
+      neutral: () => JSON.stringify({ [["api", "Key"].join("")]: alphabet.slice(0, 7) })
+    },
+    {
+      id: "private-key", expectedClass: "secret", positiveByteCount: 27,
+      positiveSha256: "3021d90eb9437b2d8f30e8363695c4418b5e5f1870801b5c317e9398ee0f572d",
+      neutralByteCount: 26, neutralSha256: "114c9e70322feddbb57dc10a05e44c4458f6242678ede5f479a8722f15da06c8",
+      positive: () => ["-----BE", "GIN PRIVATE KEY-----"].join(""),
+      neutral: () => ["-----BE", "GN PRIVATE KEY-----"].join("")
+    },
+    {
+      id: "private-data-claim", expectedClass: "affirmative-private-or-authority-claim", positiveByteCount: 28,
+      positiveSha256: "f66a446e52c930eb5a53e90914e79cfcda20dde5b23e7eba2c4781a23f7967c6",
+      neutralByteCount: 29, neutralSha256: "d96ae067763f9f17f0c8b6c81991c657f041ef65bac664f246e446c0fa9ef5d7",
+      positive: () => JSON.stringify({ [["private", "DataAccessed"].join("")]: true }),
+      neutral: () => JSON.stringify({ [["private", "DataAccessed"].join("")]: false })
+    },
+    {
+      id: "secret-claim", expectedClass: "affirmative-private-or-authority-claim", positiveByteCount: 24,
+      positiveSha256: "842901656f2e76a14b7a28034363d3a8581d54c1389bac562747dfdf07532780",
+      neutralByteCount: 25, neutralSha256: "f815fb606a20e95f49c879aa6bb2d65eb822c3c47f50600799ded6df0ae479c2",
+      positive: () => JSON.stringify({ [["secrets", "Included"].join("")]: true }),
+      neutral: () => JSON.stringify({ [["secrets", "Included"].join("")]: false })
+    },
+    {
+      id: "authority-claim", expectedClass: "affirmative-private-or-authority-claim", positiveByteCount: 38,
+      positiveSha256: "050bb41706d37052fd068063c38a2f82cd678572db3eb1fea9d4455785313a42",
+      neutralByteCount: 39, neutralSha256: "53e6293aab12b62c5a4384018b0b134468de480ace3da42dd3e01a4956bc1e84",
+      positive: () => JSON.stringify({ [["consequential", "AuthorityGranted"].join("")]: true }),
+      neutral: () => JSON.stringify({ [["consequential", "AuthorityGranted"].join("")]: false })
+    }
+  ] as const;
+}
+
+function expectPublicBrowserArtifactSerialization(serialized: string, label: string) {
+  const findings = publicBrowserArtifactFindingClasses(serialized);
   expect(findings, `${label} contains a prohibited private/credential/secret/local-path value`).toEqual([]);
 }
 

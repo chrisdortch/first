@@ -488,43 +488,159 @@ function differingJsonKeys(before, after, prefix = "", differences = []) {
   return differences;
 }
 
-function requireExactVercelCliInvocation(builds) {
+function requireCanonicalAbsolutePath(value, label) {
   if (
-    builds.cliVersion !== VERCEL_CLI_VERSION ||
-    !Array.isArray(builds.argv) ||
-    builds.argv.length !== 4 ||
-    builds.argv[2] !== "build" ||
-    builds.argv[3] !== "--yes"
-  ) throw new Error("CLOVER_VERCEL_BUILD_INVOCATION_REJECTED");
-  const [nodeExecutable, cliExecutable] = builds.argv;
-  if (
-    typeof nodeExecutable !== "string" || !path.isAbsolute(nodeExecutable) ||
-    typeof cliExecutable !== "string" || !path.isAbsolute(cliExecutable)
-  ) throw new Error("CLOVER_VERCEL_BUILD_INVOCATION_REJECTED");
-  const marker = `${path.sep}node_modules${path.sep}vercel${path.sep}`;
-  const markerIndex = cliExecutable.lastIndexOf(marker);
-  if (markerIndex <= 0) throw new Error("CLOVER_VERCEL_BUILD_TOOL_REJECTED");
-  const installRoot = cliExecutable.slice(0, markerIndex);
+    typeof value !== "string" ||
+    !path.isAbsolute(value) ||
+    value !== value.normalize("NFC") ||
+    /\0|\r|\n/u.test(value) ||
+    path.normalize(value) !== value ||
+    path.resolve(value) !== value
+  ) throw new Error(`${label}_REJECTED`);
+  return value;
+}
+
+function closedLstat(candidate, label) {
+  try {
+    return lstatSync(candidate);
+  } catch {
+    throw new Error(`${label}_REJECTED`);
+  }
+}
+
+function requireCanonicalRealDirectory(candidate, label) {
+  const stat = closedLstat(candidate, label);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`${label}_REJECTED`);
+  let resolved;
+  try { resolved = realpathSync(candidate); } catch { throw new Error(`${label}_REJECTED`); }
+  if (resolved !== candidate) throw new Error(`${label}_REJECTED`);
+  return candidate;
+}
+
+function requireCanonicalRegularFile(candidate, label) {
+  const stat = closedLstat(candidate, label);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`${label}_REJECTED`);
+  let resolved;
+  try { resolved = realpathSync(candidate); } catch { throw new Error(`${label}_REJECTED`); }
+  if (resolved !== candidate) throw new Error(`${label}_REJECTED`);
+  return candidate;
+}
+
+export function requireExactVercelCliInvocation(builds) {
+  if (!builds || typeof builds !== "object" || Array.isArray(builds)) throw new Error("CLOVER_VERCEL_BUILD_INVOCATION_REJECTED");
+  if (builds.target !== "preview") throw new Error("CLOVER_VERCEL_BUILD_TARGET_REJECTED");
+  if (builds.cliVersion !== VERCEL_CLI_VERSION) throw new Error("CLOVER_VERCEL_BUILD_CLI_VERSION_REJECTED");
+  if (!Array.isArray(builds.argv) || builds.argv.length !== 4) throw new Error("CLOVER_VERCEL_BUILD_INVOCATION_REJECTED");
+  if (builds.argv[2] !== "build" || builds.argv[3] !== "--yes") throw new Error("CLOVER_VERCEL_BUILD_ARGUMENTS_REJECTED");
+  const [rawNodeExecutable, rawCliExecutable] = builds.argv;
+  const nodeExecutable = requireCanonicalAbsolutePath(rawNodeExecutable, "CLOVER_VERCEL_BUILD_NODE_EXECUTABLE");
+  if (nodeExecutable !== process.execPath) throw new Error("CLOVER_VERCEL_BUILD_NODE_EXECUTABLE_REJECTED");
+  requireCanonicalRegularFile(nodeExecutable, "CLOVER_VERCEL_BUILD_NODE_EXECUTABLE");
+  requireCanonicalAbsolutePath(rawCliExecutable, "CLOVER_VERCEL_BUILD_RAW_CLI_PATH");
+
+  const pathRoot = path.parse(rawCliExecutable).root;
+  const rawSegments = rawCliExecutable.slice(pathRoot.length).split(path.sep);
+  const nodeModulesIndexes = rawSegments.flatMap((segment, index) => segment === "node_modules" ? [index] : []);
+  if (nodeModulesIndexes.length !== 1) throw new Error("CLOVER_VERCEL_BUILD_LAUNCHER_LOCATION_REJECTED");
+  const nodeModulesIndex = nodeModulesIndexes[0];
+  const installRoot = path.join(pathRoot, ...rawSegments.slice(0, nodeModulesIndex));
+  const launcherSegments = rawSegments.slice(nodeModulesIndex);
+  let launcherKind;
+  if (canonicalJson(launcherSegments) === canonicalJson(["node_modules", "vercel", "dist", "vc.js"])) launcherKind = "direct";
+  else if (launcherSegments.length === 3 && launcherSegments[0] === "node_modules" && launcherSegments[1] === ".bin") {
+    if (launcherSegments[2] === "vc") launcherKind = "npm-bin-vc";
+    else if (launcherSegments[2] === "vercel") launcherKind = "npm-bin-vercel";
+    else throw new Error("CLOVER_VERCEL_BUILD_LAUNCHER_NAME_REJECTED");
+  } else throw new Error("CLOVER_VERCEL_BUILD_LAUNCHER_LOCATION_REJECTED");
+  if (!installRoot || installRoot === path.parse(installRoot).root) throw new Error("CLOVER_VERCEL_BUILD_INSTALL_ROOT_REJECTED");
+  requireCanonicalAbsolutePath(installRoot, "CLOVER_VERCEL_BUILD_INSTALL_ROOT");
+  requireCanonicalRealDirectory(installRoot, "CLOVER_VERCEL_BUILD_INSTALL_ROOT");
+
+  const nodeModulesRoot = path.join(installRoot, "node_modules");
+  requireCanonicalRealDirectory(nodeModulesRoot, "CLOVER_VERCEL_BUILD_NODE_MODULES");
   const packageRoot = path.join(installRoot, "node_modules", "vercel");
+  requireCanonicalRealDirectory(packageRoot, "CLOVER_VERCEL_BUILD_PACKAGE_ROOT");
   const packagePath = path.join(packageRoot, "package.json");
   const lockPath = path.join(installRoot, "package-lock.json");
-  for (const [candidate, label] of [[packagePath, "PACKAGE"], [lockPath, "LOCK"], [cliExecutable, "EXECUTABLE"]]) {
-    const stat = lstatSync(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`CLOVER_VERCEL_BUILD_TOOL_${label}_REJECTED`);
+  requireCanonicalRegularFile(packagePath, "CLOVER_VERCEL_BUILD_PACKAGE_FILE");
+  requireCanonicalRegularFile(lockPath, "CLOVER_VERCEL_BUILD_LOCK_FILE");
+  const expectedExecutable = path.join(packageRoot, "dist", "vc.js");
+  if (launcherKind === "direct") {
+    if (rawCliExecutable !== expectedExecutable) throw new Error("CLOVER_VERCEL_BUILD_DIRECT_EXECUTABLE_REJECTED");
+    const rawStat = closedLstat(rawCliExecutable, "CLOVER_VERCEL_BUILD_DIRECT_EXECUTABLE");
+    if (rawStat.isSymbolicLink()) throw new Error("CLOVER_VERCEL_BUILD_DIRECT_EXECUTABLE_SYMLINK_REJECTED");
+    if (!rawStat.isFile()) throw new Error("CLOVER_VERCEL_BUILD_DIRECT_EXECUTABLE_REJECTED");
+  } else {
+    const aliasName = launcherKind === "npm-bin-vc" ? "vc" : "vercel";
+    requireCanonicalRealDirectory(path.join(nodeModulesRoot, ".bin"), "CLOVER_VERCEL_BUILD_ALIAS_DIRECTORY");
+    if (path.basename(rawCliExecutable) !== aliasName || path.dirname(rawCliExecutable) !== path.join(nodeModulesRoot, ".bin")) {
+      throw new Error("CLOVER_VERCEL_BUILD_ALIAS_LOCATION_REJECTED");
+    }
+    const aliasStat = closedLstat(rawCliExecutable, "CLOVER_VERCEL_BUILD_ALIAS");
+    if (!aliasStat.isSymbolicLink()) throw new Error("CLOVER_VERCEL_BUILD_ALIAS_TYPE_REJECTED");
+    let linkTarget;
+    try { linkTarget = readlinkSync(rawCliExecutable); } catch { throw new Error("CLOVER_VERCEL_BUILD_ALIAS_REJECTED"); }
+    if (
+      typeof linkTarget !== "string" || linkTarget.length === 0 || path.isAbsolute(linkTarget) ||
+      linkTarget !== linkTarget.normalize("NFC") || /\0|\r|\n/u.test(linkTarget) || path.normalize(linkTarget) !== linkTarget
+    ) throw new Error("CLOVER_VERCEL_BUILD_ALIAS_TARGET_REJECTED");
+    const resolvedLinkTarget = path.resolve(path.dirname(rawCliExecutable), linkTarget);
+    if (resolvedLinkTarget !== expectedExecutable) {
+      const relativeToInstallRoot = path.relative(installRoot, resolvedLinkTarget);
+      if (path.isAbsolute(relativeToInstallRoot) || relativeToInstallRoot === ".." || relativeToInstallRoot.startsWith(`..${path.sep}`)) {
+        throw new Error("CLOVER_VERCEL_BUILD_ALIAS_ESCAPE_REJECTED");
+      }
+      throw new Error("CLOVER_VERCEL_BUILD_ALIAS_TARGET_REJECTED");
+    }
+    if (!existsSync(resolvedLinkTarget)) throw new Error("CLOVER_VERCEL_BUILD_ALIAS_BROKEN_REJECTED");
   }
+
+  const executableStat = closedLstat(expectedExecutable, "CLOVER_VERCEL_BUILD_CANONICAL_EXECUTABLE");
+  if (executableStat.isSymbolicLink()) {
+    throw new Error(launcherKind === "direct"
+      ? "CLOVER_VERCEL_BUILD_DIRECT_EXECUTABLE_SYMLINK_REJECTED"
+      : "CLOVER_VERCEL_BUILD_ALIAS_CHAIN_REJECTED");
+  }
+  if (!executableStat.isFile()) throw new Error("CLOVER_VERCEL_BUILD_CANONICAL_EXECUTABLE_REJECTED");
+  let canonicalCliExecutable;
+  try { canonicalCliExecutable = realpathSync(expectedExecutable); } catch { throw new Error("CLOVER_VERCEL_BUILD_CANONICAL_EXECUTABLE_REJECTED"); }
+  if (canonicalCliExecutable !== expectedExecutable || !canonicalCliExecutable.startsWith(`${packageRoot}${path.sep}`)) {
+    throw new Error("CLOVER_VERCEL_BUILD_CANONICAL_EXECUTABLE_REJECTED");
+  }
+
   const packageDocument = parseExactJsonBytes(readFileSync(packagePath), "CLOVER_VERCEL_BUILD_TOOL_PACKAGE_JSON");
   const lockDocument = parseExactJsonBytes(readFileSync(lockPath), "CLOVER_VERCEL_BUILD_TOOL_LOCK_JSON");
-  const expectedExecutable = path.resolve(packageRoot, packageDocument.bin?.vercel ?? "");
-  const lockEntry = lockDocument.packages?.["node_modules/vercel"];
-  if (
-    packageDocument.name !== "vercel" ||
-    packageDocument.version !== VERCEL_CLI_VERSION ||
-    packageDocument.bin?.vercel !== "./dist/vc.js" ||
-    realpathSync(cliExecutable) !== realpathSync(expectedExecutable) ||
-    lockEntry?.version !== VERCEL_CLI_VERSION ||
-    lockEntry?.integrity !== VERCEL_CLI_INTEGRITY
-  ) throw new Error("CLOVER_VERCEL_BUILD_TOOL_REJECTED");
-  return Object.freeze({ nodeExecutable, cliExecutable, installRoot });
+  if (packageDocument.name !== "vercel") throw new Error("CLOVER_VERCEL_BUILD_PACKAGE_NAME_REJECTED");
+  if (packageDocument.version !== VERCEL_CLI_VERSION) throw new Error("CLOVER_VERCEL_BUILD_PACKAGE_VERSION_REJECTED");
+  if (!packageDocument.bin || typeof packageDocument.bin !== "object" || Array.isArray(packageDocument.bin)
+      || packageDocument.bin.vercel !== "./dist/vc.js") {
+    throw new Error("CLOVER_VERCEL_BUILD_PACKAGE_BIN_REJECTED");
+  }
+  const invokedAlias = launcherKind === "npm-bin-vc" ? "vc" : launcherKind === "npm-bin-vercel" ? "vercel" : null;
+  if (invokedAlias !== null && packageDocument.bin[invokedAlias] !== "./dist/vc.js") {
+    throw new Error("CLOVER_VERCEL_BUILD_ALIAS_METADATA_REJECTED");
+  }
+  if (!lockDocument.packages || typeof lockDocument.packages !== "object" || Array.isArray(lockDocument.packages)
+      || !Object.hasOwn(lockDocument.packages, "node_modules/vercel")) {
+    throw new Error("CLOVER_VERCEL_BUILD_LOCK_ENTRY_REJECTED");
+  }
+  const lockEntry = lockDocument.packages["node_modules/vercel"];
+  if (!lockEntry || typeof lockEntry !== "object" || Array.isArray(lockEntry)) throw new Error("CLOVER_VERCEL_BUILD_LOCK_ENTRY_REJECTED");
+  if (lockEntry.version !== VERCEL_CLI_VERSION) throw new Error("CLOVER_VERCEL_BUILD_LOCK_VERSION_REJECTED");
+  if (lockEntry.integrity !== VERCEL_CLI_INTEGRITY) throw new Error("CLOVER_VERCEL_BUILD_LOCK_INTEGRITY_REJECTED");
+  let resolvedRawCliExecutable;
+  try { resolvedRawCliExecutable = realpathSync(rawCliExecutable); } catch { throw new Error("CLOVER_VERCEL_BUILD_LAUNCHER_RESOLUTION_REJECTED"); }
+  if (resolvedRawCliExecutable !== canonicalCliExecutable) throw new Error("CLOVER_VERCEL_BUILD_LAUNCHER_RESOLUTION_REJECTED");
+  return Object.freeze({
+    nodeExecutable,
+    rawCliExecutable,
+    canonicalCliExecutable,
+    launcherKind,
+    installRoot,
+    packageRoot,
+    packageVersion: packageDocument.version,
+    packageIntegrityVerified: true
+  });
 }
 
 export function normalizeGeneratedOutput({ outputRoot, checkoutRoot }) {
@@ -535,9 +651,12 @@ export function normalizeGeneratedOutput({ outputRoot, checkoutRoot }) {
   if (builds.target !== "preview" || builds.error || builds.builds?.some((build) => build.error)) {
     throw new Error("CLOVER_NONPREVIEW_BUILD_OUTPUT_REJECTED");
   }
-  const { nodeExecutable, installRoot: cliRoot } = requireExactVercelCliInvocation(builds);
+  const cliInvocation = requireExactVercelCliInvocation(builds);
+  const { nodeExecutable, rawCliExecutable, canonicalCliExecutable, installRoot: cliRoot } = cliInvocation;
   const metadataReplacements = [
     { needle: sourceRoot, replacement: RUNTIME_ROOT },
+    { needle: rawCliExecutable, replacement: replaceExact(rawCliExecutable, [{ needle: cliRoot, replacement: `${RUNTIME_ROOT}/.vercel-cli` }]) },
+    { needle: canonicalCliExecutable, replacement: replaceExact(canonicalCliExecutable, [{ needle: cliRoot, replacement: `${RUNTIME_ROOT}/.vercel-cli` }]) },
     { needle: cliRoot, replacement: `${RUNTIME_ROOT}/.vercel-cli` },
     { needle: typeof nodeExecutable === "string" && path.isAbsolute(nodeExecutable) ? nodeExecutable : null, replacement: `${RUNTIME_ROOT}/.vercel-cli/node` }
   ].filter(({ needle }) => typeof needle === "string");
@@ -575,7 +694,25 @@ export function normalizeGeneratedOutput({ outputRoot, checkoutRoot }) {
   for (const entry of walk(root).filter(({ type }) => type === "file")) {
     assertPublicOutputFile(entry, readFileSync(entry.absolutePath), [sourceRoot, cliRoot, nodeExecutable]);
   }
-  return normalized.sort((left, right) => compareText(left.path, right.path));
+  const sanitizedCliInvocation = Object.freeze({
+    rawCliExecutable: replaceExact(rawCliExecutable, metadataReplacements),
+    canonicalCliExecutable: replaceExact(canonicalCliExecutable, metadataReplacements),
+    launcherKind: cliInvocation.launcherKind,
+    installRoot: replaceExact(cliInvocation.installRoot, metadataReplacements),
+    packageRoot: replaceExact(cliInvocation.packageRoot, metadataReplacements),
+    packageVersion: cliInvocation.packageVersion,
+    packageIntegrityVerified: cliInvocation.packageIntegrityVerified
+  });
+  if (
+    !sanitizedCliInvocation.rawCliExecutable.startsWith(`${RUNTIME_ROOT}/.vercel-cli/`) ||
+    sanitizedCliInvocation.canonicalCliExecutable !== `${RUNTIME_ROOT}/.vercel-cli/node_modules/vercel/dist/vc.js` ||
+    sanitizedCliInvocation.installRoot !== `${RUNTIME_ROOT}/.vercel-cli` ||
+    sanitizedCliInvocation.packageRoot !== `${RUNTIME_ROOT}/.vercel-cli/node_modules/vercel`
+  ) throw new Error("CLOVER_VERCEL_BUILD_SANITIZED_IDENTITY_REJECTED");
+  return Object.freeze({
+    normalization: normalized.sort((left, right) => compareText(left.path, right.path)),
+    cliInvocation: sanitizedCliInvocation
+  });
 }
 
 function snapshotNormalizableOutput(root) {
@@ -973,7 +1110,8 @@ function createDeploymentAttestationTransaction({ outputRoot, repositoryRoot, ev
   ensureInternalDirectory(root, path.posix.dirname(ATTESTATION_OUTPUT_PATH));
   const attestationPath = path.join(root, ...ATTESTATION_OUTPUT_PATH.split("/"));
   if (existsSync(attestationPath)) throw new Error("CLOVER_ATTESTATION_ALREADY_EXISTS_REJECTED");
-  const normalization = normalizeGeneratedOutput({ outputRoot: root, checkoutRoot: repository });
+  const normalizedOutput = normalizeGeneratedOutput({ outputRoot: root, checkoutRoot: repository });
+  const { normalization, cliInvocation } = normalizedOutput;
   const provenance = sourceProvenance ?? deriveSourceProvenance({ repositoryRoot: repository });
   const outputManifest = buildOutputManifest(root);
   const body = {
@@ -1080,6 +1218,7 @@ function createDeploymentAttestationTransaction({ outputRoot, repositoryRoot, ev
     archiveManifest,
     archiveManifestPath,
     archiveManifestRawSha256: sha256(readFileSync(archiveManifestPath)),
+    cliInvocation,
     frozenOutput
   };
 }
@@ -1655,6 +1794,7 @@ function main() {
       archiveBytes: result.archiveBytes,
       archiveManifestSelfHash: result.archiveManifest.manifestSelfHash,
       archiveManifestRawSha256: result.archiveManifestRawSha256,
+      cliInvocation: result.cliInvocation,
       frozenOutputReady: result.frozenOutput !== null
     })}\n`);
     return;

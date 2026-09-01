@@ -224,29 +224,143 @@ jobs:
           VERCEL_TELEMETRY_DISABLED: '1'
         run: |
           set -euo pipefail
-          test "$(git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all)" = ""
+          test -n "${GITHUB_WORKSPACE:-}"
+          test -n "${RUNNER_TEMP:-}"
+          [[ "$GITHUB_WORKSPACE" = /* ]]
+          [[ "$RUNNER_TEMP" = /* ]]
+          test -d "$GITHUB_WORKSPACE"
+          test -d "$RUNNER_TEMP"
+          test ! -L "$GITHUB_WORKSPACE"
+          test ! -L "$RUNNER_TEMP"
+          repository_root="$(realpath -e -- "$GITHUB_WORKSPACE")"
+          runner_temp="$(realpath -e -- "$RUNNER_TEMP")"
+          test "$repository_root" = "$GITHUB_WORKSPACE"
+          test "$runner_temp" = "$RUNNER_TEMP"
+          test "$(git -C "$repository_root" rev-parse --show-toplevel)" = "$repository_root"
+          case "$runner_temp/" in
+            "$repository_root/"*) echo "RUNNER_TEMP must remain outside the repository" >&2; exit 1 ;;
+          esac
+          cd "$repository_root"
+          test "$(pwd -P)" = "$repository_root"
+          test "$(git -C "$repository_root" status --porcelain=v1 --untracked-files=all)" = ""
           test -z "${VERCEL_TOKEN:-}"
           export NEXT_DEPLOYMENT_ID="clover-${CLOVER_TREE_HEAD:0:24}"
           [[ "$NEXT_DEPLOYMENT_ID" =~ ^clover-[0-9a-f]{24}$ ]]
-          export VERCEL_CONFIG_DIR="$RUNNER_TEMP/clover-vercel-cli-config"
-          test ! -e "$VERCEL_CONFIG_DIR"
-          test ! -e .vercel
-          test ! -e apps/clover-launch-studio/.vercel
-          mkdir -p "$VERCEL_CONFIG_DIR"
-          mkdir -p .vercel
-          node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs project-settings --repository-root . > .vercel/project.json
-          test "$(find .vercel -mindepth 1 -maxdepth 1 -print)" = ".vercel/project.json"
-          test "$(node -e 'const fs=require("node:fs"),crypto=require("node:crypto");process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(".vercel/project.json")).digest("hex"))')" = "$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/clover-tree-source-provenance.json","utf8")).buildProjectSettingsSha256)')"
+          repository_vercel="$repository_root/.vercel"
+          repository_output="$repository_vercel/output"
+          application_vercel="$repository_root/apps/clover-launch-studio/.vercel"
+          application_output="$application_vercel/output"
+          export VERCEL_CONFIG_DIR="$runner_temp/clover-vercel-cli-config"
+          build_output="$runner_temp/clover-build-output"
+          attestation_evidence="$runner_temp/clover-attestation-evidence"
+          frozen_workspace="$runner_temp/clover-frozen-workspace"
+          deployment_input_digests="$runner_temp/clover-deployment-input-digests.json"
+          deployment_input_verification="$runner_temp/clover-deployment-input-verification.json"
+          source_provenance="$runner_temp/clover-tree-source-provenance.json"
+          cleanup_build_residues() {
+            rm -rf -- "$repository_vercel" "$application_vercel" "$VERCEL_CONFIG_DIR"
+          }
+          for stale_path in \
+            "$repository_vercel" \
+            "$application_vercel" \
+            "$VERCEL_CONFIG_DIR" \
+            "$build_output" \
+            "$attestation_evidence" \
+            "$frozen_workspace" \
+            "$deployment_input_digests" \
+            "$deployment_input_verification"; do
+            if [[ -e "$stale_path" || -L "$stale_path" ]]; then
+              echo "stale deployment-input path exists: $stale_path" >&2
+              exit 1
+            fi
+          done
+          CLOVER_REPOSITORY_ROOT="$repository_root" node <<'NODE'
+          const cp = require('node:child_process');
+          const rawInventory = cp.execFileSync('find', [
+            '-P', process.env.CLOVER_REPOSITORY_ROOT, '-name', 'output', '-path', '*/.vercel/output', '-prune', '-print0'
+          ], { encoding: null, maxBuffer: 16 * 1024 * 1024 });
+          if (rawInventory.length !== 0) {
+            throw new Error('Stale repository Build Output exists before the exact build');
+          }
+          NODE
+          trap cleanup_build_residues EXIT
+          mkdir -p -- "$VERCEL_CONFIG_DIR"
+          mkdir -p -- "$repository_vercel"
+          node "$repository_root/apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs" project-settings --repository-root "$repository_root" > "$repository_vercel/project.json"
+          test "$(find "$repository_vercel" -mindepth 1 -maxdepth 1 -print)" = "$repository_vercel/project.json"
+          expected_project_settings_sha="$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).buildProjectSettingsSha256)' "$source_provenance")"
+          actual_project_settings_sha="$(node -e 'const fs=require("node:fs"),crypto=require("node:crypto");process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$repository_vercel/project.json")"
+          test "$actual_project_settings_sha" = "$expected_project_settings_sha"
           npx --yes vercel@59.6.2 build --yes
-          test "$(node -e 'const fs=require("node:fs"),crypto=require("node:crypto");process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(".vercel/project.json")).digest("hex"))')" = "$(node -e 'const fs=require("node:fs");process.stdout.write(JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/clover-tree-source-provenance.json","utf8")).buildProjectSettingsSha256)')"
+          actual_project_settings_sha="$(node -e 'const fs=require("node:fs"),crypto=require("node:crypto");process.stdout.write(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex"))' "$repository_vercel/project.json")"
+          test "$actual_project_settings_sha" = "$expected_project_settings_sha"
           test -z "$(find "$VERCEL_CONFIG_DIR" -mindepth 1 -print -quit)"
-          test -d apps/clover-launch-studio/.vercel/output
-          test ! -e "$RUNNER_TEMP/clover-build-output"
-          mv apps/clover-launch-studio/.vercel/output "$RUNNER_TEMP/clover-build-output"
-          rm -rf .vercel apps/clover-launch-studio/.vercel "$VERCEL_CONFIG_DIR"
-          test "$(git -C "$GITHUB_WORKSPACE" status --porcelain=v1 --untracked-files=all)" = ""
-          node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs output --repository-root . --output "$RUNNER_TEMP/clover-build-output" --evidence "$RUNNER_TEMP/clover-attestation-evidence" --frozen-output "$RUNNER_TEMP/clover-frozen-workspace" > "$RUNNER_TEMP/clover-deployment-input-digests.json"
-          node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs verify --repository-root . --output "$RUNNER_TEMP/clover-frozen-workspace/.vercel/output" --evidence "$RUNNER_TEMP/clover-attestation-evidence" > "$RUNNER_TEMP/clover-deployment-input-verification.json"
+          CLOVER_REPOSITORY_ROOT="$repository_root" CLOVER_REPOSITORY_OUTPUT="$repository_output" CLOVER_APPLICATION_OUTPUT="$application_output" node <<'NODE'
+          const cp = require('node:child_process');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { TextDecoder } = require('node:util');
+          const repositoryRoot = process.env.CLOVER_REPOSITORY_ROOT;
+          const repositoryOutput = process.env.CLOVER_REPOSITORY_OUTPUT;
+          const applicationOutput = process.env.CLOVER_APPLICATION_OUTPUT;
+          if (repositoryOutput !== path.join(repositoryRoot, '.vercel', 'output')
+              || applicationOutput !== path.join(repositoryRoot, 'apps', 'clover-launch-studio', '.vercel', 'output')) {
+            throw new Error('Build Output paths are not the exact closed locations');
+          }
+          const stat = fs.lstatSync(repositoryOutput);
+          if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync.native(repositoryOutput) !== repositoryOutput) {
+            throw new Error('Repository-root Build Output is not one canonical real directory');
+          }
+          const relativeOutput = path.relative(repositoryRoot, repositoryOutput);
+          if (relativeOutput !== '.vercel/output' || path.isAbsolute(relativeOutput) || relativeOutput.startsWith('..')) {
+            throw new Error('Repository-root Build Output escaped canonical containment');
+          }
+          try {
+            fs.lstatSync(applicationOutput);
+            throw new Error('Application-local Build Output must remain absent');
+          } catch (error) {
+            if (!(error && error.code === 'ENOENT')) throw error;
+          }
+          const rawInventory = cp.execFileSync('find', [
+            '-P', repositoryRoot, '-name', 'output', '-path', '*/.vercel/output', '-prune', '-print0'
+          ], { encoding: null, maxBuffer: 16 * 1024 * 1024 });
+          if (rawInventory.length === 0 || rawInventory[rawInventory.length - 1] !== 0) {
+            throw new Error('Build Output inventory is empty or not NUL terminated');
+          }
+          const inventory = new TextDecoder('utf-8', { fatal: true })
+            .decode(rawInventory.subarray(0, -1)).split('\0');
+          if (inventory.length !== 1 || inventory[0] !== repositoryOutput) {
+            throw new Error(`Expected one exact repository-root Build Output, received ${JSON.stringify(inventory)}`);
+          }
+          NODE
+          mv -- "$repository_output" "$build_output"
+          test -d "$build_output"
+          test ! -L "$build_output"
+          test "$(realpath -e -- "$build_output")" = "$build_output"
+          if [[ -e "$repository_output" || -L "$repository_output" ]]; then
+            echo "repository-root Build Output remained after the exact move" >&2
+            exit 1
+          fi
+          cleanup_build_residues
+          for residue in "$repository_vercel" "$application_vercel" "$VERCEL_CONFIG_DIR"; do
+            if [[ -e "$residue" || -L "$residue" ]]; then
+              echo "bounded Vercel build residue remained: $residue" >&2
+              exit 1
+            fi
+          done
+          CLOVER_REPOSITORY_ROOT="$repository_root" node <<'NODE'
+          const cp = require('node:child_process');
+          const rawInventory = cp.execFileSync('find', [
+            '-P', process.env.CLOVER_REPOSITORY_ROOT, '-name', 'output', '-path', '*/.vercel/output', '-prune', '-print0'
+          ], { encoding: null, maxBuffer: 16 * 1024 * 1024 });
+          if (rawInventory.length !== 0) {
+            throw new Error('Repository Build Output residue remained after cleanup');
+          }
+          NODE
+          test "$(git -C "$repository_root" status --porcelain=v1 --untracked-files=all)" = ""
+          trap - EXIT
+          node "$repository_root/apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs" output --repository-root "$repository_root" --output "$build_output" --evidence "$attestation_evidence" --frozen-output "$frozen_workspace" > "$deployment_input_digests"
+          node "$repository_root/apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs" verify --repository-root "$repository_root" --output "$frozen_workspace/.vercel/output" --evidence "$attestation_evidence" > "$deployment_input_verification"
           node <<'NODE'
           const fs = require('node:fs');
           const crypto = require('node:crypto');
@@ -258,6 +372,23 @@ jobs:
           const manifest = read('clover-tree-source-manifest.json');
           const created = read('clover-deployment-input-digests.json');
           const verified = read('clover-deployment-input-verification.json');
+          const cliInvocation = created.cliInvocation;
+          const exactCliKeys = [
+            'canonicalCliExecutable', 'installRoot', 'launcherKind', 'packageIntegrityVerified',
+            'packageRoot', 'packageVersion', 'rawCliExecutable'
+          ].sort();
+          if (!cliInvocation || typeof cliInvocation !== 'object' || Array.isArray(cliInvocation)
+              || JSON.stringify(Object.keys(cliInvocation).sort()) !== JSON.stringify(exactCliKeys)
+              || !['direct', 'npm-bin-vc', 'npm-bin-vercel'].includes(cliInvocation.launcherKind)
+              || cliInvocation.installRoot !== '/var/task/.vercel-cli'
+              || cliInvocation.packageRoot !== '/var/task/.vercel-cli/node_modules/vercel'
+              || cliInvocation.canonicalCliExecutable !== '/var/task/.vercel-cli/node_modules/vercel/dist/vc.js'
+              || cliInvocation.rawCliExecutable !== (cliInvocation.launcherKind === 'direct'
+                ? cliInvocation.canonicalCliExecutable
+                : `/var/task/.vercel-cli/node_modules/.bin/${cliInvocation.launcherKind === 'npm-bin-vc' ? 'vc' : 'vercel'}`)
+              || cliInvocation.packageVersion !== '59.6.2' || cliInvocation.packageIntegrityVerified !== true) {
+            throw new Error('sanitized Vercel CLI invocation identity mismatch');
+          }
           const evidence = path.join(root, 'clover-attestation-evidence');
           const documents = {
             payloadManifest: 'clover-build-output-manifest.json',
@@ -287,6 +418,7 @@ jobs:
             archiveSha256: created.archiveSha256,
             archiveBytes: created.archiveBytes,
             archiveManifestSelfHash: created.archiveManifestSelfHash,
+            cliInvocation,
             files: Object.fromEntries(Object.entries(documents).map(([key, file]) => {
               const bytes = fs.readFileSync(path.join(evidence, file));
               return [key, { file, bytes: bytes.length, sha256: sha256(bytes) }];
@@ -1210,9 +1342,19 @@ jobs:
           const exactSourceClosureDeltaPathListSha256 = '9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba';
           const exactIntegratedPrPathCount = 72;
           const exactIntegratedPrPathListSha256 = '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8';
-          const exactCiEvidenceCorrectionPathListSha256 = '3bf6eb010674c0a9b9bbcad44c636b5bf01e2c5762eb7319a1e5aa2bb5f6a07b';
+          const exactFirstCiEvidenceCorrectionCommit = '5ad65259fe86e0167fa4a35ed13c19306c2de7ad';
+          const exactFirstCiEvidenceCorrectionTree = '47304047ba835a81dbbf12262142d269725ad9e6';
+          const exactFirstCiEvidenceCorrectionParent = exactSourceClosureCommit;
+          const exactInitialCiEvidenceCorrectionPathListSha256 = '3bf6eb010674c0a9b9bbcad44c636b5bf01e2c5762eb7319a1e5aa2bb5f6a07b';
+          const exactInitialCiEvidenceCorrectionPaths = [
+            '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
+          const exactCiEvidenceCorrectionPathListSha256 = 'bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b';
           const exactCiEvidenceCorrectionPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
+            'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
           const exactAuthorizedBoundaryPathListSha256 = 'bcc3f4c93d2e74400602f3b688e69714d1550b22ff8edf7de0049f2f0bf793a0';
@@ -1327,9 +1469,17 @@ jobs:
             const commitIds = firstParentText === '' ? [] : firstParentText.split('\n');
             const ancestryText = gitText(['rev-list', '--ancestry-path', '--reverse', `${exactSourceClosureCommit}..${head}`]);
             const ancestryCommitIds = ancestryText === '' ? [] : ancestryText.split('\n');
-            requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds) && [1, 2].includes(commitIds.length),
+            requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds) && [1, 2, 3].includes(commitIds.length),
               'CI-evidence correction chain depth or first-parent topology mismatch');
             const authorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
+            const initialAuthorizedPaths = exactSortedPaths(exactInitialCiEvidenceCorrectionPaths);
+            requireCondition(pathListSha256(initialAuthorizedPaths) === exactInitialCiEvidenceCorrectionPathListSha256
+              && pathListSha256(authorizedPaths) === exactCiEvidenceCorrectionPathListSha256,
+            'CI-evidence correction boundary constants are inconsistent');
+            requireCondition(commitIds[0] === exactFirstCiEvidenceCorrectionCommit
+              && exactFirstCiEvidenceCorrectionParent === exactSourceClosureCommit
+              && gitText(['rev-parse', `${commitIds[0]}^{tree}`]) === exactFirstCiEvidenceCorrectionTree,
+            'first CI-evidence correction commit identity mismatch');
             let expectedParent = exactSourceClosureCommit;
             for (const [index, commit] of commitIds.entries()) {
               const parents = exactCommitParents(commit);
@@ -1338,15 +1488,21 @@ jobs:
               const paths = exactRawDiffEntries(expectedParent, commit, ['M']).map(({ path: file }) => file);
               requireCondition(paths.length > 0 && paths.every((file) => authorizedPaths.includes(file)),
                 'correction commit changed an unauthorized path');
-              if (index === 0) requireCondition(canonicalJson(paths) === canonicalJson(authorizedPaths),
-                'primary correction commit did not change the exact two-path boundary');
+              if (index === 0) requireCondition(canonicalJson(paths) === canonicalJson(initialAuthorizedPaths),
+                'first correction commit did not change the exact initial two-path boundary');
+              if (index === 1) requireCondition(canonicalJson(paths) === canonicalJson(authorizedPaths),
+                'second correction commit did not change the exact expanded four-path boundary');
               expectedParent = commit;
             }
             const immediateParents = exactCommitParents(head);
             requireCondition(immediateParents.length === 1, 'current candidate immediate parent identity mismatch');
             const cumulativePaths = exactRawDiffEntries(exactSourceClosureCommit, head, ['M']).map(({ path: file }) => file);
-            requireCondition(canonicalJson(cumulativePaths) === canonicalJson(authorizedPaths)
-              && pathListSha256(cumulativePaths) === exactCiEvidenceCorrectionPathListSha256,
+            const expectedCumulativePaths = commitIds.length === 1 ? initialAuthorizedPaths : authorizedPaths;
+            const expectedCumulativePathListSha256 = commitIds.length === 1
+              ? exactInitialCiEvidenceCorrectionPathListSha256
+              : exactCiEvidenceCorrectionPathListSha256;
+            requireCondition(canonicalJson(cumulativePaths) === canonicalJson(expectedCumulativePaths)
+              && pathListSha256(cumulativePaths) === expectedCumulativePathListSha256,
               'cumulative CI-evidence correction boundary mismatch');
             return {
               baseCommit: exactSourceClosureCommit,
@@ -1393,10 +1549,16 @@ jobs:
               && pathListSha256(currentCumulativePaths) === exactSourceClosureDeltaPathListSha256,
             'CI current candidate altered the cumulative source-closure path boundary');
             const correctionChain = exactCorrectionChain(head, process.env.CLOVER_TREE_EXACT_PR_HEAD);
+            const expectedCiEvidenceCorrectionPaths = correctionChain.depth === 1
+              ? exactInitialCiEvidenceCorrectionPaths
+              : exactCiEvidenceCorrectionPaths;
+            const expectedCiEvidenceCorrectionPathListSha256 = correctionChain.depth === 1
+              ? exactInitialCiEvidenceCorrectionPathListSha256
+              : exactCiEvidenceCorrectionPathListSha256;
             const ciEvidenceCorrectionDelta = exactDeltaEvidence(
-              exactSourceClosureCommit, head, exactCiEvidenceCorrectionPaths, 'CI-evidence correction'
+              exactSourceClosureCommit, head, expectedCiEvidenceCorrectionPaths, 'CI-evidence correction'
             );
-            requireCondition(ciEvidenceCorrectionDelta.pathListSha256 === exactCiEvidenceCorrectionPathListSha256,
+            requireCondition(ciEvidenceCorrectionDelta.pathListSha256 === expectedCiEvidenceCorrectionPathListSha256,
               'CI-evidence correction path-list identity mismatch');
             const integratedEntries = exactRawDiffEntries(exactProtectedMainCommit, head, ['A', 'M']);
             const integratedPaths = integratedEntries.map(({ path: file }) => file);
@@ -1621,7 +1783,7 @@ jobs:
               && /^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
               && value.currentCandidate.cleanWorktree === true && value.currentCandidate.role === 'exact-pr-head'
               && Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-              && [1, 2].includes(value.currentCandidate.correctionChainDepth)
+              && [1, 2, 3].includes(value.currentCandidate.correctionChainDepth)
               && value.currentCandidate.correctionCommitIds.length === value.currentCandidate.correctionChainDepth,
             `${label}.currentCandidate identity mismatch`);
             exactKeys(value.correctionChain,
@@ -3636,7 +3798,7 @@ jobs:
               ['source-closure-baseline', (source) => { source.sourceClosureBaseline.parent = '0'.repeat(40); }],
               ['source-closure-commit', (source) => { source.sourceClosureCommit.commit = '0'.repeat(40); }],
               ['current-parent', (source) => { source.currentCandidate.immediateParent = '0'.repeat(40); }],
-              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 3; }],
+              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 4; }],
               ['correction-ids', (source) => { source.correctionChain.commitIds = ['0'.repeat(40)]; }],
               ['source-closure-cumulative', (source) => {
                 source.sourceClosureDelta.currentCumulative.headCommit = '0'.repeat(40);

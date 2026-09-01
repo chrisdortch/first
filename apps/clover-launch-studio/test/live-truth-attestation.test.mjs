@@ -75,6 +75,7 @@ import {
   parseSourceChanges,
   deriveSourceProvenance,
   restoreDeterministicOutputArchive,
+  requireExactVercelCliInvocation,
   verifyDeploymentInputEvidence
 } from "../scripts/clover-deployment-attestation.mjs";
 import { compareDeploymentAttestation, parseBuildProvenance } from "../src/lib/provenance.ts";
@@ -1410,23 +1411,295 @@ test("source provenance binds deleted base objects and preserves current candida
   }
 });
 
-function writeRawBuildOutput(outputRoot, checkoutRoot) {
+function writeRawBuildOutput(outputRoot, checkoutRoot, {
+  launcherKind = "direct",
+  installRoot = path.join(checkoutRoot, "cli-install")
+} = {}) {
   rmSync(outputRoot, { recursive: true, force: true });
-  const cliRoot = path.join(checkoutRoot, "node_modules", "vercel");
+  mkdirSync(installRoot, { recursive: true });
+  const cliRoot = path.join(installRoot, "node_modules", "vercel");
   mkdirSync(path.join(cliRoot, "dist"), { recursive: true });
   writeFileSync(path.join(cliRoot, "dist/vc.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
   writeFileSync(path.join(cliRoot, "package.json"), JSON.stringify({ name: "vercel", version: VERCEL_CLI_VERSION, bin: { vc: "./dist/vc.js", vercel: "./dist/vc.js" } }));
-  writeFileSync(path.join(checkoutRoot, "package-lock.json"), JSON.stringify({ packages: { "node_modules/vercel": { version: VERCEL_CLI_VERSION, integrity: VERCEL_CLI_INTEGRITY } } }));
+  writeFileSync(path.join(installRoot, "package-lock.json"), JSON.stringify({ packages: { "node_modules/vercel": { version: VERCEL_CLI_VERSION, integrity: VERCEL_CLI_INTEGRITY } } }));
+  const binRoot = path.join(installRoot, "node_modules", ".bin");
+  mkdirSync(binRoot, { recursive: true });
+  for (const alias of ["vc", "vercel"]) {
+    const aliasPath = path.join(binRoot, alias);
+    rmSync(aliasPath, { recursive: true, force: true });
+    symlinkSync("../vercel/dist/vc.js", aliasPath);
+  }
+  const cliExecutable = launcherKind === "direct"
+    ? path.join(cliRoot, "dist/vc.js")
+    : path.join(binRoot, launcherKind === "npm-bin-vc" ? "vc" : "vercel");
   mkdirSync(path.join(outputRoot, "diagnostics"), { recursive: true });
   mkdirSync(path.join(outputRoot, "functions/index.func/apps/clover-launch-studio"), { recursive: true });
   mkdirSync(path.join(outputRoot, "static/assets"), { recursive: true });
-  writeFileSync(path.join(outputRoot, "builds.json"), JSON.stringify({ target: "preview", argv: ["/usr/local/bin/node", `${checkoutRoot}/node_modules/vercel/dist/vc.js`, "build", "--yes"], cliVersion: VERCEL_CLI_VERSION, builds: [] }));
-  writeFileSync(path.join(outputRoot, "diagnostics/cli_traces.json"), JSON.stringify({ cwd: checkoutRoot, cli: `${checkoutRoot}/node_modules/vercel/dist/vc.js` }));
+  writeFileSync(path.join(outputRoot, "builds.json"), JSON.stringify({ target: "preview", argv: [process.execPath, cliExecutable, "build", "--yes"], cliVersion: VERCEL_CLI_VERSION, builds: [] }));
+  writeFileSync(path.join(outputRoot, "diagnostics/cli_traces.json"), JSON.stringify({ cwd: checkoutRoot, cli: cliExecutable }));
   const configuration = { outputFileTracingRoot: checkoutRoot, repoRoot: checkoutRoot, turbopack: { root: checkoutRoot }, unrelated: "preserved" };
   writeFileSync(path.join(outputRoot, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs"), `const conf = ${JSON.stringify(configuration)};\nvar nextServer = true;\n`);
   writeFileSync(path.join(outputRoot, "static/assets/app.js"), "console.log('public-sanitized');\n");
   symlinkSync("assets/app.js", path.join(outputRoot, "static/current.js"));
+  return { installRoot, cliRoot, binRoot, cliExecutable, canonicalCliExecutable: path.join(cliRoot, "dist/vc.js") };
 }
+
+function exactVercelCliFixture(launcherKind = "npm-bin-vc") {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "clover-vercel-cli-invocation-"));
+  const root = execFileSync("pwd", ["-P"], { cwd: temporaryRoot, encoding: "utf8" }).trim();
+  const output = path.join(root, "output");
+  const identity = writeRawBuildOutput(output, root, { launcherKind });
+  const buildsPath = path.join(output, "builds.json");
+  const readBuilds = () => JSON.parse(readFileSync(buildsPath, "utf8"));
+  const writeBuilds = (value) => writeFileSync(buildsPath, JSON.stringify(value));
+  return {
+    temporaryRoot,
+    root,
+    output,
+    buildsPath,
+    packagePath: path.join(identity.cliRoot, "package.json"),
+    lockPath: path.join(identity.installRoot, "package-lock.json"),
+    ...identity,
+    readBuilds,
+    writeBuilds
+  };
+}
+
+function assertExactRejection(callback, expected) {
+  assert.throws(callback, (error) => error instanceof Error && error.message === expected);
+}
+
+test("Vercel CLI invocation accepts only the exact direct and npm alias launchers", () => {
+  const results = [];
+  for (const launcherKind of ["direct", "npm-bin-vc", "npm-bin-vercel"]) {
+    const fixture = exactVercelCliFixture(launcherKind);
+    try {
+      const result = requireExactVercelCliInvocation(fixture.readBuilds());
+      assert.equal(result.launcherKind, launcherKind);
+      assert.equal(result.rawCliExecutable, fixture.cliExecutable);
+      assert.equal(result.canonicalCliExecutable, fixture.canonicalCliExecutable);
+      assert.equal(result.installRoot, fixture.installRoot);
+      assert.equal(result.packageRoot, fixture.cliRoot);
+      assert.equal(result.packageVersion, VERCEL_CLI_VERSION);
+      assert.equal(result.packageIntegrityVerified, true);
+      results.push(result);
+    } finally {
+      rmSync(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  }
+  const commonAliasFixture = exactVercelCliFixture("npm-bin-vc");
+  try {
+    const vc = requireExactVercelCliInvocation(commonAliasFixture.readBuilds());
+    const vercelBuilds = commonAliasFixture.readBuilds();
+    vercelBuilds.argv[1] = path.join(commonAliasFixture.binRoot, "vercel");
+    const vercel = requireExactVercelCliInvocation(vercelBuilds);
+    assert.equal(vc.canonicalCliExecutable, vercel.canonicalCliExecutable);
+  } finally {
+    rmSync(commonAliasFixture.temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("Vercel CLI invocation verifier rejects every launcher, package, lock and invocation substitution", async (t) => {
+  const run = async (name, launcherKind, mutate, expected) => {
+    await t.test(name, () => {
+      const fixture = exactVercelCliFixture(launcherKind);
+      try {
+        mutate(fixture);
+        assertExactRejection(() => requireExactVercelCliInvocation(fixture.readBuilds()), expected);
+      } finally {
+        rmSync(fixture.temporaryRoot, { recursive: true, force: true });
+      }
+    });
+  };
+  const setLauncher = (fixture, cliExecutable) => {
+    const builds = fixture.readBuilds();
+    builds.argv[1] = cliExecutable;
+    fixture.writeBuilds(builds);
+  };
+  const mutatePackage = (fixture, mutation) => {
+    const document = JSON.parse(readFileSync(fixture.packagePath, "utf8"));
+    mutation(document);
+    writeFileSync(fixture.packagePath, JSON.stringify(document));
+  };
+  const mutateLock = (fixture, mutation) => {
+    const document = JSON.parse(readFileSync(fixture.lockPath, "utf8"));
+    mutation(document);
+    writeFileSync(fixture.lockPath, JSON.stringify(document));
+  };
+
+  await run("alias basename other than vc or vercel", "npm-bin-vc", (fixture) => {
+    const other = path.join(fixture.binRoot, "other");
+    symlinkSync("../vercel/dist/vc.js", other);
+    setLauncher(fixture, other);
+  }, "CLOVER_VERCEL_BUILD_LAUNCHER_NAME_REJECTED");
+  await run("alias outside exact npm bin directory", "npm-bin-vc", (fixture) => {
+    const other = path.join(fixture.installRoot, "node_modules", "vc");
+    symlinkSync("vercel/dist/vc.js", other);
+    setLauncher(fixture, other);
+  }, "CLOVER_VERCEL_BUILD_LAUNCHER_LOCATION_REJECTED");
+  await run("regular file at npm vc alias", "npm-bin-vc", (fixture) => {
+    unlinkSync(fixture.cliExecutable);
+    writeFileSync(fixture.cliExecutable, readFileSync(fixture.canonicalCliExecutable), { mode: 0o755 });
+  }, "CLOVER_VERCEL_BUILD_ALIAS_TYPE_REJECTED");
+  await run("directory at npm vc alias", "npm-bin-vc", (fixture) => {
+    unlinkSync(fixture.cliExecutable);
+    mkdirSync(fixture.cliExecutable);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_TYPE_REJECTED");
+  await run("broken exact npm alias", "npm-bin-vc", (fixture) => {
+    unlinkSync(fixture.canonicalCliExecutable);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_BROKEN_REJECTED");
+  await run("two-hop npm alias chain", "npm-bin-vc", (fixture) => {
+    const realExecutable = path.join(fixture.cliRoot, "dist", "vc-real.js");
+    renameSync(fixture.canonicalCliExecutable, realExecutable);
+    symlinkSync("vc-real.js", fixture.canonicalCliExecutable);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_CHAIN_REJECTED");
+  await run("npm alias relative escape", "npm-bin-vc", (fixture) => {
+    unlinkSync(fixture.cliExecutable);
+    symlinkSync(path.join("..", "..", "..", "..", "outside-vc.js"), fixture.cliExecutable);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_ESCAPE_REJECTED");
+  await run("npm alias targets another package", "npm-bin-vc", (fixture) => {
+    const other = path.join(fixture.installRoot, "node_modules", "other", "dist");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(path.join(other, "vc.js"), readFileSync(fixture.canonicalCliExecutable));
+    unlinkSync(fixture.cliExecutable);
+    symlinkSync("../other/dist/vc.js", fixture.cliExecutable);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_TARGET_REJECTED");
+  await run("npm alias targets another Vercel package file", "npm-bin-vc", (fixture) => {
+    writeFileSync(path.join(fixture.cliRoot, "dist", "other.js"), readFileSync(fixture.canonicalCliExecutable));
+    unlinkSync(fixture.cliExecutable);
+    symlinkSync("../vercel/dist/other.js", fixture.cliExecutable);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_TARGET_REJECTED");
+  await run("byte-identical copied executable has the wrong path identity", "direct", (fixture) => {
+    const copied = path.join(fixture.cliRoot, "dist", "vc-copy.js");
+    writeFileSync(copied, readFileSync(fixture.canonicalCliExecutable), { mode: 0o755 });
+    setLauncher(fixture, copied);
+  }, "CLOVER_VERCEL_BUILD_LAUNCHER_LOCATION_REJECTED");
+  await run("direct canonical target is a symlink", "direct", (fixture) => {
+    const realExecutable = path.join(fixture.cliRoot, "dist", "vc-real.js");
+    renameSync(fixture.canonicalCliExecutable, realExecutable);
+    symlinkSync("vc-real.js", fixture.canonicalCliExecutable);
+  }, "CLOVER_VERCEL_BUILD_DIRECT_EXECUTABLE_SYMLINK_REJECTED");
+  await run("symlinked package root", "npm-bin-vc", (fixture) => {
+    const externalPackage = path.join(fixture.root, "vercel-package-real");
+    renameSync(fixture.cliRoot, externalPackage);
+    symlinkSync(externalPackage, fixture.cliRoot);
+  }, "CLOVER_VERCEL_BUILD_PACKAGE_ROOT_REJECTED");
+  await run("symlinked npm bin directory", "npm-bin-vc", (fixture) => {
+    const externalBin = path.join(fixture.installRoot, "npm-bin-real");
+    renameSync(fixture.binRoot, externalBin);
+    symlinkSync(externalBin, fixture.binRoot);
+  }, "CLOVER_VERCEL_BUILD_ALIAS_DIRECTORY_REJECTED");
+  await run("symlinked install root", "npm-bin-vc", (fixture) => {
+    const aliasRoot = path.join(fixture.root, "install-alias");
+    symlinkSync(fixture.root, aliasRoot);
+    setLauncher(fixture, path.join(aliasRoot, "node_modules", ".bin", "vc"));
+  }, "CLOVER_VERCEL_BUILD_INSTALL_ROOT_REJECTED");
+  await run("missing package document", "npm-bin-vc", (fixture) => {
+    unlinkSync(fixture.packagePath);
+  }, "CLOVER_VERCEL_BUILD_PACKAGE_FILE_REJECTED");
+  for (const [name, bytes] of [
+    ["malformed package document", "{"],
+    ["duplicate-key package document", '{"name":"vercel","name":"vercel"}']
+  ]) {
+    await run(name, "npm-bin-vc", (fixture) => {
+      writeFileSync(fixture.packagePath, bytes);
+    }, "CLOVER_VERCEL_BUILD_TOOL_PACKAGE_JSON_REJECTED");
+  }
+  await run("package name substitution", "npm-bin-vc", (fixture) => {
+    mutatePackage(fixture, (document) => { document.name = "other"; });
+  }, "CLOVER_VERCEL_BUILD_PACKAGE_NAME_REJECTED");
+  await run("package version substitution", "npm-bin-vc", (fixture) => {
+    mutatePackage(fixture, (document) => { document.version = "0.0.0"; });
+  }, "CLOVER_VERCEL_BUILD_PACKAGE_VERSION_REJECTED");
+  await run("package vercel bin substitution", "npm-bin-vc", (fixture) => {
+    mutatePackage(fixture, (document) => { document.bin.vercel = "./dist/other.js"; });
+  }, "CLOVER_VERCEL_BUILD_PACKAGE_BIN_REJECTED");
+  await run("invoked vc alias missing exact package metadata", "npm-bin-vc", (fixture) => {
+    mutatePackage(fixture, (document) => { document.bin.vc = "./dist/other.js"; });
+  }, "CLOVER_VERCEL_BUILD_ALIAS_METADATA_REJECTED");
+  await run("missing package lock", "npm-bin-vc", (fixture) => {
+    unlinkSync(fixture.lockPath);
+  }, "CLOVER_VERCEL_BUILD_LOCK_FILE_REJECTED");
+  for (const [name, bytes] of [
+    ["malformed package lock", "{"],
+    ["duplicate-key package lock", '{"packages":{},"packages":{}}']
+  ]) {
+    await run(name, "npm-bin-vc", (fixture) => {
+      writeFileSync(fixture.lockPath, bytes);
+    }, "CLOVER_VERCEL_BUILD_TOOL_LOCK_JSON_REJECTED");
+  }
+  await run("missing exact Vercel lock entry", "npm-bin-vc", (fixture) => {
+    mutateLock(fixture, (document) => { delete document.packages["node_modules/vercel"]; });
+  }, "CLOVER_VERCEL_BUILD_LOCK_ENTRY_REJECTED");
+  await run("lock version substitution", "npm-bin-vc", (fixture) => {
+    mutateLock(fixture, (document) => { document.packages["node_modules/vercel"].version = "0.0.0"; });
+  }, "CLOVER_VERCEL_BUILD_LOCK_VERSION_REJECTED");
+  await run("lock integrity substitution", "npm-bin-vc", (fixture) => {
+    mutateLock(fixture, (document) => { document.packages["node_modules/vercel"].integrity = "sha512-substituted"; });
+  }, "CLOVER_VERCEL_BUILD_LOCK_INTEGRITY_REJECTED");
+  await run("builds CLI version substitution", "npm-bin-vc", (fixture) => {
+    const builds = fixture.readBuilds();
+    builds.cliVersion = "0.0.0";
+    fixture.writeBuilds(builds);
+  }, "CLOVER_VERCEL_BUILD_CLI_VERSION_REJECTED");
+  await run("build argument substitution", "npm-bin-vc", (fixture) => {
+    const builds = fixture.readBuilds();
+    builds.argv[3] = "--prod";
+    fixture.writeBuilds(builds);
+  }, "CLOVER_VERCEL_BUILD_ARGUMENTS_REJECTED");
+  await run("non-preview build target", "npm-bin-vc", (fixture) => {
+    const builds = fixture.readBuilds();
+    builds.target = "production";
+    fixture.writeBuilds(builds);
+  }, "CLOVER_VERCEL_BUILD_TARGET_REJECTED");
+  await t.test("raw launcher control characters and normalization ambiguity", () => {
+    const fixture = exactVercelCliFixture("npm-bin-vc");
+    try {
+      const ambiguous = [
+        `${fixture.cliExecutable}\0`, `${fixture.cliExecutable}\r`, `${fixture.cliExecutable}\n`,
+        `${fixture.binRoot}${path.sep}.${path.sep}vc`, `${fixture.cliExecutable}\u0301`
+      ];
+      for (const candidate of ambiguous) {
+        const builds = fixture.readBuilds();
+        builds.argv[1] = candidate;
+        assertExactRejection(() => requireExactVercelCliInvocation(builds), "CLOVER_VERCEL_BUILD_RAW_CLI_PATH_REJECTED");
+      }
+    } finally {
+      rmSync(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  });
+  await t.test("relative PATH launcher and outside-install wrapper", () => {
+    const fixture = exactVercelCliFixture("npm-bin-vc");
+    try {
+      const relative = fixture.readBuilds();
+      relative.argv[1] = "vercel";
+      assertExactRejection(() => requireExactVercelCliInvocation(relative), "CLOVER_VERCEL_BUILD_RAW_CLI_PATH_REJECTED");
+      const wrapperPath = path.join(fixture.root, "vc-wrapper");
+      writeFileSync(wrapperPath, readFileSync(fixture.canonicalCliExecutable), { mode: 0o755 });
+      const outside = fixture.readBuilds();
+      outside.argv[1] = wrapperPath;
+      assertExactRejection(() => requireExactVercelCliInvocation(outside), "CLOVER_VERCEL_BUILD_LAUNCHER_LOCATION_REJECTED");
+    } finally {
+      rmSync(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  });
+  await t.test("post-normalization host-local path residue", () => {
+    const fixture = exactVercelCliFixture("npm-bin-vc");
+    const evidence = path.join(fixture.root, "evidence");
+    try {
+      const diagnosticsPath = path.join(fixture.output, "diagnostics", "cli_traces.json");
+      const diagnostics = JSON.parse(readFileSync(diagnosticsPath, "utf8"));
+      diagnostics.residual = path.dirname(fixture.root);
+      writeFileSync(diagnosticsPath, JSON.stringify(diagnostics));
+      assert.throws(
+        () => createDeploymentAttestation({ outputRoot: fixture.output, repositoryRoot: fixture.root, evidenceDirectory: evidence, sourceProvenance: build }),
+        /CLOVER_PUBLIC_OUTPUT_REJECTED/u
+      );
+    } finally {
+      rmSync(fixture.temporaryRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 function rawTreeIdentity(root) {
   const entries = [];
@@ -1650,7 +1923,19 @@ test("generated preview output normalization, manifest, attestation and archive 
     assert.equal(first.attestation.source.runtimeDeploymentKey, runtimeDeploymentKey);
     assert.equal(first.attestation.publicSanitized, true);
     assert.equal(first.attestation.normalization.length, 3);
+    assert.deepEqual(first.cliInvocation, {
+      rawCliExecutable: "/var/task/.vercel-cli/node_modules/vercel/dist/vc.js",
+      canonicalCliExecutable: "/var/task/.vercel-cli/node_modules/vercel/dist/vc.js",
+      launcherKind: "direct",
+      installRoot: "/var/task/.vercel-cli",
+      packageRoot: "/var/task/.vercel-cli/node_modules/vercel",
+      packageVersion: VERCEL_CLI_VERSION,
+      packageIntegrityVerified: true
+    });
     assert.equal(readFileSync(path.join(output, "builds.json"), "utf8").includes(checkoutRoot), false);
+    for (const entry of rawTreeIdentity(output).filter(({ type }) => type === "file")) {
+      assert.equal(readFileSync(path.join(output, ...entry.path.split("/"))).includes(Buffer.from(checkoutRoot)), false);
+    }
     assert.equal(readFileSync(path.join(output, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs"), "utf8").includes("/var/task"), true);
     const identities = {
       attestation: first.attestationRawSha256,
@@ -1790,6 +2075,33 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     const rebindBaseline = (candidate) => {
       candidate.protection.baseline.request = providerRequest("GET", candidate.protection.baseline.request.url, candidate.protection.baseline.response);
     };
+    const runtimeSlash = String.fromCharCode(47);
+    const providerLocalPathPrefix = [runtimeSlash, "Users", runtimeSlash].join("");
+    const providerLocalPathFixture = [runtimeSlash, "Users", runtimeSlash, "private", runtimeSlash, "repository"].join("");
+    const providerLocalPathNeutral = [runtimeSlash, "User", runtimeSlash, "private", runtimeSlash, "repository"].join("");
+    const providerLocalPathClass = (value) => value.startsWith(providerLocalPathPrefix) ? "absolute-local-path" : "none";
+    assert.deepEqual({
+      id: "provider-local-path",
+      class: providerLocalPathClass(providerLocalPathFixture),
+      byteCount: Buffer.byteLength(providerLocalPathFixture, "utf8"),
+      sha256: sha256(providerLocalPathFixture)
+    }, {
+      id: "provider-local-path",
+      class: "absolute-local-path",
+      byteCount: 25,
+      sha256: "ee67da15356aec42d6afb46ffab382c2781c3f5801e8482c4f7420bce59ded02"
+    });
+    assert.deepEqual({
+      id: "provider-local-path-neutral",
+      class: providerLocalPathClass(providerLocalPathNeutral),
+      byteCount: Buffer.byteLength(providerLocalPathNeutral, "utf8"),
+      sha256: sha256(providerLocalPathNeutral)
+    }, {
+      id: "provider-local-path-neutral",
+      class: "none",
+      byteCount: 24,
+      sha256: "c1ab22674f3300bf8a789040f671086c795118ab97ef79e2a702d7b42de03e6d"
+    });
     reject((candidate) => { candidate.deployment.request.url += "&substituted=1"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
     reject((candidate) => { candidate.deployment.request.redirected = true; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
     reject((candidate) => { candidate.deployment.request.responseMediaTypeEssence = "text/plain"; }, /CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
@@ -1811,7 +2123,7 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     reject((candidate) => { candidate.deployment.response.team.slug = "substituted"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.target = "production"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.alias.push("production.example"); }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
-    reject((candidate) => { candidate.deployment.response.meta.gitRemoteUrl = "/Users/private/repository"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
+    reject((candidate) => { candidate.deployment.response.meta.gitRemoteUrl = providerLocalPathFixture; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.meta.gitCommitSha = hex40("f"); }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.meta.gitCommitRef = "HEAD"; }, /CLOVER_PROVIDER_DEPLOYMENT_REJECTED/u);
     reject((candidate) => { candidate.deployment.response.id = "dpl_Substituted"; }, /CLOVER_PROVIDER_PROTECTION_REJECTED|CLOVER_PROVIDER_DEPLOYMENT_REQUEST_REJECTED/u);
