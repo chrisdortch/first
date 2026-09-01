@@ -1385,7 +1385,7 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   const ancestryText = exactGitTextAt(repositoryRoot, ["rev-list", "--ancestry-path", "--reverse", `${sourceClosureCommit}..${head}`]);
   const ancestryCommitIds = ancestryText === "" ? [] : ancestryText.split("\n");
   if (canonicalJson(ancestryCommitIds) !== canonicalJson(correctionCommitIds)
-    || ![1, 2, 3, 4, 5, 6].includes(correctionCommitIds.length)) {
+    || ![4, 5, 6].includes(correctionCommitIds.length)) {
     throw new Error("CI-evidence correction chain depth or first-parent topology mismatch");
   }
   const fixedPrefix = [
@@ -1438,16 +1438,8 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   }
   const cumulativeEntries = exactRawDiffEntriesAt(repositoryRoot, sourceClosureCommit, head, ["M"]);
   const cumulativePaths = cumulativeEntries.map(({ path: file }) => file);
-  const expectedCumulativePaths = correctionCommitIds.length === 1
-    ? initialAuthorizedPaths
-    : correctionCommitIds.length <= 3
-      ? secondAuthorizedPaths
-      : cumulativeAuthorizedPaths;
-  const expectedCumulativePathListSha256 = correctionCommitIds.length === 1
-    ? exactInitialCiEvidenceCorrectionPathListSha256
-    : correctionCommitIds.length <= 3
-      ? exactSecondCiEvidenceCorrectionPathListSha256
-      : exactCiEvidenceCorrectionPathListSha256;
+  const expectedCumulativePaths = cumulativeAuthorizedPaths;
+  const expectedCumulativePathListSha256 = exactCiEvidenceCorrectionPathListSha256;
   if (canonicalJson(cumulativePaths) !== canonicalJson(expectedCumulativePaths)
     || exactPathListSha256(cumulativePaths) !== expectedCumulativePathListSha256) {
     throw new Error("Cumulative CI-evidence correction boundary mismatch");
@@ -1552,16 +1544,8 @@ function exactLocalSourceEvidence(testFile: ExactTestState["file"]) {
   const correctionChain = execution.role === "exact-pr-head"
     ? exactPrHeadCorrectionChainAt(exactRepositoryRoot, head, execution)
     : exactCorrectionChainAt(exactRepositoryRoot, exactSourceClosureCommit, head);
-  const expectedCiEvidenceCorrectionPaths = correctionChain.depth === 1
-    ? exactInitialCiEvidenceCorrectionPaths
-    : correctionChain.depth <= 3
-      ? exactSecondCiEvidenceCorrectionPaths
-      : exactCiEvidenceCorrectionPaths;
-  const expectedCiEvidenceCorrectionPathListSha256 = correctionChain.depth === 1
-    ? exactInitialCiEvidenceCorrectionPathListSha256
-    : correctionChain.depth <= 3
-      ? exactSecondCiEvidenceCorrectionPathListSha256
-      : exactCiEvidenceCorrectionPathListSha256;
+  const expectedCiEvidenceCorrectionPaths = exactCiEvidenceCorrectionPaths;
+  const expectedCiEvidenceCorrectionPathListSha256 = exactCiEvidenceCorrectionPathListSha256;
   const ciEvidenceCorrectionDelta = exactDeltaEvidenceAt(
     exactRepositoryRoot, exactSourceClosureCommit, head, expectedCiEvidenceCorrectionPaths, "CI-evidence correction"
   );
@@ -1718,11 +1702,9 @@ function runExactSourceEvidenceAncestryRegressionMatrix() {
       exactThirdCiEvidenceCorrectionCommit
     ];
     for (const [index, fixedHead] of fixedHeads.entries()) {
-      const fixed = exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, fixedHead, { expectedHead: fixedHead });
-      if (fixed.depth !== index + 1
-        || canonicalJson(fixed.commitIds) !== canonicalJson(fixedHeads.slice(0, index + 1))) {
-        throw new Error(`Fixed correction depth ${index + 1} matrix case failed`);
-      }
+      reject(`fixed-prefix-only depth ${index + 1} as a final authoritative correction head`, () => {
+        exactCorrectionChainAt(repositoryRoot, exactSourceClosureCommit, fixedHead, { expectedHead: fixedHead });
+      });
     }
 
     git(["switch", "-c", "matrix-tail", exactThirdCiEvidenceCorrectionCommit]);
@@ -2687,7 +2669,7 @@ function assertExactLocalSourceEvidence(
       && value.currentCandidate.role !== "non-authoritative-local-validation-container")
     || typeof value.currentCandidate.correctionChainDepth !== "number"
     || !Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-    || ![1, 2, 3, 4, 5, 6].includes(value.currentCandidate.correctionChainDepth)
+    || ![4, 5, 6].includes(value.currentCandidate.correctionChainDepth)
     || value.currentCandidate.correctionCommitIds.length !== value.currentCandidate.correctionChainDepth) {
     throw new Error(`${label}.currentCandidate:identity`);
   }
