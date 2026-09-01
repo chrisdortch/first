@@ -24,9 +24,8 @@ import {
   EXPECTED_MAIN_COMMIT,
   EXPECTED_MAIN_RULESET_ID,
   EXPECTED_MAIN_TREE,
+  EXPECTED_GITHUB_WORKFLOWS,
   EXPECTED_MASTER_WORKFLOW_ID,
-  EXPECTED_MASTER_WORKFLOW_NAME,
-  EXPECTED_MASTER_WORKFLOW_PATH,
   EXPECTED_STACK_A_BASE_COMMIT,
   EXPECTED_STACK_A_HEAD,
   EXPECTED_STACK_B_CHANGED_PATH_COUNT,
@@ -95,16 +94,22 @@ const integratedPathListSha256 = "9217479f428109ec268f8e2579e6da55abb64908030696
 const defaultGithubSourceTime = new Date(Math.floor(Date.now() / 1_000) * 1_000).toISOString();
 const defaultGithubSourceDate = new Date(defaultGithubSourceTime).toUTCString();
 const masterWorkflowRunId = 900_001;
+const workflowRunIds = new Map(EXPECTED_GITHUB_WORKFLOWS.map((workflow, index) => [workflow.id, masterWorkflowRunId - (EXPECTED_GITHUB_WORKFLOWS.length - 1 - index)]));
+const workflowForCheck = (name) => EXPECTED_GITHUB_WORKFLOWS.find(({ requiredChecks }) => requiredChecks.includes(name));
 
-function masterWorkflowRunFixture({
-  id = masterWorkflowRunId,
+function workflowRunFixture(expectedWorkflow, {
+  id = workflowRunIds.get(expectedWorkflow.id),
   headSha = candidateCommit,
-  path = EXPECTED_MASTER_WORKFLOW_PATH,
-  name = EXPECTED_MASTER_WORKFLOW_NAME,
+  path = expectedWorkflow.path,
+  name = expectedWorkflow.name,
+  workflowId = expectedWorkflow.id,
   event = "pull_request",
   status = "completed",
   conclusion = status === "completed" ? "success" : null,
-  startedAt = "2026-08-29T16:31:00.000Z"
+  startedAt = "2026-08-29T16:31:00.000Z",
+  createdAt = startedAt,
+  updatedAt = status === "completed" ? new Date(Date.parse(startedAt) + 12 * 60 * 60 * 1_000).toISOString() : startedAt,
+  runAttempt = 1
 } = {}) {
   return {
     id,
@@ -115,7 +120,7 @@ function masterWorkflowRunFixture({
     event,
     status,
     conclusion,
-    workflow_id: EXPECTED_MASTER_WORKFLOW_ID,
+    workflow_id: workflowId,
     url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${id}`,
     html_url: `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${id}`,
     pull_requests: [{
@@ -124,14 +129,18 @@ function masterWorkflowRunFixture({
       head: { ref: STACK_B_BRANCH, sha: headSha, repo: { id: GITHUB_REPOSITORY_ID, url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`, name: "first" } },
       base: { ref: "main", sha: EXPECTED_MAIN_COMMIT, repo: { id: GITHUB_REPOSITORY_ID, url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`, name: "first" } }
     }],
-    created_at: startedAt,
-    updated_at: status === "completed" ? new Date(Date.parse(startedAt) + 30_000).toISOString() : startedAt,
-    run_attempt: 1,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    run_attempt: runAttempt,
     run_started_at: startedAt,
-    workflow_url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}`,
+    workflow_url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflowId}`,
     repository: { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY },
     head_repository: { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY }
   };
+}
+
+function masterWorkflowRunFixture(overrides = {}) {
+  return workflowRunFixture(EXPECTED_GITHUB_WORKFLOWS.at(-1), overrides);
 }
 
 const buildSource = {
@@ -228,7 +237,8 @@ function githubFixture(endpoint) {
       ]
     };
   }
-  if (endpoint.includes(`/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?`)) return { total_count: 1, workflow_runs: [masterWorkflowRunFixture()] };
+  const workflow = EXPECTED_GITHUB_WORKFLOWS.find(({ id }) => endpoint.includes(`/actions/workflows/${id}/runs?`));
+  if (workflow) return { total_count: 1, workflow_runs: [workflowRunFixture(workflow)] };
   if (endpoint.includes(`/commits/${candidateCommit}/check-runs`)) {
     const check_runs = REQUIRED_EXACT_HEAD_CHECKS.map((name, index) => checkRun({ id: index + 1, name }));
     return { total_count: check_runs.length, check_runs };
@@ -259,7 +269,7 @@ function checkRun({
   conclusion = status === "completed" ? "success" : null,
   startedAt = new Date(Date.UTC(2026, 7, 29, 16, 31, 0) + id * 1_000).toISOString(),
   completedAt = status === "completed" ? new Date(Date.parse(startedAt) + 500).toISOString() : null,
-  runId = name === "validate" ? masterWorkflowRunId : 100_000 + id
+  runId = workflowRunIds.get(workflowForCheck(name)?.id) ?? 100_000 + id
 }) {
   return { id, name, head_sha: headSha, status, conclusion, started_at: startedAt, completed_at: completedAt, app: { id: 15368, slug: "github-actions" }, details_url: `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}/job/${id}` };
 }
@@ -373,9 +383,9 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
   assert.equal(observation.ruleset?.bypassActorsStatus, "external-verification-required");
   assert.equal(observation.ruleset?.bypassActorCount, null);
   assert.deepEqual(observation.exactHeadChecks?.requiredNames, REQUIRED_EXACT_HEAD_CHECKS);
-  assert.equal(fixture.calls.length, 7);
+  assert.equal(fixture.calls.length, 10);
   for (const { endpoint, options } of fixture.calls) {
-    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|rulesets/${EXPECTED_MAIN_RULESET_ID}|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1|actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs\\?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1)$)`, "u"));
+    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|rulesets/${EXPECTED_MAIN_RULESET_ID}|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1|actions/workflows/(?:${EXPECTED_GITHUB_WORKFLOWS.map(({ id }) => id).join("|")})/runs\\?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1)$)`, "u"));
     assert.equal(options.method, "GET");
     assert.equal(options.redirect, "error");
     assert.equal(options.credentials, "omit");
@@ -408,10 +418,33 @@ test("GitHub freshness uses the oldest relevant upstream Date and rejects expire
   assert.equal(observation.freshness, "stale");
   assert.equal(observation.errorCode, "GITHUB_SOURCE_STALE");
 
+  const workflowSource = EXPECTED_GITHUB_WORKFLOWS[1];
+  const staleWorkflowDate = githubFetch({
+    sourceDate: (endpoint) => endpoint.includes(`/actions/workflows/${workflowSource.id}/runs?`) ? date(-expiredAgeMs) : date(-1_000)
+  });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: staleWorkflowDate.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "partial");
+  assert.equal(observation.freshness, "stale");
+  assert.equal(observation.observedAt, new Date(now - expiredAgeMs).toISOString());
+
+  const missingWorkflowDate = githubFetch({
+    sourceDate: (endpoint) => endpoint.includes(`/actions/workflows/${workflowSource.id}/runs?`) ? null : date(-1_000)
+  });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: missingWorkflowDate.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "partial");
+  assert.match(observation.failures.join("\n"), /GITHUB_SOURCE_TIME_UNAVAILABLE/u);
+
   const future = githubFetch({ sourceDate: (endpoint) => endpoint.endsWith("/pulls/35") ? date(6_000) : date(-1_000) });
   observation = await observeGitHubTruth({ candidateCommit, fetchImpl: future.implementation, retries: 0, now: () => now });
   assert.equal(observation.status, "contradictory");
   assert.equal(observation.freshness, "unavailable");
+  assert.equal(observation.errorCode, "GITHUB_SOURCE_CONTRADICTION:FUTURE");
+
+  const futureWorkflow = githubFetch({
+    sourceDate: (endpoint) => endpoint.includes(`/actions/workflows/${workflowSource.id}/runs?`) ? date(6_000) : date(-1_000)
+  });
+  observation = await observeGitHubTruth({ candidateCommit, fetchImpl: futureWorkflow.implementation, retries: 0, now: () => now });
+  assert.equal(observation.status, "contradictory");
   assert.equal(observation.errorCode, "GITHUB_SOURCE_CONTRADICTION:FUTURE");
 
   const pageOne = Array.from({ length: 100 }, (_, index) => checkRun({ id: 1_000 + index }));
@@ -433,6 +466,10 @@ test("strict public DTO parsing rejects endpoint, issuer and deployment substitu
   assert.deepEqual(parseGitHubLiveObservation(structuredClone(github)), github);
   for (const mutate of [
     (candidate) => { candidate.endpoints[0] = "https://api.github.com/repos/chrisdortch/other"; },
+    (candidate) => { [candidate.endpoints[0], candidate.endpoints[1]] = [candidate.endpoints[1], candidate.endpoints[0]]; },
+    (candidate) => { candidate.exactHeadChecks.workflowRuns.reverse(); },
+    (candidate) => { candidate.exactHeadChecks.workflowRuns[0].apiUrl = `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/1`; },
+    (candidate) => { candidate.exactHeadChecks.workflowRuns[1].id = candidate.exactHeadChecks.workflowRuns[0].id; },
     (candidate) => { candidate.exactHeadChecks.checks[0].appId = 1; },
     (candidate) => { candidate.exactHeadChecks.checks[0].detailsUrl = "https://github.com/chrisdortch/first/actions/runs/1"; },
     (candidate) => { candidate.exactHeadChecks.requiredNames = candidate.exactHeadChecks.requiredNames.slice(0, -1); },
@@ -531,7 +568,7 @@ test("the generic validate check is bound to the exact Master workflow run", asy
     const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "current");
     assert.equal(observation.exactHeadChecks?.state, "failure");
-    assert.equal(observation.exactHeadChecks?.masterWorkflowRun.id, masterWorkflowRunId);
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === EXPECTED_MASTER_WORKFLOW_ID)?.id, masterWorkflowRunId);
     assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "validate")?.detailsUrl.includes(`/runs/${masterWorkflowRunId}/`), true);
   });
 
@@ -555,7 +592,7 @@ test("the generic validate check is bound to the exact Master workflow run", asy
     const observation = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
     assert.equal(observation.status, "current");
     assert.equal(observation.exactHeadChecks?.state, "success");
-    assert.equal(observation.exactHeadChecks?.masterWorkflowRun.id, nextRunId);
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === EXPECTED_MASTER_WORKFLOW_ID)?.id, nextRunId);
     assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "validate")?.detailsUrl.includes(`/runs/${nextRunId}/`), true);
   });
 
@@ -574,6 +611,233 @@ test("the generic validate check is bound to the exact Master workflow run", asy
       assert.notEqual(observation.exactHeadChecks?.state, "success", label);
       if (label !== "run id") assert.notEqual(observation.status, "current", label);
     }
+  });
+});
+
+test("all eight required checks are bound to the selected exact workflow runs", async (t) => {
+  const requiredMain = EXPECTED_GITHUB_WORKFLOWS[0];
+  const tree = EXPECTED_GITHUB_WORKFLOWS[1];
+  const core = EXPECTED_GITHUB_WORKFLOWS[2];
+  const selectedRunId = (workflow) => workflowRunIds.get(workflow.id);
+  const workflowEndpoint = (endpoint, workflow) => endpoint.includes(`/actions/workflows/${workflow.id}/runs?`);
+  const runCheckMutation = async (mutate) => {
+    const fixture = githubFetch({ mutate: (value, endpoint) => { mutate(value, endpoint); return value; } });
+    return observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+  };
+
+  await t.test("the exact four-run/eight-check baseline succeeds", async () => {
+    const observation = await runCheckMutation(() => {});
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.deepEqual(observation.exactHeadChecks?.workflowRuns.map(({ workflowId }) => workflowId), EXPECTED_GITHUB_WORKFLOWS.map(({ id }) => id));
+    for (const workflow of EXPECTED_GITHUB_WORKFLOWS) {
+      const run = observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === workflow.id);
+      assert.equal(run?.id, selectedRunId(workflow));
+      for (const name of workflow.requiredChecks) {
+        assert.equal(observation.exactHeadChecks?.checks.find((check) => check.name === name)?.detailsUrl.includes(`/runs/${run.id}/`), true);
+      }
+    }
+  });
+
+  for (const [label, workflow, name] of [
+    ["Required Main Node 22", requiredMain, requiredMain.requiredChecks[0]],
+    ["Tree browser/accessibility", tree, tree.requiredChecks[2]]
+  ]) {
+    await t.test(`a later foreign same-name success cannot mask failed ${label}`, async () => {
+      const observation = await runCheckMutation((value, endpoint) => {
+        if (endpoint.includes("/check-runs")) {
+          const exact = value.check_runs.find((check) => check.name === name);
+          exact.conclusion = "failure";
+          value.check_runs.push(checkRun({ id: 80_000 + selectedRunId(workflow), name, runId: selectedRunId(workflow) + 50_000, startedAt: "2026-08-29T20:00:00.000Z" }));
+          value.total_count = value.check_runs.length;
+        }
+      });
+      assert.equal(observation.status, "current");
+      assert.equal(observation.exactHeadChecks?.state, "failure");
+      assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === workflow.id)?.conclusion, "success");
+      assert.equal(observation.exactHeadChecks?.checks.find((check) => check.name === name)?.conclusion, "failure");
+    });
+  }
+
+  await t.test("an older expected-workflow record cannot replace the selected current run", async () => {
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (!workflowEndpoint(endpoint, requiredMain)) return;
+      value.workflow_runs.unshift(workflowRunFixture(requiredMain, {
+        id: selectedRunId(requiredMain) - 100,
+        conclusion: "failure",
+        createdAt: "2026-08-29T15:00:00.000Z",
+        startedAt: "2026-08-29T17:00:00.000Z"
+      }));
+      value.total_count = value.workflow_runs.length;
+    });
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.equal(observation.exactHeadChecks?.workflowRuns[0].id, selectedRunId(requiredMain));
+  });
+
+  for (const event of ["push", "workflow_dispatch"]) {
+    await t.test(`${event} cannot satisfy pull_request workflow evidence`, async () => {
+      const observation = await runCheckMutation((value, endpoint) => {
+        if (workflowEndpoint(endpoint, requiredMain)) value.workflow_runs[0].event = event;
+      });
+      assert.equal(observation.status, "contradictory");
+      assert.equal(observation.exactHeadChecks, null);
+    });
+  }
+
+  for (const [label, mutate] of [
+    ["workflow ID", (run) => { run.workflow_id += 1; }],
+    ["workflow name", (run) => { run.name = `${run.name} substituted`; }],
+    ["workflow path", (run) => { run.path = ".github/workflows/substituted.yml"; }],
+    ["workflow API URL", (run) => { run.url = `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/1`; }],
+    ["workflow HTML URL", (run) => { run.html_url = `https://github.com/${GITHUB_REPOSITORY}/actions/runs/1`; }],
+    ["workflow definition URL", (run) => { run.workflow_url = `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/1`; }],
+    ["head SHA", (run) => { run.head_sha = hex40("f"); run.pull_requests[0].head.sha = run.head_sha; }],
+    ["head branch", (run) => { run.head_branch = "substituted"; }],
+    ["PR number", (run) => { run.pull_requests[0].number = 34; }],
+    ["PR head", (run) => { run.pull_requests[0].head.sha = hex40("f"); }],
+    ["PR head ref", (run) => { run.pull_requests[0].head.ref = "substituted"; }],
+    ["PR base", (run) => { run.pull_requests[0].base.sha = hex40("f"); }],
+    ["PR base ref", (run) => { run.pull_requests[0].base.ref = "substituted"; }],
+    ["repository", (run) => { run.repository.full_name = "substituted/first"; }],
+    ["head repository", (run) => { run.head_repository.id += 1; }],
+    ["PR head repository", (run) => { run.pull_requests[0].head.repo.id += 1; }],
+    ["PR base repository", (run) => { run.pull_requests[0].base.repo.url = `${GITHUB_ORIGIN}/repos/substituted/first`; }]
+  ]) {
+    await t.test(`wrong ${label} fails closed`, async () => {
+      const observation = await runCheckMutation((value, endpoint) => {
+        if (workflowEndpoint(endpoint, core)) mutate(value.workflow_runs[0]);
+      });
+      assert.equal(observation.status, "contradictory");
+      assert.equal(observation.exactHeadChecks, null);
+    });
+  }
+
+  for (const [label, mutate, expectedStatus, expectedState] of [
+    ["selected run ID mismatch", (check, workflow) => { check.details_url = `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${selectedRunId(workflow) + 1}/job/${check.id}`; }, "contradictory", null],
+    ["GitHub Actions issuer", (check) => { check.app = { id: 1, slug: "substituted" }; }, "contradictory", null],
+    ["repository-substituted details URL", (check, workflow) => { check.details_url = `https://github.com/substituted/first/actions/runs/${selectedRunId(workflow)}/job/${check.id}`; }, "contradictory", null],
+    ["malformed details URL", (check) => { check.details_url = "not-a-url"; }, "contradictory", null]
+  ]) {
+    await t.test(`wrong ${label} cannot satisfy a required slot`, async () => {
+      const name = requiredMain.requiredChecks[0];
+      const observation = await runCheckMutation((value, endpoint) => {
+        if (endpoint.includes("/check-runs")) mutate(value.check_runs.find((check) => check.name === name), requiredMain);
+      });
+      assert.equal(observation.status, expectedStatus);
+      assert.equal(observation.exactHeadChecks?.state ?? null, expectedState);
+    });
+  }
+
+  await t.test("a missing selected workflow run remains partial", async () => {
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (workflowEndpoint(endpoint, tree)) {
+        value.total_count = 0;
+        value.workflow_runs = [];
+      }
+    });
+    assert.equal(observation.status, "partial");
+    assert.equal(observation.exactHeadCheckStatus, "partial");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.equal(observation.endpoints.some((endpoint) => endpoint.includes("/check-runs")), true);
+  });
+
+  await t.test("a missing required check remains pending", async () => {
+    const name = tree.requiredChecks[1];
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (endpoint.includes("/check-runs")) {
+        value.check_runs = value.check_runs.filter((check) => check.name !== name);
+        value.total_count = value.check_runs.length;
+      }
+    });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "pending");
+  });
+
+  await t.test("contradictory duplicate workflow records fail closed", async () => {
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (workflowEndpoint(endpoint, tree)) {
+        const duplicate = structuredClone(value.workflow_runs[0]);
+        duplicate.conclusion = "failure";
+        value.workflow_runs.push(duplicate);
+        value.total_count = value.workflow_runs.length;
+      }
+    });
+    assert.equal(observation.status, "contradictory");
+    assert.match(observation.failures.join("\n"), /duplicate-workflow-run/u);
+  });
+
+  await t.test("selected run IDs cannot be reused across workflow endpoints", async () => {
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (workflowEndpoint(endpoint, tree)) {
+        const run = value.workflow_runs[0];
+        run.id = selectedRunId(requiredMain);
+        run.url = `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${run.id}`;
+        run.html_url = `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run.id}`;
+      }
+    });
+    assert.equal(observation.status, "contradictory");
+    assert.match(observation.failures.join("\n"), /duplicate-selected-workflow-run/u);
+  });
+
+  await t.test("the latest legitimate rerun and attempt is selected deterministically", async () => {
+    const rerunId = selectedRunId(core) + 10_000;
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (workflowEndpoint(endpoint, core)) {
+        value.workflow_runs[0].conclusion = "failure";
+        value.workflow_runs.push(workflowRunFixture(core, { id: rerunId, runAttempt: 2, startedAt: "2026-08-29T18:00:00.000Z" }));
+        value.total_count = value.workflow_runs.length;
+      }
+      if (endpoint.includes("/check-runs")) {
+        for (const name of core.requiredChecks) {
+          value.check_runs.find((check) => check.name === name).conclusion = "failure";
+          value.check_runs.push(checkRun({ id: rerunId + core.requiredChecks.indexOf(name), name, runId: rerunId, startedAt: "2026-08-29T18:01:00.000Z" }));
+        }
+        value.total_count = value.check_runs.length;
+      }
+    });
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === core.id)?.id, rerunId);
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === core.id)?.runAttempt, 2);
+  });
+
+  await t.test("recency competes only among legitimate checks in the selected run", async () => {
+    const name = tree.requiredChecks[0];
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (endpoint.includes("/check-runs")) {
+        value.check_runs.push(checkRun({ id: 88_001, name, runId: selectedRunId(tree), conclusion: "failure", startedAt: "2026-08-29T19:00:00.000Z" }));
+        value.check_runs.push(checkRun({ id: 88_002, name, runId: selectedRunId(tree) + 1, conclusion: "success", startedAt: "2026-08-29T20:00:00.000Z" }));
+        value.total_count = value.check_runs.length;
+      }
+    });
+    assert.equal(observation.exactHeadChecks?.state, "failure");
+    assert.equal(observation.exactHeadChecks?.checks.find((check) => check.name === name)?.id, 88_001);
+  });
+
+  for (const [label, mutate] of [
+    ["check starts before its workflow run", (check) => {
+      check.started_at = "2026-08-29T15:00:00.000Z";
+      check.completed_at = "2026-08-29T15:00:01.000Z";
+    }],
+    ["check completes after its workflow run update", (check) => { check.completed_at = "2026-08-30T12:00:00.000Z"; }]
+  ]) {
+    await t.test(`${label} is contradictory`, async () => {
+      const name = requiredMain.requiredChecks[0];
+      const observation = await runCheckMutation((value, endpoint) => {
+        if (endpoint.includes("/check-runs")) mutate(value.check_runs.find((check) => check.name === name));
+      });
+      assert.equal(observation.status, "contradictory");
+      assert.match(observation.failures.join("\n"), /workflow-check-chronology/u);
+    });
+  }
+
+  await t.test("a check between workflow creation and actual run start is contradictory", async () => {
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (!workflowEndpoint(endpoint, requiredMain)) return;
+      value.workflow_runs[0].created_at = "2026-08-29T16:30:00.000Z";
+      value.workflow_runs[0].run_started_at = "2026-08-29T16:32:00.000Z";
+    });
+    assert.equal(observation.status, "contradictory");
+    assert.match(observation.failures.join("\n"), /workflow-check-chronology/u);
   });
 });
 
@@ -923,7 +1187,7 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
       };
       const result = await observeGitHubTruth({ candidateCommit, fetchImpl: implementation, retries: 0 });
       assert.notEqual(result.status, "current", label);
-      assert.equal(cancellations, 7, label);
+      assert.equal(cancellations, 10, label);
     }
   });
   await t.test("chunked oversize and invalid UTF-8 fail closed with a bounded body", async () => {
@@ -941,7 +1205,7 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
     };
     let result = await observeGitHubTruth({ candidateCommit, fetchImpl: oversized, retries: 0 });
     assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_RESPONSE_TOO_LARGE")), true);
-    assert.equal(cancellations, 7);
+    assert.equal(cancellations, 10);
 
     const invalidUtf8 = async (endpoint) => {
       const response = new Response(Uint8Array.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0x80, 0x22, 0x7d]), {
@@ -1052,7 +1316,7 @@ test("caller cancellation, deadline races, retry backoff and retry budgets prese
     const pending = observeGitHubTruth({ candidateCommit, fetchImpl, retries: 1, timeoutMs: 100, deadlineMs: 1_000, clock: () => logicalTime });
     setTimeout(() => { logicalTime = 950; }, 20);
     const result = await pending;
-    assert.equal(calls, 7);
+    assert.equal(calls, 10);
     assert.equal(result.errorCode, "GITHUB_DEADLINE_EXCEEDED");
   });
 });

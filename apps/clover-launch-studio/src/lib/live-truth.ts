@@ -12,6 +12,32 @@ export const EXPECTED_GITHUB_ACTIONS_APP_SLUG = "github-actions";
 export const EXPECTED_MASTER_WORKFLOW_ID = 336_250_950;
 export const EXPECTED_MASTER_WORKFLOW_NAME = "Validate Clover master plan";
 export const EXPECTED_MASTER_WORKFLOW_PATH = ".github/workflows/validate-clover-master-plan.yml";
+export const EXPECTED_GITHUB_WORKFLOWS = Object.freeze([
+  Object.freeze({
+    id: 340_621_409,
+    name: "Clover Required Main Gate",
+    path: ".github/workflows/clover-required-main-gate.yml",
+    requiredChecks: Object.freeze(["Clover required main gate (Node 22)", "Clover required main gate (Node 24)"])
+  }),
+  Object.freeze({
+    id: 343_258_370,
+    name: "Validate Clover Tree Command Center",
+    path: ".github/workflows/validate-clover-tree-command-center.yml",
+    requiredChecks: Object.freeze(["Tree Command Center (Node 22)", "Tree Command Center (Node 24)", "Tree browser and accessibility"])
+  }),
+  Object.freeze({
+    id: 337_384_992,
+    name: "Validate Clover Core Candidate",
+    path: ".github/workflows/validate-clover-core-candidate.yml",
+    requiredChecks: Object.freeze(["Boundary and schema validation (22)", "Boundary and schema validation (24)"])
+  }),
+  Object.freeze({
+    id: EXPECTED_MASTER_WORKFLOW_ID,
+    name: EXPECTED_MASTER_WORKFLOW_NAME,
+    path: EXPECTED_MASTER_WORKFLOW_PATH,
+    requiredChecks: Object.freeze(["validate"])
+  })
+]);
 export const EXPECTED_STACK_A_HEAD = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
 export const EXPECTED_STACK_A_BASE_COMMIT = "7d067d79bbff872846d6673b5f852518ba00fa7e";
 export const EXPECTED_STACK_B_CHANGED_PATH_COUNT = 72;
@@ -36,16 +62,7 @@ export const MAX_GITHUB_CHECK_RUN_PAGES = 10;
 export const MAX_GITHUB_CHECK_RUNS = 1_000;
 export const MAX_GITHUB_WORKFLOW_RUNS = 100;
 const GITHUB_CHECK_RUNS_PER_PAGE = 100;
-export const REQUIRED_EXACT_HEAD_CHECKS = Object.freeze([
-  "Clover required main gate (Node 22)",
-  "Clover required main gate (Node 24)",
-  "Tree Command Center (Node 22)",
-  "Tree Command Center (Node 24)",
-  "Tree browser and accessibility",
-  "Boundary and schema validation (22)",
-  "Boundary and schema validation (24)",
-  "validate"
-]);
+export const REQUIRED_EXACT_HEAD_CHECKS = Object.freeze(EXPECTED_GITHUB_WORKFLOWS.flatMap(({ requiredChecks }) => requiredChecks));
 
 export function parseJsonWithoutDuplicateKeys(source: string): unknown {
   let offset = 0;
@@ -154,7 +171,7 @@ type PublicCheckRun = {
   appSlug: string | null;
   detailsUrl: string | null;
 };
-type PublicMasterWorkflowRun = {
+type PublicWorkflowRun = {
   id: number;
   workflowId: number;
   name: string;
@@ -168,17 +185,29 @@ type PublicMasterWorkflowRun = {
   runStartedAt: string;
   createdAt: string;
   updatedAt: string;
+  apiUrl: string;
+  htmlUrl: string;
+  workflowUrl: string;
   repositoryId: number;
   repository: string;
+  headRepositoryId: number;
+  headRepository: string;
   pullRequestNumber: number;
+  pullRequestUrl: string;
   pullHeadSha: string;
+  pullHeadRef: string;
+  pullHeadRepositoryId: number;
+  pullHeadRepository: string;
   pullBaseSha: string;
+  pullBaseRef: string;
+  pullBaseRepositoryId: number;
+  pullBaseRepository: string;
 };
 type PublicGitHubChecks = {
   sha: string;
   state: "success" | "pending" | "failure";
   requiredNames: string[];
-  masterWorkflowRun: PublicMasterWorkflowRun;
+  workflowRuns: PublicWorkflowRun[];
   checks: PublicCheckRun[];
 };
 type PublicGitHubRuleset = {
@@ -452,37 +481,58 @@ function checkDetailsRunId(value: string | null): number | null {
   return Number.isSafeInteger(runId) && Number.isSafeInteger(jobId) ? runId : null;
 }
 
-function parseProjectedMasterWorkflowRun(value: unknown): PublicMasterWorkflowRun {
-  if (!isRecord(value)) throw new Error("LIVE_READBACK_MALFORMED_MASTER_WORKFLOW_RUN");
+function workflowForCheck(name: string) {
+  return EXPECTED_GITHUB_WORKFLOWS.find(({ requiredChecks }) => requiredChecks.includes(name)) ?? null;
+}
+
+function workflowById(id: number) {
+  return EXPECTED_GITHUB_WORKFLOWS.find((workflow) => workflow.id === id) ?? null;
+}
+
+function parseProjectedWorkflowRun(value: unknown, expectedWorkflow: (typeof EXPECTED_GITHUB_WORKFLOWS)[number]): PublicWorkflowRun {
+  if (!isRecord(value)) throw new Error("LIVE_READBACK_MALFORMED_WORKFLOW_RUN");
   assertExactKeys(value, [
     "id", "workflowId", "name", "path", "event", "headSha", "headBranch", "status", "conclusion", "runAttempt", "runStartedAt",
-    "createdAt", "updatedAt", "repositoryId", "repository", "pullRequestNumber", "pullHeadSha", "pullBaseSha"
-  ], "MASTER_WORKFLOW_RUN");
+    "createdAt", "updatedAt", "apiUrl", "htmlUrl", "workflowUrl", "repositoryId", "repository", "headRepositoryId", "headRepository",
+    "pullRequestNumber", "pullRequestUrl", "pullHeadSha", "pullHeadRef", "pullHeadRepositoryId", "pullHeadRepository",
+    "pullBaseSha", "pullBaseRef", "pullBaseRepositoryId", "pullBaseRepository"
+  ], "WORKFLOW_RUN");
   if (
-    !Number.isSafeInteger(value.id) || Number(value.id) < 1 || value.workflowId !== EXPECTED_MASTER_WORKFLOW_ID || value.name !== EXPECTED_MASTER_WORKFLOW_NAME ||
-    value.path !== EXPECTED_MASTER_WORKFLOW_PATH || value.event !== "pull_request" || typeof value.headSha !== "string" || !HEX_40.test(value.headSha) ||
+    !Number.isSafeInteger(value.id) || Number(value.id) < 1 || value.workflowId !== expectedWorkflow.id || value.name !== expectedWorkflow.name ||
+    value.path !== expectedWorkflow.path || value.event !== "pull_request" || typeof value.headSha !== "string" || !HEX_40.test(value.headSha) ||
     value.headBranch !== STACK_B_BRANCH || typeof value.status !== "string" || !GITHUB_CHECK_RUN_STATUSES.has(value.status) ||
     value.conclusion !== null && (typeof value.conclusion !== "string" || !GITHUB_CHECK_RUN_CONCLUSIONS.has(value.conclusion)) ||
     (value.status === "completed") !== (value.conclusion !== null) || !Number.isSafeInteger(value.runAttempt) || Number(value.runAttempt) < 1 ||
-    value.repositoryId !== GITHUB_REPOSITORY_ID || value.repository !== GITHUB_REPOSITORY || value.pullRequestNumber !== 35 ||
-    value.pullHeadSha !== value.headSha || value.pullBaseSha !== EXPECTED_MAIN_COMMIT
-  ) throw new Error("LIVE_READBACK_MALFORMED_MASTER_WORKFLOW_RUN");
-  const runStartedAt = projectedTimestamp(value.runStartedAt, "MASTER_WORKFLOW_STARTED");
-  const createdAt = projectedTimestamp(value.createdAt, "MASTER_WORKFLOW_CREATED");
-  const updatedAt = projectedTimestamp(value.updatedAt, "MASTER_WORKFLOW_UPDATED");
-  if (runStartedAt === null || createdAt === null || updatedAt === null || runStartedAt < createdAt || updatedAt < runStartedAt) throw new Error("LIVE_READBACK_MALFORMED_MASTER_WORKFLOW_LIFECYCLE");
-  return value as PublicMasterWorkflowRun;
+    value.apiUrl !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${value.id}` ||
+    value.htmlUrl !== `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${value.id}` ||
+    value.workflowUrl !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${expectedWorkflow.id}` ||
+    value.repositoryId !== GITHUB_REPOSITORY_ID || value.repository !== GITHUB_REPOSITORY ||
+    value.headRepositoryId !== GITHUB_REPOSITORY_ID || value.headRepository !== GITHUB_REPOSITORY ||
+    value.pullRequestNumber !== 35 || value.pullRequestUrl !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35` ||
+    value.pullHeadSha !== value.headSha || value.pullHeadRef !== STACK_B_BRANCH ||
+    value.pullHeadRepositoryId !== GITHUB_REPOSITORY_ID || value.pullHeadRepository !== GITHUB_REPOSITORY ||
+    value.pullBaseSha !== EXPECTED_MAIN_COMMIT || value.pullBaseRef !== "main" ||
+    value.pullBaseRepositoryId !== GITHUB_REPOSITORY_ID || value.pullBaseRepository !== GITHUB_REPOSITORY
+  ) throw new Error("LIVE_READBACK_MALFORMED_WORKFLOW_RUN");
+  const runStartedAt = projectedTimestamp(value.runStartedAt, "WORKFLOW_STARTED");
+  const createdAt = projectedTimestamp(value.createdAt, "WORKFLOW_CREATED");
+  const updatedAt = projectedTimestamp(value.updatedAt, "WORKFLOW_UPDATED");
+  if (runStartedAt === null || createdAt === null || updatedAt === null || runStartedAt < createdAt || updatedAt < runStartedAt) throw new Error("LIVE_READBACK_MALFORMED_WORKFLOW_LIFECYCLE");
+  return value as PublicWorkflowRun;
 }
 
 function parseProjectedChecks(value: unknown): PublicGitHubChecks {
   if (!isRecord(value)) throw new Error("LIVE_READBACK_MALFORMED_CHECKS");
-  assertExactKeys(value, ["sha", "state", "requiredNames", "masterWorkflowRun", "checks"], "CHECKS");
-  if (typeof value.sha !== "string" || !HEX_40.test(value.sha) || !["success", "pending", "failure"].includes(String(value.state)) || !Array.isArray(value.checks)) throw new Error("LIVE_READBACK_MALFORMED_CHECKS");
+  assertExactKeys(value, ["sha", "state", "requiredNames", "workflowRuns", "checks"], "CHECKS");
+  if (typeof value.sha !== "string" || !HEX_40.test(value.sha) || !["success", "pending", "failure"].includes(String(value.state)) || !Array.isArray(value.workflowRuns) || !Array.isArray(value.checks)) throw new Error("LIVE_READBACK_MALFORMED_CHECKS");
   if (value.checks.length > MAX_GITHUB_CHECK_RUNS) throw new Error("LIVE_READBACK_CHECK_RUNS_CEILING_EXCEEDED");
   const requiredNames = projectedStringArray(value.requiredNames, "CHECK_NAMES");
   if (JSON.stringify(requiredNames) !== JSON.stringify(REQUIRED_EXACT_HEAD_CHECKS)) throw new Error("LIVE_READBACK_CHECK_SET_SUBSTITUTION");
-  const masterWorkflowRun = parseProjectedMasterWorkflowRun(value.masterWorkflowRun);
-  if (masterWorkflowRun.headSha !== value.sha) throw new Error("LIVE_READBACK_MASTER_WORKFLOW_SHA_SUBSTITUTION");
+  const projectedWorkflowRuns = value.workflowRuns as unknown[];
+  if (projectedWorkflowRuns.length !== EXPECTED_GITHUB_WORKFLOWS.length) throw new Error("LIVE_READBACK_WORKFLOW_SET_SUBSTITUTION");
+  const workflowRuns = EXPECTED_GITHUB_WORKFLOWS.map((workflow, index) => parseProjectedWorkflowRun(projectedWorkflowRuns[index], workflow));
+  if (workflowRuns.some(({ headSha }) => headSha !== value.sha)) throw new Error("LIVE_READBACK_WORKFLOW_SHA_SUBSTITUTION");
+  if (new Set(workflowRuns.map(({ id }) => id)).size !== workflowRuns.length) throw new Error("LIVE_READBACK_WORKFLOW_RUN_DUPLICATE");
   const checks: PublicCheckRun[] = [];
   const ids = new Set<number>();
   const names = new Set<string>();
@@ -505,14 +555,24 @@ function parseProjectedChecks(value: unknown): PublicGitHubChecks {
     checks.push(candidate as PublicCheckRun);
   }
   const required = REQUIRED_EXACT_HEAD_CHECKS.map((name) => checks.find((check) => check.name === name) ?? null);
-  const trusted = (check: PublicCheckRun | null) => check !== null && check.appId === EXPECTED_GITHUB_ACTIONS_APP_ID && check.appSlug === EXPECTED_GITHUB_ACTIONS_APP_SLUG && checkDetailsRunId(check.detailsUrl) !== null;
-  const masterCheck = checks.find((check) => check.name === "validate") ?? null;
-  if (masterCheck !== null && checkDetailsRunId(masterCheck.detailsUrl) !== masterWorkflowRun.id) throw new Error("LIVE_READBACK_MASTER_WORKFLOW_CHECK_SUBSTITUTION");
-  const hasFailure = masterWorkflowRun.status === "completed" && masterWorkflowRun.conclusion !== "success" || required.some((check) => check !== null && (!trusted(check) || check.status === "completed" && check.conclusion !== "success"));
-  const allSuccessful = masterWorkflowRun.status === "completed" && masterWorkflowRun.conclusion === "success" && required.every((check) => trusted(check) && check?.status === "completed" && check.conclusion === "success");
+  const trusted = (check: PublicCheckRun | null) => {
+    if (check === null || check.appId !== EXPECTED_GITHUB_ACTIONS_APP_ID || check.appSlug !== EXPECTED_GITHUB_ACTIONS_APP_SLUG) return false;
+    const workflow = workflowForCheck(check.name);
+    const selectedRun = workflowRuns.find(({ workflowId }) => workflowId === workflow?.id);
+    return selectedRun !== undefined && checkDetailsRunId(check.detailsUrl) === selectedRun.id;
+  };
+  if (required.some((check) => check !== null && !trusted(check))) throw new Error("LIVE_READBACK_WORKFLOW_CHECK_SUBSTITUTION");
+  for (const check of required) {
+    if (!check) continue;
+    const workflow = workflowForCheck(check.name);
+    const selectedRun = workflowRuns.find(({ workflowId }) => workflowId === workflow?.id);
+    if (!selectedRun || check.startedAt < selectedRun.runStartedAt || check.completedAt !== null && check.completedAt > selectedRun.updatedAt) throw new Error("LIVE_READBACK_WORKFLOW_CHECK_CHRONOLOGY_SUBSTITUTION");
+  }
+  const hasFailure = workflowRuns.some((run) => run.status === "completed" && run.conclusion !== "success") || required.some((check) => check !== null && check.status === "completed" && check.conclusion !== "success");
+  const allSuccessful = workflowRuns.every((run) => run.status === "completed" && run.conclusion === "success") && required.every((check) => trusted(check) && check?.status === "completed" && check.conclusion === "success");
   const derivedState = allSuccessful ? "success" : hasFailure ? "failure" : "pending";
   if (value.state !== derivedState) throw new Error("LIVE_READBACK_CHECK_STATE_SUBSTITUTION");
-  return { sha: value.sha, state: derivedState, requiredNames, masterWorkflowRun, checks };
+  return { sha: value.sha, state: derivedState, requiredNames, workflowRuns, checks };
 }
 
 export function parseGitHubLiveObservation(value: unknown): GitHubLiveObservation {
@@ -556,20 +616,27 @@ export function parseGitHubLiveObservation(value: unknown): GitHubLiveObservatio
   ];
   const expectedCandidateSha = value.candidateSha;
   if (exactHeadChecks !== null && exactHeadChecks.sha !== expectedCandidateSha || pull35 !== null && pull35.headSha !== expectedCandidateSha) throw new Error("LIVE_READBACK_GITHUB_CANDIDATE_SUBSTITUTION");
-  const workflowEndpoint = masterWorkflowRunsEndpoint(expectedCandidateSha);
+  const workflowEndpoints = EXPECTED_GITHUB_WORKFLOWS.map(({ id }) => workflowRunsEndpoint(expectedCandidateSha, id));
   const fullRequestSetExpected = value.status !== "unavailable" || endpoints.length > 0;
   if (fullRequestSetExpected && fixedEndpoints.some((endpoint) => !endpoints.includes(endpoint))) throw new Error("LIVE_READBACK_GITHUB_ENDPOINT_SUBSTITUTION");
-  if (fullRequestSetExpected && (!endpoints.includes(workflowEndpoint) || endpoints.every((endpoint) => !endpoint.includes("/check-runs")))) throw new Error("LIVE_READBACK_GITHUB_ENDPOINT_SUBSTITUTION");
+  if (fullRequestSetExpected && (workflowEndpoints.some((endpoint) => !endpoints.includes(endpoint)) || endpoints.every((endpoint) => !endpoint.includes("/check-runs")))) throw new Error("LIVE_READBACK_GITHUB_ENDPOINT_SUBSTITUTION");
   if (endpoints.some((endpoint) => {
-    if (fixedEndpoints.includes(endpoint) || endpoint === workflowEndpoint) return false;
+    if (fixedEndpoints.includes(endpoint) || workflowEndpoints.includes(endpoint)) return false;
     try { parseCheckRunsPageNumber(endpoint, expectedCandidateSha); return false; } catch { return true; }
   })) throw new Error("LIVE_READBACK_GITHUB_ENDPOINT_SUBSTITUTION");
   const checkPages = endpoints
-    .filter((endpoint) => !fixedEndpoints.includes(endpoint) && endpoint !== workflowEndpoint)
+    .filter((endpoint) => !fixedEndpoints.includes(endpoint) && !workflowEndpoints.includes(endpoint))
     .map((endpoint) => parseCheckRunsPageNumber(endpoint, expectedCandidateSha))
     .sort((left, right) => left - right);
   if (checkPages.length > MAX_GITHUB_CHECK_RUN_PAGES) throw new Error("LIVE_READBACK_CHECK_PAGES_CEILING_EXCEEDED");
   if (fullRequestSetExpected && (checkPages.length === 0 || checkPages.some((page, index) => page !== index + 1))) throw new Error("LIVE_READBACK_GITHUB_ENDPOINT_SUBSTITUTION");
+  if (fullRequestSetExpected) {
+    const orderedCheckEndpoints = endpoints
+      .filter((endpoint) => !fixedEndpoints.includes(endpoint) && !workflowEndpoints.includes(endpoint))
+      .sort((left, right) => parseCheckRunsPageNumber(left, expectedCandidateSha) - parseCheckRunsPageNumber(right, expectedCandidateSha));
+    const canonicalEndpoints = [...fixedEndpoints, ...workflowEndpoints, ...orderedCheckEndpoints];
+    if (canonicalEndpoints.some((endpoint, index) => endpoints[index] !== endpoint)) throw new Error("LIVE_READBACK_GITHUB_ENDPOINT_ORDER_SUBSTITUTION");
+  }
   if (Number(value.checkPagesObserved) > checkPages.length) throw new Error("LIVE_READBACK_GITHUB_CHECK_PAGE_OBSERVATION_SUBSTITUTION");
   if (exactHeadChecks && exactHeadChecks.checks.length > checkPages.length * GITHUB_CHECK_RUNS_PER_PAGE) throw new Error("LIVE_READBACK_CHECK_PAGE_CAPACITY_EXCEEDED");
   const visibleMissing = [!repository ? "repository" : null, !main ? "main" : null, !pull34 ? "pull34" : null, !pull35 ? "pull35" : null, !ruleset ? "ruleset" : null, !exactHeadChecks ? "exactHeadChecks" : null].filter((entry): entry is string => entry !== null);
@@ -768,46 +835,47 @@ function exactPullRepository(value: unknown, context: string): void {
   if (!isRecord(value) || value.id !== GITHUB_REPOSITORY_ID || value.url !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}` || value.name !== "first") throw new Error(`GITHUB_SOURCE_SUBSTITUTION:${context.toLowerCase()}`);
 }
 
-function parseMasterWorkflowRun(candidate: unknown, expectedSha: string): PublicMasterWorkflowRun {
-  if (!isRecord(candidate) || !Number.isSafeInteger(candidate.id) || Number(candidate.id) < 1 || candidate.workflow_id !== EXPECTED_MASTER_WORKFLOW_ID) throw new Error("GITHUB_MALFORMED_MASTER_WORKFLOW_RUN");
+function parseWorkflowRun(candidate: unknown, expectedSha: string, expectedWorkflow: (typeof EXPECTED_GITHUB_WORKFLOWS)[number]): PublicWorkflowRun {
+  if (!isRecord(candidate) || !Number.isSafeInteger(candidate.id) || Number(candidate.id) < 1) throw new Error("GITHUB_MALFORMED_WORKFLOW_RUN");
   const id = Number(candidate.id);
-  const status = requiredString(candidate, "status", "MASTER_WORKFLOW_RUN");
+  const status = requiredString(candidate, "status", "WORKFLOW_RUN");
   const conclusion = candidate.conclusion;
   if (
-    requiredString(candidate, "name", "MASTER_WORKFLOW_RUN") !== EXPECTED_MASTER_WORKFLOW_NAME ||
-    requiredString(candidate, "path", "MASTER_WORKFLOW_RUN") !== EXPECTED_MASTER_WORKFLOW_PATH ||
-    requiredString(candidate, "event", "MASTER_WORKFLOW_RUN") !== "pull_request" ||
-    requiredString(candidate, "head_sha", "MASTER_WORKFLOW_RUN") !== expectedSha ||
-    requiredString(candidate, "head_branch", "MASTER_WORKFLOW_RUN") !== STACK_B_BRANCH ||
+    candidate.workflow_id !== expectedWorkflow.id ||
+    requiredString(candidate, "name", "WORKFLOW_RUN") !== expectedWorkflow.name ||
+    requiredString(candidate, "path", "WORKFLOW_RUN") !== expectedWorkflow.path ||
+    requiredString(candidate, "event", "WORKFLOW_RUN") !== "pull_request" ||
+    requiredString(candidate, "head_sha", "WORKFLOW_RUN") !== expectedSha ||
+    requiredString(candidate, "head_branch", "WORKFLOW_RUN") !== STACK_B_BRANCH ||
     !GITHUB_CHECK_RUN_STATUSES.has(status) ||
     conclusion !== null && (typeof conclusion !== "string" || !GITHUB_CHECK_RUN_CONCLUSIONS.has(conclusion)) ||
     (status === "completed") !== (conclusion !== null) ||
     !Number.isSafeInteger(candidate.run_attempt) || Number(candidate.run_attempt) < 1 ||
     candidate.url !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${id}` ||
     candidate.html_url !== `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${id}` ||
-    candidate.workflow_url !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}`
-  ) throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-run");
-  exactWorkflowRepository(candidate.repository, "MASTER_WORKFLOW_REPOSITORY");
-  exactWorkflowRepository(candidate.head_repository, "MASTER_WORKFLOW_HEAD_REPOSITORY");
-  if (!Array.isArray(candidate.pull_requests) || candidate.pull_requests.length !== 1 || !isRecord(candidate.pull_requests[0])) throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-pull-request");
+    candidate.workflow_url !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${expectedWorkflow.id}`
+  ) throw new Error(`GITHUB_SOURCE_SUBSTITUTION:workflow-run-${expectedWorkflow.id}`);
+  exactWorkflowRepository(candidate.repository, "WORKFLOW_REPOSITORY");
+  exactWorkflowRepository(candidate.head_repository, "WORKFLOW_HEAD_REPOSITORY");
+  if (!Array.isArray(candidate.pull_requests) || candidate.pull_requests.length !== 1 || !isRecord(candidate.pull_requests[0])) throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-pull-request");
   const pullRequest = candidate.pull_requests[0];
-  if (pullRequest.number !== 35 || pullRequest.url !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35`) throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-pull-request");
-  const head = nested(pullRequest, "head", "MASTER_WORKFLOW_PULL_HEAD");
-  const base = nested(pullRequest, "base", "MASTER_WORKFLOW_PULL_BASE");
-  exactPullRepository(head.repo, "MASTER_WORKFLOW_PULL_HEAD_REPOSITORY");
-  exactPullRepository(base.repo, "MASTER_WORKFLOW_PULL_BASE_REPOSITORY");
-  const pullHeadSha = requiredString(head, "sha", "MASTER_WORKFLOW_PULL_HEAD");
-  const pullBaseSha = requiredString(base, "sha", "MASTER_WORKFLOW_PULL_BASE");
-  if (head.ref !== STACK_B_BRANCH || pullHeadSha !== expectedSha || base.ref !== "main" || pullBaseSha !== EXPECTED_MAIN_COMMIT) throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-pull-request");
-  const runStartedAt = exactTimestamp(candidate.run_started_at, "MASTER_WORKFLOW_STARTED");
-  const createdAt = exactTimestamp(candidate.created_at, "MASTER_WORKFLOW_CREATED");
-  const updatedAt = exactTimestamp(candidate.updated_at, "MASTER_WORKFLOW_UPDATED");
-  if (runStartedAt < createdAt || updatedAt < runStartedAt) throw new Error("GITHUB_MALFORMED_MASTER_WORKFLOW_LIFECYCLE");
+  if (pullRequest.number !== 35 || pullRequest.url !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35`) throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-pull-request");
+  const head = nested(pullRequest, "head", "WORKFLOW_PULL_HEAD");
+  const base = nested(pullRequest, "base", "WORKFLOW_PULL_BASE");
+  exactPullRepository(head.repo, "WORKFLOW_PULL_HEAD_REPOSITORY");
+  exactPullRepository(base.repo, "WORKFLOW_PULL_BASE_REPOSITORY");
+  const pullHeadSha = requiredString(head, "sha", "WORKFLOW_PULL_HEAD");
+  const pullBaseSha = requiredString(base, "sha", "WORKFLOW_PULL_BASE");
+  if (head.ref !== STACK_B_BRANCH || pullHeadSha !== expectedSha || base.ref !== "main" || pullBaseSha !== EXPECTED_MAIN_COMMIT) throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-pull-request");
+  const runStartedAt = exactTimestamp(candidate.run_started_at, "WORKFLOW_STARTED");
+  const createdAt = exactTimestamp(candidate.created_at, "WORKFLOW_CREATED");
+  const updatedAt = exactTimestamp(candidate.updated_at, "WORKFLOW_UPDATED");
+  if (runStartedAt < createdAt || updatedAt < runStartedAt) throw new Error("GITHUB_MALFORMED_WORKFLOW_LIFECYCLE");
   return {
     id,
-    workflowId: EXPECTED_MASTER_WORKFLOW_ID,
-    name: EXPECTED_MASTER_WORKFLOW_NAME,
-    path: EXPECTED_MASTER_WORKFLOW_PATH,
+    workflowId: expectedWorkflow.id,
+    name: expectedWorkflow.name,
+    path: expectedWorkflow.path,
     event: "pull_request",
     headSha: expectedSha,
     headBranch: STACK_B_BRANCH,
@@ -817,27 +885,44 @@ function parseMasterWorkflowRun(candidate: unknown, expectedSha: string): Public
     runStartedAt,
     createdAt,
     updatedAt,
+    apiUrl: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${id}`,
+    htmlUrl: `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${id}`,
+    workflowUrl: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${expectedWorkflow.id}`,
     repositoryId: GITHUB_REPOSITORY_ID,
     repository: GITHUB_REPOSITORY,
+    headRepositoryId: GITHUB_REPOSITORY_ID,
+    headRepository: GITHUB_REPOSITORY,
     pullRequestNumber: 35,
+    pullRequestUrl: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35`,
     pullHeadSha,
-    pullBaseSha
+    pullHeadRef: STACK_B_BRANCH,
+    pullHeadRepositoryId: GITHUB_REPOSITORY_ID,
+    pullHeadRepository: GITHUB_REPOSITORY,
+    pullBaseSha,
+    pullBaseRef: "main",
+    pullBaseRepositoryId: GITHUB_REPOSITORY_ID,
+    pullBaseRepository: GITHUB_REPOSITORY
   };
 }
 
-function parseMasterWorkflowRuns(value: unknown, expectedSha: string): PublicMasterWorkflowRun {
-  if (!isRecord(value) || !Number.isSafeInteger(value.total_count) || Number(value.total_count) < 0 || !Array.isArray(value.workflow_runs) || value.workflow_runs.length > MAX_GITHUB_WORKFLOW_RUNS) throw new Error("GITHUB_MALFORMED_MASTER_WORKFLOW_RUNS");
-  if (Number(value.total_count) > MAX_GITHUB_WORKFLOW_RUNS) throw new Error("GITHUB_MASTER_WORKFLOW_RUNS_CEILING_EXCEEDED");
-  if (Number(value.total_count) !== value.workflow_runs.length) throw new Error("GITHUB_MASTER_WORKFLOW_RUNS_PAGE_MISSING");
-  const matching = value.workflow_runs.filter((candidate) => isRecord(candidate) && candidate.workflow_id === EXPECTED_MASTER_WORKFLOW_ID).map((candidate) => parseMasterWorkflowRun(candidate, expectedSha));
-  if (matching.length === 0) throw new Error("GITHUB_MASTER_WORKFLOW_RUN_MISSING");
-  const byId = new Map<number, PublicMasterWorkflowRun>();
-  for (const run of matching) {
+function parseWorkflowRuns(value: unknown, expectedSha: string, expectedWorkflow: (typeof EXPECTED_GITHUB_WORKFLOWS)[number]): PublicWorkflowRun {
+  if (!isRecord(value) || !Number.isSafeInteger(value.total_count) || Number(value.total_count) < 0 || !Array.isArray(value.workflow_runs) || value.workflow_runs.length > MAX_GITHUB_WORKFLOW_RUNS) throw new Error("GITHUB_MALFORMED_WORKFLOW_RUNS");
+  if (Number(value.total_count) > MAX_GITHUB_WORKFLOW_RUNS) throw new Error("GITHUB_WORKFLOW_RUNS_CEILING_EXCEEDED");
+  if (Number(value.total_count) !== value.workflow_runs.length) throw new Error("GITHUB_WORKFLOW_RUNS_PAGE_MISSING");
+  if (value.workflow_runs.length === 0) throw new Error(`GITHUB_WORKFLOW_RUN_MISSING:${expectedWorkflow.id}`);
+  const parsed = value.workflow_runs.map((candidate) => parseWorkflowRun(candidate, expectedSha, expectedWorkflow));
+  const byId = new Map<number, PublicWorkflowRun>();
+  for (const run of parsed) {
     const prior = byId.get(run.id);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(run)) throw new Error("GITHUB_SOURCE_CONTRADICTION:duplicate-master-workflow-run");
+    if (prior && JSON.stringify(prior) !== JSON.stringify(run)) throw new Error(`GITHUB_SOURCE_CONTRADICTION:duplicate-workflow-run-${expectedWorkflow.id}`);
     byId.set(run.id, run);
   }
-  return [...byId.values()].sort((left, right) => left.runStartedAt.localeCompare(right.runStartedAt) || left.id - right.id).at(-1) as PublicMasterWorkflowRun;
+  return [...byId.values()].sort((left, right) =>
+    left.createdAt.localeCompare(right.createdAt)
+    || left.runAttempt - right.runAttempt
+    || left.runStartedAt.localeCompare(right.runStartedAt)
+    || left.id - right.id
+  ).at(-1) as PublicWorkflowRun;
 }
 
 function parseCheckRun(candidate: unknown, expectedSha: string): PublicCheckRun {
@@ -884,18 +969,38 @@ function checkRunRecency(left: PublicCheckRun, right: PublicCheckRun): number {
   return left.startedAt.localeCompare(right.startedAt) || left.id - right.id;
 }
 
-function projectCheckRuns(parsed: PublicCheckRun[], expectedSha: string, masterWorkflowRun: PublicMasterWorkflowRun): PublicGitHubChecks {
+function projectCheckRuns(parsed: PublicCheckRun[], expectedSha: string, workflowRuns: PublicWorkflowRun[]): PublicGitHubChecks {
   const latestByName = new Map<string, PublicCheckRun>();
-  for (const check of [...parsed].sort(checkRunRecency)) {
-    if (check.name !== "validate") latestByName.set(check.name, check);
-    else if (checkDetailsRunId(check.detailsUrl) === masterWorkflowRun.id) latestByName.set(check.name, check);
+  const sorted = [...parsed].sort(checkRunRecency);
+  for (const check of sorted) {
+    if (workflowForCheck(check.name) === null) latestByName.set(check.name, check);
+  }
+  for (const name of REQUIRED_EXACT_HEAD_CHECKS) {
+    const expectedWorkflow = workflowForCheck(name);
+    const selectedRun = workflowRuns.find(({ workflowId }) => workflowId === expectedWorkflow?.id);
+    if (!selectedRun) throw new Error("GITHUB_SOURCE_CONTRADICTION:required-check-workflow-missing");
+    const sameName = sorted.filter((check) => check.name === name);
+    const exactRun = sameName.filter((check) => checkDetailsRunId(check.detailsUrl) === selectedRun.id);
+    if (exactRun.length === 0) {
+      if (sameName.length > 0) throw new Error("GITHUB_SOURCE_SUBSTITUTION:required-check-run");
+      continue;
+    }
+    const selectedCheck = exactRun.at(-1) as PublicCheckRun;
+    if (selectedCheck.appId !== EXPECTED_GITHUB_ACTIONS_APP_ID || selectedCheck.appSlug !== EXPECTED_GITHUB_ACTIONS_APP_SLUG) throw new Error("GITHUB_SOURCE_SUBSTITUTION:required-check-issuer");
+    latestByName.set(name, selectedCheck);
   }
   const checks = [...latestByName.values()].sort((left, right) => left.name.localeCompare(right.name, "en"));
   const required = REQUIRED_EXACT_HEAD_CHECKS.map((name) => checks.find((check) => check.name === name) ?? null);
-  const trustedIssuer = (check: PublicCheckRun | null) => check?.appId === EXPECTED_GITHUB_ACTIONS_APP_ID && check.appSlug === EXPECTED_GITHUB_ACTIONS_APP_SLUG && checkDetailsRunId(check.detailsUrl) !== null;
-  const hasFailure = masterWorkflowRun.status === "completed" && masterWorkflowRun.conclusion !== "success" || required.some((check) => check !== null && (!trustedIssuer(check) || check.status === "completed" && check.conclusion !== "success"));
-  const allSuccessful = masterWorkflowRun.status === "completed" && masterWorkflowRun.conclusion === "success" && required.every((check) => trustedIssuer(check) && check?.status === "completed" && check.conclusion === "success");
-  return { sha: expectedSha, state: allSuccessful ? "success" : hasFailure ? "failure" : "pending", requiredNames: [...REQUIRED_EXACT_HEAD_CHECKS], masterWorkflowRun, checks };
+  const trustedIssuer = (check: PublicCheckRun | null) => check?.appId === EXPECTED_GITHUB_ACTIONS_APP_ID && check.appSlug === EXPECTED_GITHUB_ACTIONS_APP_SLUG;
+  for (const check of required) {
+    if (!check) continue;
+    const workflow = workflowForCheck(check.name);
+    const selectedRun = workflowRuns.find(({ workflowId }) => workflowId === workflow?.id);
+    if (!selectedRun || check.startedAt < selectedRun.runStartedAt || check.completedAt !== null && check.completedAt > selectedRun.updatedAt) throw new Error("GITHUB_SOURCE_CONTRADICTION:workflow-check-chronology");
+  }
+  const hasFailure = workflowRuns.some((run) => run.status === "completed" && run.conclusion !== "success") || required.some((check) => check !== null && (!trustedIssuer(check) || check.status === "completed" && check.conclusion !== "success"));
+  const allSuccessful = workflowRuns.every((run) => run.status === "completed" && run.conclusion === "success") && required.every((check) => trustedIssuer(check) && check?.status === "completed" && check.conclusion === "success");
+  return { sha: expectedSha, state: allSuccessful ? "success" : hasFailure ? "failure" : "pending", requiredNames: [...REQUIRED_EXACT_HEAD_CHECKS], workflowRuns, checks };
 }
 
 function validSourceDate(value: string | null): string | null {
@@ -926,14 +1031,15 @@ function checkRunsPageEndpoint(candidateCommit: string, page: number): string {
   return `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/commits/${candidateCommit}/check-runs?filter=all&per_page=${GITHUB_CHECK_RUNS_PER_PAGE}&page=${page}`;
 }
 
-function masterWorkflowRunsEndpoint(candidateCommit: string): string {
-  return `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1`;
+function workflowRunsEndpoint(candidateCommit: string, workflowId: number): string {
+  if (!workflowById(workflowId)) throw new Error("GITHUB_WORKFLOW_ID_REJECTED");
+  return `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflowId}/runs?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1`;
 }
 
-function parseMasterWorkflowRunsEndpoint(endpoint: string, expectedSha: string): void {
+function parseWorkflowRunsEndpoint(endpoint: string, expectedSha: string, workflowId: number): void {
   let candidate: URL;
-  try { candidate = parseGithubEndpoint(endpoint); } catch { throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-runs-origin"); }
-  if (candidate.pathname !== `/repos/${GITHUB_REPOSITORY}/actions/workflows/${EXPECTED_MASTER_WORKFLOW_ID}/runs`) throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-runs-path");
+  try { candidate = parseGithubEndpoint(endpoint); } catch { throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-runs-origin"); }
+  if (!workflowById(workflowId) || candidate.pathname !== `/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflowId}/runs`) throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-runs-path");
   const keys = [...candidate.searchParams.keys()];
   if (
     keys.length !== 4 || new Set(keys).size !== 4 ||
@@ -941,7 +1047,7 @@ function parseMasterWorkflowRunsEndpoint(endpoint: string, expectedSha: string):
     candidate.searchParams.getAll("event").length !== 1 || candidate.searchParams.get("event") !== "pull_request" ||
     candidate.searchParams.getAll("per_page").length !== 1 || candidate.searchParams.get("per_page") !== String(MAX_GITHUB_WORKFLOW_RUNS) ||
     candidate.searchParams.getAll("page").length !== 1 || candidate.searchParams.get("page") !== "1"
-  ) throw new Error("GITHUB_SOURCE_SUBSTITUTION:master-workflow-runs-query");
+  ) throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-runs-query");
 }
 
 function parseCheckRunsPageNumber(endpoint: string, expectedSha: string): number {
@@ -1176,46 +1282,68 @@ async function readPaginatedCheckRuns({
 }): Promise<PublicGitHubChecks> {
   const byId = new Map<number, PublicCheckRun>();
   let expectedTotal: number | null = null;
-  const workflowEndpoint = masterWorkflowRunsEndpoint(candidateCommit);
-  parseMasterWorkflowRunsEndpoint(workflowEndpoint, candidateCommit);
-  endpoints.push(workflowEndpoint);
-  const workflowOutcome = readFixedGithubJson(workflowEndpoint, { fetchImpl, timeoutMs, retries, boundary }).then(
-    (result) => ({ result, error: null as Error | null }),
-    (error: unknown) => ({ result: null, error: error instanceof Error ? error : new Error("GITHUB_UNAVAILABLE") })
-  );
-  let endpoint = checkRunsPageEndpoint(candidateCommit, 1);
-  for (let page = 1; page <= MAX_GITHUB_CHECK_RUN_PAGES; page += 1) {
-    if (parseCheckRunsPageNumber(endpoint, candidateCommit) !== page) throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-page");
+  const workflowOutcomesPromise = Promise.all(EXPECTED_GITHUB_WORKFLOWS.map(async (workflow) => {
+    const endpoint = workflowRunsEndpoint(candidateCommit, workflow.id);
+    parseWorkflowRunsEndpoint(endpoint, candidateCommit, workflow.id);
     endpoints.push(endpoint);
-    const result = await readFixedGithubJson(endpoint, { fetchImpl, timeoutMs, retries, boundary });
-    if (!result.observedAt) throw new Error("GITHUB_SOURCE_TIME_UNAVAILABLE");
-    observedTimes.push(result.observedAt);
-    checkPageObservedTimes.push(result.observedAt);
-    const parsed = parseCheckRunsPage(result.value, candidateCommit);
-    if (parsed.totalCount > MAX_GITHUB_CHECK_RUNS) throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
-    if (expectedTotal === null) expectedTotal = parsed.totalCount;
-    else if (parsed.totalCount !== expectedTotal) throw new Error("GITHUB_CHECK_RUNS_TOTAL_DISAGREEMENT");
-    for (const check of parsed.checks) {
-      const prior = byId.get(check.id);
-      if (prior && JSON.stringify(prior) !== JSON.stringify(check)) throw new Error("GITHUB_SOURCE_CONTRADICTION:duplicate-check-run");
-      if (!prior) byId.set(check.id, check);
+    try {
+      const result = await readFixedGithubJson(endpoint, { fetchImpl, timeoutMs, retries, boundary });
+      return { workflow, result, error: null as Error | null };
+    } catch (error) {
+      return { workflow, result: null, error: error instanceof Error ? error : new Error("GITHUB_UNAVAILABLE") };
     }
-    if (byId.size > expectedTotal) throw new Error("GITHUB_CHECK_RUNS_TOTAL_DISAGREEMENT");
-    const next = nextCheckRunsEndpoint(result.link, candidateCommit, page, parsed.totalCount);
-    if (byId.size === expectedTotal) {
-      if (next !== null) throw new Error("GITHUB_CHECK_RUNS_UNEXPECTED_NEXT_PAGE");
-      const workflow = await workflowOutcome;
-      if (workflow.error || !workflow.result) throw workflow.error ?? new Error("GITHUB_UNAVAILABLE");
-      if (!workflow.result.observedAt) throw new Error("GITHUB_SOURCE_TIME_UNAVAILABLE");
-      if (workflow.result.link !== null) throw new Error("GITHUB_MASTER_WORKFLOW_RUNS_PAGE_MISSING");
-      observedTimes.push(workflow.result.observedAt);
-      return projectCheckRuns([...byId.values()], candidateCommit, parseMasterWorkflowRuns(workflow.result.value, candidateCommit));
+  }));
+  const checksPromise = (async () => {
+    let endpoint = checkRunsPageEndpoint(candidateCommit, 1);
+    for (let page = 1; page <= MAX_GITHUB_CHECK_RUN_PAGES; page += 1) {
+      if (parseCheckRunsPageNumber(endpoint, candidateCommit) !== page) throw new Error("GITHUB_SOURCE_SUBSTITUTION:check-runs-page");
+      endpoints.push(endpoint);
+      const result = await readFixedGithubJson(endpoint, { fetchImpl, timeoutMs, retries, boundary });
+      if (!result.observedAt) throw new Error("GITHUB_SOURCE_TIME_UNAVAILABLE");
+      observedTimes.push(result.observedAt);
+      checkPageObservedTimes.push(result.observedAt);
+      const parsed = parseCheckRunsPage(result.value, candidateCommit);
+      if (parsed.totalCount > MAX_GITHUB_CHECK_RUNS) throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+      if (expectedTotal === null) expectedTotal = parsed.totalCount;
+      else if (parsed.totalCount !== expectedTotal) throw new Error("GITHUB_CHECK_RUNS_TOTAL_DISAGREEMENT");
+      for (const check of parsed.checks) {
+        const prior = byId.get(check.id);
+        if (prior && JSON.stringify(prior) !== JSON.stringify(check)) throw new Error("GITHUB_SOURCE_CONTRADICTION:duplicate-check-run");
+        if (!prior) byId.set(check.id, check);
+      }
+      if (byId.size > expectedTotal) throw new Error("GITHUB_CHECK_RUNS_TOTAL_DISAGREEMENT");
+      const next = nextCheckRunsEndpoint(result.link, candidateCommit, page, parsed.totalCount);
+      if (byId.size === expectedTotal) {
+        if (next !== null) throw new Error("GITHUB_CHECK_RUNS_UNEXPECTED_NEXT_PAGE");
+        return [...byId.values()];
+      }
+      if (next === null) throw new Error("GITHUB_CHECK_RUNS_PAGE_MISSING");
+      if (page === MAX_GITHUB_CHECK_RUN_PAGES) throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+      endpoint = next;
     }
-    if (next === null) throw new Error("GITHUB_CHECK_RUNS_PAGE_MISSING");
-    if (page === MAX_GITHUB_CHECK_RUN_PAGES) throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
-    endpoint = next;
+    throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+  })().then(
+    (checks) => ({ checks, error: null as Error | null }),
+    (error: unknown) => ({ checks: null, error: error instanceof Error ? error : new Error("GITHUB_UNAVAILABLE") })
+  );
+  const [workflowOutcomes, checksOutcome] = await Promise.all([workflowOutcomesPromise, checksPromise]);
+  const workflowRuns: PublicWorkflowRun[] = [];
+  for (const outcome of workflowOutcomes) {
+    if (outcome.result?.observedAt) observedTimes.push(outcome.result.observedAt);
+    if (outcome.error || !outcome.result) continue;
+    if (!outcome.result.observedAt) outcome.error = new Error("GITHUB_SOURCE_TIME_UNAVAILABLE");
+    else if (outcome.result.link !== null) outcome.error = new Error("GITHUB_WORKFLOW_RUNS_PAGE_MISSING");
   }
-  throw new Error("GITHUB_CHECK_RUNS_CEILING_EXCEEDED");
+  if (checksOutcome.error || !checksOutcome.checks) throw checksOutcome.error ?? new Error("GITHUB_UNAVAILABLE");
+  const workflowFailure = workflowOutcomes.find(({ error }) => error !== null)?.error;
+  if (workflowFailure) throw workflowFailure;
+  for (const outcome of workflowOutcomes) {
+    if (!outcome.result) throw new Error("GITHUB_UNAVAILABLE");
+    workflowRuns.push(parseWorkflowRuns(outcome.result.value, candidateCommit, outcome.workflow));
+  }
+  if (workflowRuns.length !== EXPECTED_GITHUB_WORKFLOWS.length) throw new Error("GITHUB_WORKFLOW_RUN_MISSING");
+  if (new Set(workflowRuns.map(({ id }) => id)).size !== workflowRuns.length) throw new Error("GITHUB_SOURCE_CONTRADICTION:duplicate-selected-workflow-run");
+  return projectCheckRuns(checksOutcome.checks, candidateCommit, workflowRuns);
 }
 
 function githubEndpoints(candidateCommit: string) {
@@ -1588,16 +1716,25 @@ function exactMainRuleset(ruleset: PublicGitHubRuleset | null): boolean {
 function exactRequiredChecks(checks: PublicGitHubChecks | null, expectedSha: string): boolean {
   if (
     !checks || checks.sha !== expectedSha || checks.state !== "success" || JSON.stringify(checks.requiredNames) !== JSON.stringify(REQUIRED_EXACT_HEAD_CHECKS) ||
-    checks.masterWorkflowRun.workflowId !== EXPECTED_MASTER_WORKFLOW_ID || checks.masterWorkflowRun.name !== EXPECTED_MASTER_WORKFLOW_NAME ||
-    checks.masterWorkflowRun.path !== EXPECTED_MASTER_WORKFLOW_PATH || checks.masterWorkflowRun.event !== "pull_request" ||
-    checks.masterWorkflowRun.headSha !== expectedSha || checks.masterWorkflowRun.headBranch !== STACK_B_BRANCH ||
-    checks.masterWorkflowRun.status !== "completed" || checks.masterWorkflowRun.conclusion !== "success" ||
-    checks.masterWorkflowRun.repositoryId !== GITHUB_REPOSITORY_ID || checks.masterWorkflowRun.repository !== GITHUB_REPOSITORY ||
-    checks.masterWorkflowRun.pullRequestNumber !== 35 || checks.masterWorkflowRun.pullHeadSha !== expectedSha || checks.masterWorkflowRun.pullBaseSha !== EXPECTED_MAIN_COMMIT
+    checks.workflowRuns.length !== EXPECTED_GITHUB_WORKFLOWS.length || new Set(checks.workflowRuns.map(({ id }) => id)).size !== checks.workflowRuns.length
   ) return false;
+  if (EXPECTED_GITHUB_WORKFLOWS.some((workflow, index) => {
+    const run = checks.workflowRuns[index];
+    return !run || run.workflowId !== workflow.id || run.name !== workflow.name || run.path !== workflow.path || run.event !== "pull_request" ||
+      run.headSha !== expectedSha || run.headBranch !== STACK_B_BRANCH || run.status !== "completed" || run.conclusion !== "success" ||
+      run.apiUrl !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/runs/${run.id}` ||
+      run.htmlUrl !== `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${run.id}` ||
+      run.workflowUrl !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow.id}` ||
+      run.repositoryId !== GITHUB_REPOSITORY_ID || run.repository !== GITHUB_REPOSITORY || run.headRepositoryId !== GITHUB_REPOSITORY_ID || run.headRepository !== GITHUB_REPOSITORY ||
+      run.pullRequestNumber !== 35 || run.pullRequestUrl !== `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/pulls/35` ||
+      run.pullHeadSha !== expectedSha || run.pullHeadRef !== STACK_B_BRANCH || run.pullHeadRepositoryId !== GITHUB_REPOSITORY_ID || run.pullHeadRepository !== GITHUB_REPOSITORY ||
+      run.pullBaseSha !== EXPECTED_MAIN_COMMIT || run.pullBaseRef !== "main" || run.pullBaseRepositoryId !== GITHUB_REPOSITORY_ID || run.pullBaseRepository !== GITHUB_REPOSITORY;
+  })) return false;
   return REQUIRED_EXACT_HEAD_CHECKS.every((name) => {
     const check = checks.checks.find((candidate) => candidate.name === name);
-    return check?.status === "completed" && check.conclusion === "success" && check.appId === EXPECTED_GITHUB_ACTIONS_APP_ID && check.appSlug === EXPECTED_GITHUB_ACTIONS_APP_SLUG && checkDetailsRunId(check.detailsUrl) !== null && (name !== "validate" || checkDetailsRunId(check.detailsUrl) === checks.masterWorkflowRun.id);
+    const workflow = workflowForCheck(name);
+    const run = checks.workflowRuns.find(({ workflowId }) => workflowId === workflow?.id);
+    return check?.status === "completed" && check.conclusion === "success" && check.appId === EXPECTED_GITHUB_ACTIONS_APP_ID && check.appSlug === EXPECTED_GITHUB_ACTIONS_APP_SLUG && run !== undefined && checkDetailsRunId(check.detailsUrl) === run.id;
   });
 }
 
