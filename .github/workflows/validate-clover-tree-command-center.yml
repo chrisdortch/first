@@ -2503,6 +2503,34 @@ jobs:
               }
               rehash(sidecar);
             };
+            const bindingSlotKey = ({ bucket, ruleIndex, nodeIndex, checkBucket, checkIndex, relatedNodeIndex }) => canonicalJson({
+              bucket, ruleIndex, nodeIndex, checkBucket, checkIndex, relatedNodeIndex
+            });
+            const projectExactAxeLiveNodeBindings = (axe, evidenceForBinding, label) => {
+              const bindings = [];
+              const append = (identity) => {
+                const evidence = evidenceForBinding(identity);
+                exactKeys(evidence, ['candidateSourceSha256', 'exact', 'liveHtml', 'matchCount'], `${label} evidence`);
+                bindings.push({ ...identity, liveHtml: evidence.liveHtml,
+                  candidateSourceSha256: structuredClone(evidence.candidateSourceSha256),
+                  matchCount: evidence.matchCount, exact: evidence.exact });
+              };
+              for (const bucket of ['passes', 'violations', 'incomplete', 'inapplicable']) {
+                axe[bucket].forEach((rule, ruleIndex) => rule.nodes.forEach((node, nodeIndex) => {
+                  append({ bucket, ruleIndex, ruleId: rule.id, nodeIndex, checkBucket: 'primary', checkIndex: null,
+                    checkId: null, relatedNodeIndex: null, target: structuredClone(node.target), html: node.html });
+                  for (const checkBucket of ['any', 'all', 'none']) node[checkBucket].forEach((check, checkIndex) => {
+                    if (check.relatedNodes === undefined) return;
+                    requireCondition(Array.isArray(check.relatedNodes), `${label} malformed Axe relatedNodes`);
+                    check.relatedNodes.forEach((related, relatedNodeIndex) => append({
+                      bucket, ruleIndex, ruleId: rule.id, nodeIndex, checkBucket, checkIndex, checkId: check.id,
+                      relatedNodeIndex, target: structuredClone(related.target), html: related.html
+                    }));
+                  });
+                }));
+              }
+              return bindings;
+            };
             const baseDocument = structuredClone(document);
             baseDocument.scans.forEach((entry) => {
               entry.gateAttemptProof.attempt = 1;
@@ -2566,22 +2594,23 @@ jobs:
               view: scan.view, state: scan.state, viewport: scan.viewport, attempt: 1, execution: 'axe-executed',
               classification: 'exact-normal-periodic-refresh-collision',
               reason: 'one-visible-focused-current-to-refreshing-to-next-current-periodic-generation-intersected-axe',
-              beforeFence, afterFence, observer, liveNodeBindings: structuredClone(scan.gateAttemptProof.liveNodeBindings),
+              beforeFence, afterFence, observer, liveNodeBindings: [],
               axe: { axeVersion: scan.axeVersion, passes: structuredClone(scan.passes), violations: [],
                 incomplete: structuredClone(scan.incomplete), inapplicable: structuredClone(scan.inapplicable) },
               adjudications: structuredClone(scan.adjudications), decorativeBindings: structuredClone(scan.decorativeBindings), retryAuthorized: true
             };
-            const sourceBinding = attemptBody.liveNodeBindings[0];
-            sourceBinding.ruleId = 'color-contrast';
-            sourceBinding.target = [exactGateSourceNodePairs[0].selector];
-            sourceBinding.html = exactGateSourceNodePairs[0].current;
-            sourceBinding.liveHtml = exactGateSourceNodePairs[0].refreshing;
-            sourceBinding.candidateSourceSha256 = [sha256(sourceBinding.liveHtml)];
-            sourceBinding.matchCount = 1;
-            sourceBinding.exact = false;
-            attemptBody.axe.passes[0].id = 'color-contrast';
-            attemptBody.axe.passes[0].nodes[0].target = [exactGateSourceNodePairs[0].selector];
-            attemptBody.axe.passes[0].nodes[0].html = exactGateSourceNodePairs[0].current;
+            const sourceAxeCandidates = [];
+            const acceptedSourceAxeTarget = ['div[role="status"] > strong'];
+            attemptBody.axe.passes.forEach((rule, ruleIndex) => rule.nodes.forEach((node, nodeIndex) => {
+              if (rule.id === 'color-contrast' && node.html === exactGateSourceNodePairs[0].current
+                && canonicalJson(node.target) === canonicalJson(acceptedSourceAxeTarget)) {
+                sourceAxeCandidates.push({ ruleIndex, nodeIndex });
+              }
+            }));
+            requireCondition(sourceAxeCandidates.length === 1,
+              'Gate scan-attempt source mismatch lacks one exact color-contrast pass identity');
+            const sourceAxeIdentity = sourceAxeCandidates[0];
+            attemptBody.axe.passes[sourceAxeIdentity.ruleIndex].nodes[sourceAxeIdentity.nodeIndex].target = [exactGateSourceNodePairs[0].selector];
             const incompleteNode = {
               target: ['.synthetic-incomplete-contrast'], html: '<span class="synthetic-incomplete-contrast">Synthetic</span>',
               any: [{ id: 'color-contrast', data: { messageKey: 'synthetic-incomplete', contrastRatio: 6.31,
@@ -2594,12 +2623,47 @@ jobs:
               foreground: '#ffffff', background: '#000000', ratio: 6.31, threshold: 4.5,
               passes: true, classification: 'measured-contrast', exemption: null, unresolvedReason: null
             }];
-            attemptBody.liveNodeBindings.push({
-              bucket: 'incomplete', ruleIndex: 0, ruleId: 'color-contrast', nodeIndex: 0,
-              checkBucket: 'primary', checkIndex: null, checkId: null, relatedNodeIndex: null,
-              target: incompleteNode.target, html: incompleteNode.html, liveHtml: incompleteNode.html,
-              candidateSourceSha256: [sha256(incompleteNode.html)], matchCount: 1, exact: true
-            });
+            const originalBindingsBySlot = new Map();
+            for (const binding of scan.gateAttemptProof.liveNodeBindings) {
+              const key = bindingSlotKey(binding);
+              requireCondition(!originalBindingsBySlot.has(key), 'Gate scan-attempt source binding slot is duplicated');
+              originalBindingsBySlot.set(key, binding);
+            }
+            const sourceSlot = bindingSlotKey({ bucket: 'passes', ruleIndex: sourceAxeIdentity.ruleIndex,
+              nodeIndex: sourceAxeIdentity.nodeIndex,
+              checkBucket: 'primary', checkIndex: null, relatedNodeIndex: null });
+            const replacementIncompleteSlot = bindingSlotKey({ bucket: 'incomplete', ruleIndex: 0, nodeIndex: 0,
+              checkBucket: 'primary', checkIndex: null, relatedNodeIndex: null });
+            requireCondition(originalBindingsBySlot.has(sourceSlot),
+              'Gate scan-attempt source mismatch binding lacks an accepted source slot');
+            const evidenceOverrides = new Map([
+              [sourceSlot, { liveHtml: exactGateSourceNodePairs[0].refreshing,
+                candidateSourceSha256: [sha256(exactGateSourceNodePairs[0].refreshing)], matchCount: 1, exact: false }],
+              [replacementIncompleteSlot, { liveHtml: incompleteNode.html,
+                candidateSourceSha256: [sha256(incompleteNode.html)], matchCount: 1, exact: true }]
+            ]);
+            const usedOriginalSlots = new Set();
+            const usedOverrideSlots = new Set();
+            attemptBody.liveNodeBindings = projectExactAxeLiveNodeBindings(attemptBody.axe, (identity) => {
+              const key = bindingSlotKey(identity);
+              if (evidenceOverrides.has(key)) {
+                requireCondition(!usedOverrideSlots.has(key), 'Gate scan-attempt replacement binding slot was reused');
+                usedOverrideSlots.add(key);
+                return evidenceOverrides.get(key);
+              }
+              const original = originalBindingsBySlot.get(key);
+              requireCondition(original !== undefined && !usedOriginalSlots.has(key), 'Gate scan-attempt final Axe binding lacks unique live evidence');
+              usedOriginalSlots.add(key);
+              return { liveHtml: original.liveHtml, candidateSourceSha256: original.candidateSourceSha256,
+                matchCount: original.matchCount, exact: original.exact };
+            }, 'Gate scan-attempt final Axe projection');
+            requireCondition(usedOverrideSlots.size === evidenceOverrides.size,
+              'Gate scan-attempt final Axe projection omitted a required replacement binding');
+            for (const [key, binding] of originalBindingsBySlot) requireCondition(usedOriginalSlots.has(key)
+              || key === sourceSlot || binding.bucket === 'incomplete',
+            'Gate scan-attempt final Axe projection removed a still-valid live binding');
+            validateLiveNodeBindings(attemptBody.liveNodeBindings, 'Gate scan-attempt final Axe projection', false);
+            validateAxeBindingCoverage(attemptBody.liveNodeBindings, attemptBody.axe, 'Gate scan-attempt final Axe projection');
             const attempt = { ...attemptBody, canonicalSha256: sha256(`${canonicalJson(attemptBody)}\n`) };
             const sidecarBody = {
               ...structuredClone(zeroSidecar), rejectedAttempts: [attempt],
@@ -2773,6 +2837,180 @@ jobs:
               try { validateGateScanAttemptSidecar(candidate, project, expected, candidateDocument); } catch { rejected = true; }
               requireCondition(rejected, `Gate scan-attempt ${label} document mutation was accepted`);
             };
+            const projectionRelated = (identity) => ({ target: [`.projection-${identity}`],
+              html: `<span class="projection-${identity}">${identity}</span>` });
+            const projectionNode = (identity, related) => ({ target: [`.projection-${identity}`],
+              html: `<div class="projection-${identity}">${identity}</div>`,
+              any: related ? [{ id: `${identity}-any-0`, relatedNodes: [projectionRelated(`${identity}-any-0-0`), projectionRelated(`${identity}-any-0-1`)] },
+                { id: `${identity}-any-1`, relatedNodes: [projectionRelated(`${identity}-any-1-0`)] }] : [],
+              all: related ? [{ id: `${identity}-all-0`, relatedNodes: [projectionRelated(`${identity}-all-0-0`)] }] : [],
+              none: related ? [{ id: `${identity}-none-0`, relatedNodes: [projectionRelated(`${identity}-none-0-0`)] }] : [] });
+            const projectionAxe = structuredClone(attemptBody.axe);
+            const projectionPassRuleIndex = projectionAxe.passes.length;
+            projectionAxe.passes.push({ id: 'projection-pass-order',
+              nodes: [projectionNode('pass-order-0', true), projectionNode('pass-order-1', false)] });
+            projectionAxe.violations.push({ id: 'projection-violation-order', nodes: [projectionNode('violation-order-0', false)] });
+            projectionAxe.inapplicable.push({ id: 'projection-inapplicable-order', nodes: [projectionNode('inapplicable-order-0', false)] });
+            const attemptBindingsBySlot = new Map();
+            for (const binding of attemptBody.liveNodeBindings) {
+              const key = bindingSlotKey(binding);
+              requireCondition(!attemptBindingsBySlot.has(key), 'Gate complete Axe projection contains a duplicate actual binding slot');
+              attemptBindingsBySlot.set(key, binding);
+            }
+            const usedAttemptBindingSlots = new Set();
+            const projectionBindings = projectExactAxeLiveNodeBindings(projectionAxe, (identity) => {
+              const key = bindingSlotKey(identity);
+              const actual = attemptBindingsBySlot.get(key);
+              if (actual !== undefined) {
+                requireCondition(!usedAttemptBindingSlots.has(key), 'Gate complete Axe projection reused an actual binding slot');
+                usedAttemptBindingSlots.add(key);
+                return { liveHtml: actual.liveHtml, candidateSourceSha256: actual.candidateSourceSha256,
+                  matchCount: actual.matchCount, exact: actual.exact };
+              }
+              requireCondition(identity.ruleId.startsWith('projection-'),
+                'Gate complete Axe projection lacks actual live evidence for a nonsynthetic binding');
+              return { liveHtml: identity.html, candidateSourceSha256: [sha256(identity.html)], matchCount: 1, exact: true };
+            }, 'Gate complete actual Axe projection matrix');
+            requireCondition(usedAttemptBindingSlots.size === attemptBindingsBySlot.size,
+              'Gate complete Axe projection omitted an actual final-attempt binding');
+            validateLiveNodeBindings(projectionBindings, 'Gate complete actual Axe projection matrix', false);
+            validateAxeBindingCoverage(projectionBindings, projectionAxe, 'Gate complete Axe projection matrix');
+            const projectionBindingIndex = (bindings, predicate, label) => {
+              const index = bindings.findIndex(predicate);
+              requireCondition(index >= 0, `Gate complete Axe projection ${label} witness is missing`);
+              return index;
+            };
+            const rejectExactAxeProjection = (label, mutate) => {
+              const candidate = structuredClone(projectionBindings);
+              mutate(candidate);
+              let liveBindingError = null;
+              try { validateLiveNodeBindings(candidate, `Gate complete Axe projection ${label} live evidence`, false); } catch (error) { liveBindingError = error; }
+              requireCondition(liveBindingError === null,
+                `Gate complete Axe projection ${label} failed before the exact coverage oracle`);
+              const coverageLabel = `Gate complete Axe projection ${label}`;
+              let coverageError = null;
+              try { validateAxeBindingCoverage(candidate, projectionAxe, coverageLabel); } catch (error) { coverageError = error; }
+              requireCondition(coverageError instanceof Error
+                && coverageError.message === `${coverageLabel} complete primary/related Axe binding coverage mismatch`,
+              `Gate complete Axe projection ${label} did not reach the exact coverage rejection`);
+            };
+            const makeExactStaleBinding = (binding, identity) => {
+              const stale = structuredClone(binding);
+              stale.target = [`.projection-${identity}`];
+              stale.html = `<span class="projection-${identity}">${identity}</span>`;
+              stale.liveHtml = stale.html;
+              stale.candidateSourceSha256 = [sha256(stale.html)];
+              stale.matchCount = 1;
+              stale.exact = true;
+              return stale;
+            };
+            rejectExactAxeProjection('incomplete-appended-after-inapplicable', (candidate) => {
+              const incompleteIndex = projectionBindingIndex(candidate, ({ bucket }) => bucket === 'incomplete', 'incomplete');
+              candidate.push(...candidate.splice(incompleteIndex, 1));
+            });
+            rejectExactAxeProjection('stale-replaced-incomplete-binding', (candidate) => {
+              const incompleteIndex = projectionBindingIndex(candidate, ({ bucket }) => bucket === 'incomplete', 'incomplete');
+              const preReplacement = scan.gateAttemptProof.liveNodeBindings.find(({ bucket }) => bucket === 'incomplete');
+              candidate.splice(incompleteIndex + 1, 0, preReplacement === undefined
+                ? makeExactStaleBinding(candidate[incompleteIndex], 'synthetic-pre-replacement-incomplete')
+                : structuredClone(preReplacement));
+            });
+            rejectExactAxeProjection('missing-replacement-incomplete-binding', (candidate) => {
+              candidate.splice(projectionBindingIndex(candidate, ({ bucket }) => bucket === 'incomplete', 'incomplete'), 1);
+            });
+            rejectExactAxeProjection('duplicate-replacement-incomplete-binding', (candidate) => {
+              const incompleteIndex = projectionBindingIndex(candidate, ({ bucket }) => bucket === 'incomplete', 'incomplete');
+              candidate.splice(incompleteIndex + 1, 0, structuredClone(candidate[incompleteIndex]));
+            });
+            rejectExactAxeProjection('pass-incomplete-bucket-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'primary', 'pass');
+              candidate[index].bucket = 'incomplete';
+            });
+            rejectExactAxeProjection('rule-index-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'primary', 'rule-index');
+              candidate[index].ruleIndex += 1;
+            });
+            rejectExactAxeProjection('node-index-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'primary', 'node-index');
+              candidate[index].nodeIndex += 1;
+            });
+            rejectExactAxeProjection('primary-related-ordering-substitution', (candidate) => {
+              const primaryIndex = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'primary', 'primary');
+              const relatedIndex = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'any', 'related');
+              [candidate[primaryIndex], candidate[relatedIndex]] = [candidate[relatedIndex], candidate[primaryIndex]];
+            });
+            rejectExactAxeProjection('any-all-none-ordering-substitution', (candidate) => {
+              const indexes = ['any', 'all', 'none'].map((checkBucket) => projectionBindingIndex(candidate,
+                ({ bucket, ruleIndex, nodeIndex, checkBucket: observed }) => bucket === 'passes'
+                  && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && observed === checkBucket, checkBucket));
+              const values = indexes.map((index) => candidate[index]);
+              [candidate[indexes[0]], candidate[indexes[1]], candidate[indexes[2]]] = [values[1], values[2], values[0]];
+            });
+            rejectExactAxeProjection('check-index-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket, checkIndex }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'any' && checkIndex === 1, 'check-index');
+              candidate[index].checkIndex = 0;
+            });
+            rejectExactAxeProjection('check-id-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'any', 'check-id');
+              candidate[index].checkId = 'projection-substituted-check';
+            });
+            rejectExactAxeProjection('related-node-index-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket, checkIndex, relatedNodeIndex }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'any'
+                && checkIndex === 0 && relatedNodeIndex === 1, 'related-node-index');
+              candidate[index].relatedNodeIndex = 0;
+            });
+            rejectExactAxeProjection('target-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'primary', 'target');
+              candidate[index].target = ['.projection-substituted-target'];
+            });
+            rejectExactAxeProjection('html-substitution', (candidate) => {
+              const index = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'primary', 'html');
+              candidate[index].html = '<div class="projection-pass-order-0">substituted-html</div>';
+              candidate[index].liveHtml = candidate[index].html;
+              candidate[index].candidateSourceSha256 = [sha256(candidate[index].html)];
+            });
+            rejectExactAxeProjection('extra-binding-not-derivable-from-Axe', (candidate) => {
+              candidate.push(makeExactStaleBinding(candidate.at(-1), 'extra-binding'));
+            });
+            rejectExactAxeProjection('sorted-list-is-not-an-exact-Axe-projection', (candidate) => {
+              candidate.sort((left, right) => canonicalJson(left) < canonicalJson(right) ? -1
+                : canonicalJson(left) > canonicalJson(right) ? 1 : 0);
+              requireCondition(canonicalJson(candidate) !== canonicalJson(projectionBindings),
+                'Gate complete Axe projection sorted-list witness retained canonical order');
+            });
+            {
+              const candidate = structuredClone(projectionBindings);
+              candidate[0].candidateSourceSha256 = ['f'.repeat(64)];
+              validateAxeBindingCoverage(candidate, projectionAxe, 'Gate complete Axe projection digest-substitution coverage');
+              let digestError = null;
+              try { validateLiveNodeBindings(candidate, 'Gate complete Axe projection digest-substitution', false); } catch (error) { digestError = error; }
+              requireCondition(digestError instanceof Error && digestError.message.endsWith('contains an unapproved live-DOM mismatch'),
+                'Gate complete Axe projection digest substitution did not reach the exact live-evidence rejection');
+            }
+            {
+              const candidate = structuredClone(projectionBindings);
+              const relatedIndex = projectionBindingIndex(candidate, ({ bucket, ruleIndex, nodeIndex, checkBucket }) => bucket === 'passes'
+                && ruleIndex === projectionPassRuleIndex && nodeIndex === 0 && checkBucket === 'any', 'related-live-node');
+              candidate[relatedIndex].liveHtml = '<span class="projection-related-live-node">substituted</span>';
+              candidate[relatedIndex].candidateSourceSha256 = [sha256(candidate[relatedIndex].liveHtml)];
+              candidate[relatedIndex].exact = false;
+              validateAxeBindingCoverage(candidate, projectionAxe, 'Gate complete Axe projection related-live-node coverage');
+              let relatedError = null;
+              try { validateLiveNodeBindings(candidate, 'Gate complete Axe projection related-live-node', false); } catch (error) { relatedError = error; }
+              requireCondition(relatedError instanceof Error
+                && relatedError.message.endsWith('contains an unapproved live-DOM mismatch'),
+              'Gate complete Axe projection related live-node mismatch did not reach the exact live-evidence rejection');
+            }
             rejects('extra-key', (candidate) => { candidate.unreviewed = true; });
             rejects('missing-key', (candidate) => { delete candidate.summary; });
             rejects('second-collision', (candidate) => { candidate.rejectedAttempts.push(structuredClone(candidate.rejectedAttempts[0])); candidate.summary.rejectedAttempts = 2; candidate.summary.executedRejectedAttempts = 2; candidate.summary.periodicRefreshCollisions = 2; });
@@ -2818,23 +3056,20 @@ jobs:
             rejects('live-node-digest-substitution', (candidate) => {
               candidate.rejectedAttempts[0].liveNodeBindings[0].candidateSourceSha256 = ['f'.repeat(64)];
             });
-            rejects('related-live-node-mismatch', (candidate) => {
-              const attempt = candidate.rejectedAttempts[0];
-              const related = { target: ['.synthetic-related'], html: '<span class="synthetic-related">Related</span>' };
-              attempt.axe.passes[0].nodes[0].any[0].relatedNodes = [related];
-              attempt.liveNodeBindings.push({
-                bucket: 'passes', ruleIndex: 0, ruleId: 'color-contrast', nodeIndex: 0,
-                checkBucket: 'any', checkIndex: 0, checkId: 'color-contrast', relatedNodeIndex: 0,
-                target: related.target, html: related.html, liveHtml: '<span class="synthetic-related">Substituted</span>',
-                candidateSourceSha256: [sha256('<span class="synthetic-related">Substituted</span>')], matchCount: 1, exact: false
-              });
-            });
             rejects('missing-incomplete-adjudication', (candidate) => { candidate.rejectedAttempts[0].adjudications = []; });
             rejects('adjudication-raw-substitution', (candidate) => { candidate.rejectedAttempts[0].adjudications[0].html = '<span>Substituted</span>'; });
             rejects('failed-adjudication', (candidate) => { candidate.rejectedAttempts[0].adjudications[0].passes = false; });
             rejects('unresolved-adjudication', (candidate) => { candidate.rejectedAttempts[0].adjudications[0].unresolvedReason = 'synthetic-unresolved'; });
             rejects('adjudication-ratio-below-contract', (candidate) => { candidate.rejectedAttempts[0].adjudications[0].ratio = 6.3; });
-            rejects('pass-ratio-below-contract', (candidate) => { candidate.rejectedAttempts[0].axe.passes[0].nodes[0].any[0].data.contrastRatio = 6.3; });
+            rejects('pass-ratio-below-contract', (candidate) => {
+              const attempt = candidate.rejectedAttempts[0];
+              const passCheck = attempt.axe.passes.filter(({ id }) => id === 'color-contrast')
+                .flatMap(({ nodes }) => nodes.flatMap((node) => [...node.any, ...node.all, ...node.none]))
+                .find(({ id }) => id === 'color-contrast');
+              requireCondition(passCheck !== undefined && passCheck.data && typeof passCheck.data === 'object',
+                'Gate scan-attempt pass contrast witness is missing');
+              passCheck.data.contrastRatio = 6.3;
+            });
             rejects('missing-decorative-binding', (candidate) => { candidate.rejectedAttempts[0].decorativeBindings.entries.pop(); });
             rejects('decorative-binding-substitution', (candidate) => { candidate.rejectedAttempts[0].decorativeBindings.entries[0].outerHTML = '<span>Substituted</span>'; });
             rejects('duplicate-trace-request', (candidate) => {
@@ -2937,14 +3172,31 @@ jobs:
               requireCondition(rejected, `Gate zero-collision ${label} document mutation was accepted`);
             };
             rejectsZeroDocument('cross-scan-origin-substitution', (candidateDocument) => {
-              for (const fence of [candidateDocument.scans[1].gateAttemptProof.beforeFence, candidateDocument.scans[1].gateAttemptProof.afterFence]) {
-                for (const record of fence.client.records) record.url = record.url.replace('http://127.0.0.1:3117', 'http://127.0.0.1:4999');
-                for (const delivery of fence.trace.deliveries) delivery.url = delivery.url.replace('http://127.0.0.1:3117', 'http://127.0.0.1:4999');
+              const fences = [...new Set([
+                candidateDocument.scans[1].gateAttemptProof.beforeFence,
+                candidateDocument.scans[1].gateAttemptProof.afterFence
+              ])];
+              const originalOrigin = new URL(fences[0].client.records[0].url).origin;
+              const replacementOrigin = originalOrigin === 'http://127.0.0.1:4999'
+                ? 'http://127.0.0.1:4998' : 'http://127.0.0.1:4999';
+              let mutatedUrls = 0;
+              const substituteOrigin = (value) => {
+                const parsed = new URL(value);
+                requireCondition(parsed.origin === originalOrigin,
+                  'Gate cross-scan-origin mutation witness contained mixed source origins');
+                mutatedUrls += 1;
+                return `${replacementOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+              };
+              for (const fence of fences) {
+                for (const record of fence.client.records) record.url = substituteOrigin(record.url);
+                for (const delivery of fence.trace.deliveries) delivery.url = substituteOrigin(delivery.url);
                 for (const proof of fence.generation.requests) {
-                  proof.client.url = proof.client.url.replace('http://127.0.0.1:3117', 'http://127.0.0.1:4999');
-                  proof.delivery.url = proof.delivery.url.replace('http://127.0.0.1:3117', 'http://127.0.0.1:4999');
+                  proof.client.url = substituteOrigin(proof.client.url);
+                  proof.delivery.url = substituteOrigin(proof.delivery.url);
                 }
               }
+              requireCondition(mutatedUrls > 0 && replacementOrigin !== originalOrigin,
+                'Gate cross-scan-origin mutation witness was a no-op');
             });
             rejectsZeroDocument('cross-scan-test-state-substitution', (candidateDocument) => {
               const replacement = 'f'.repeat(64);
@@ -3226,7 +3478,8 @@ jobs:
               artifact.conditionResults = conditions;
               artifact.independentCompletionEvidence.conditionResults = conditions;
             });
-            const node = { target: ['body'], html: '<body></body>', any: [{ id: 'color-contrast', data: {
+            const node = { target: ['div[role="status"] > strong'], html: exactGateSourceNodePairs[0].current,
+              any: [{ id: 'color-contrast', data: {
               messageKey: 'schema-self-test', contrastRatio: 6.31, expectedContrastRatio: '4.5', fgColor: '#ffffff', bgColor: '#000000'
             } }], all: [], none: [] };
             const passRule = { id: 'color-contrast', nodes: [node] };
