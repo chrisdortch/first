@@ -1,11 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
+  constants as fsConstants,
   chmodSync,
   existsSync,
+  fstatSync,
+  lchmodSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
@@ -48,6 +53,19 @@ const PROVIDER_RESPONSE_PROJECTION_HASH_DOMAIN = "canonical-sanitized-json-v1";
 const MAX_PROVIDER_REQUEST_DURATION_MS = 30 * 60_000;
 const PROVIDER_CREATED_AT_CLOCK_SKEW_MS = 60_000;
 const NO_PROVIDER_REQUEST_BODY = Object.freeze({ body: null });
+const FROZEN_WORKSPACE_ARCHIVE_PREFIX = "workspace/";
+const FROZEN_OUTPUT_ARCHIVE_PREFIX = `${FROZEN_WORKSPACE_ARCHIVE_PREFIX}.vercel/output/`;
+const EXTERNAL_DEPLOYMENT_INPUT_SCHEMA = "clover-vercel-file-path-map-external-inputs-v2";
+const REQUIRED_SERVER_FILES_APP_DIR_ONLY_PROFILE = "next-app-dir-only";
+const REQUIRED_SERVER_FILES_EXPANDED_PROFILE = "next-expanded-build-roots";
+const EXTERNAL_DEPLOYMENT_INPUT_ROOTS = Object.freeze([
+  "apps/clover-launch-studio/.next/",
+  "apps/clover-launch-studio/node_modules/"
+]);
+const PINNED_VENDOR_GENERIC_PATH_SAMPLE = Object.freeze({
+  path: "apps/clover-launch-studio/node_modules/next/dist/server/patch-error-inspect.js",
+  sha256: "7827c52811c9e79838881ec81dc22933682d26e36500d75f5e2184732317914b"
+});
 
 export function deriveRuntimeDeploymentKey(commit) {
   assertHex(commit, 40, "source commit");
@@ -209,7 +227,7 @@ function exactSourcePath(value) {
     value === "." ||
     value.startsWith("/") ||
     value.includes("\\") ||
-    /\0|\r|\n/u.test(value) ||
+    /[\u0000-\u001f\u007f]/u.test(value) ||
     path.posix.normalize(value) !== value ||
     value.split("/").includes("..")
   ) throw new Error(`unsafe source path: ${value}`);
@@ -494,6 +512,26 @@ function differingJsonKeys(before, after, prefix = "", differences = []) {
   return differences;
 }
 
+function jsonStringTokenLocations(value, token, prefix = "", locations = []) {
+  if (typeof value === "string") {
+    const count = value.split(token).length - 1;
+    if (count > 0) locations.push({ path: prefix, count });
+    return locations;
+  }
+  if (Array.isArray(value)) {
+    for (const [index, entry] of value.entries()) jsonStringTokenLocations(entry, token, `${prefix}[${index}]`, locations);
+    return locations;
+  }
+  if (value && typeof value === "object") {
+    for (const key of Object.keys(value).sort()) {
+      const keyCount = key.split(token).length - 1;
+      if (keyCount > 0) locations.push({ path: prefix ? `${prefix}.[key:${key}]` : `[key:${key}]`, count: keyCount });
+      jsonStringTokenLocations(value[key], token, prefix ? `${prefix}.${key}` : key, locations);
+    }
+  }
+  return locations;
+}
+
 function requireCanonicalAbsolutePath(value, label) {
   if (
     typeof value !== "string" ||
@@ -762,7 +800,7 @@ function containsPaymentCardCandidate(text) {
   return false;
 }
 
-function assertPublicOutputFile(entry, bytes, exactHostPaths = []) {
+function assertPublicOutputFile(entry, bytes, exactHostPaths = [], { genericHostPathScan = true } = {}) {
   const text = bytes.toString("utf8");
   const findings = [
     ["host-absolute-path", new RegExp("(?:/Use" + "rs/|/ho" + "me/|/pri" + "vate/(?:tmp|var/folders)/|/usr/loc" + "al/|/git" + "hub/workspace(?:/|\\b)|/work" + "space(?:/|\\b)|/tm" + "p(?:/|\\b)|/opt/hosted" + "toolcache(?:/|\\b)|[A-Za-z]:\\\\\\\\)", "u")],
@@ -772,7 +810,7 @@ function assertPublicOutputFile(entry, bytes, exactHostPaths = []) {
     ["slack-token", /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/u],
     ["aws-key", /\bAKIA[0-9A-Z]{16}\b/u],
     ["ssn", /\b\d{3}-\d{2}-\d{4}\b/u]
-  ].filter(([, expression]) => expression.test(text)).map(([label]) => label);
+  ].filter(([label, expression]) => (label !== "host-absolute-path" || genericHostPathScan) && expression.test(text)).map(([label]) => label);
   if (exactHostPaths.some((candidate) => typeof candidate === "string" && path.isAbsolute(candidate) && candidate !== RUNTIME_ROOT && text.includes(candidate))) findings.push("exact-host-path");
   if (containsPaymentCardCandidate(text)) findings.push("payment-card");
   if (findings.length) throw new Error(`CLOVER_PUBLIC_OUTPUT_REJECTED:${entry.path}:${findings.join(",")}`);
@@ -823,6 +861,341 @@ export function buildOutputManifest(outputRoot, { excludedPath = ATTESTATION_OUT
   });
 }
 
+function exactExternalDeploymentInputPath(value) {
+  const sourcePath = exactSourcePath(value);
+  if (!EXTERNAL_DEPLOYMENT_INPUT_ROOTS.some((root) => sourcePath.startsWith(root))) {
+    throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_PATH_REJECTED:${sourcePath}`);
+  }
+  return sourcePath;
+}
+
+function isVercelFunctionConfigPath(outputPath) {
+  return outputPath === ".vc-config.json" || outputPath.endsWith("/.vc-config.json");
+}
+
+function requireExternalDeploymentInputFile(repositoryRoot, sourcePath) {
+  const root = realpathSync(repositoryRoot);
+  const exactPath = exactExternalDeploymentInputPath(sourcePath);
+  let current = root;
+  const segments = exactPath.split("/");
+  for (const [index, segment] of segments.entries()) {
+    current = path.join(current, segment);
+    let stat;
+    try { stat = lstatSync(current); } catch { throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MISSING:${exactPath}`); }
+    if (stat.isSymbolicLink() || index < segments.length - 1 && !stat.isDirectory() || index === segments.length - 1 && !stat.isFile()) {
+      throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_TYPE_REJECTED:${exactPath}`);
+    }
+    const resolved = realpathSync(current);
+    if (resolved !== current || !resolved.startsWith(`${root}${path.sep}`)) {
+      throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_ESCAPE_REJECTED:${exactPath}`);
+    }
+  }
+  let descriptor;
+  let before;
+  let after;
+  let bytes;
+  try {
+    descriptor = openSync(current, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    before = fstatSync(descriptor);
+    if (!before.isFile() || before.nlink !== 1) throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_IDENTITY_REJECTED:${exactPath}`);
+    bytes = readFileSync(descriptor);
+    after = fstatSync(descriptor);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("CLOVER_")) throw error;
+    throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_IDENTITY_REJECTED:${exactPath}`);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  const stat = lstatSync(current);
+  const identityFields = ["dev", "ino", "mode", "nlink", "size", "mtimeMs", "ctimeMs"];
+  if (
+    !stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || realpathSync(current) !== current ||
+    identityFields.some((field) => before[field] !== after[field] || after[field] !== stat[field])
+  ) throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_IDENTITY_REJECTED:${exactPath}`);
+  const mode = stat.mode & 0o7777;
+  if (![0o644, 0o664, 0o755].includes(mode)) throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MODE_REJECTED:${exactPath}`);
+  return { absolutePath: current, mode, bytes };
+}
+
+function normalizeExternalDeploymentInputBytes(repositoryRoot, sourcePath, sourceBytes) {
+  const root = realpathSync(repositoryRoot);
+  const exactPath = exactExternalDeploymentInputPath(sourcePath);
+  let sealedBytes = Buffer.from(sourceBytes);
+  let normalization = null;
+  if (exactPath === "apps/clover-launch-studio/.next/required-server-files.json") {
+    const sourceText = decodeUtf8Fatal(sourceBytes, "CLOVER_EXTERNAL_REQUIRED_SERVER_FILES");
+    const before = parseJsonWithoutDuplicateKeys(sourceText, "CLOVER_EXTERNAL_REQUIRED_SERVER_FILES");
+    const appRoot = path.join(root, "apps/clover-launch-studio");
+    const configuration = before?.config;
+    const hasOutputFileTracingRoot = configuration && typeof configuration === "object" && !Array.isArray(configuration)
+      && Object.hasOwn(configuration, "outputFileTracingRoot");
+    const hasRepoRoot = configuration && typeof configuration === "object" && !Array.isArray(configuration)
+      && Object.hasOwn(configuration, "repoRoot");
+    const hasTurbopack = configuration && typeof configuration === "object" && !Array.isArray(configuration)
+      && Object.hasOwn(configuration, "turbopack");
+    const hasTurbopackRoot = hasTurbopack && configuration.turbopack && typeof configuration.turbopack === "object"
+      && !Array.isArray(configuration.turbopack) && Object.hasOwn(configuration.turbopack, "root");
+    const compactProfile = !hasOutputFileTracingRoot && !hasRepoRoot && !hasTurbopack;
+    const expandedProfile = hasOutputFileTracingRoot && hasRepoRoot && hasTurbopackRoot;
+    const profile = expandedProfile ? REQUIRED_SERVER_FILES_EXPANDED_PROFILE : REQUIRED_SERVER_FILES_APP_DIR_ONLY_PROFILE;
+    const expectedDifferences = expandedProfile
+      ? ["appDir", "config.outputFileTracingRoot", "config.repoRoot", "config.turbopack.root"]
+      : ["appDir"];
+    const rootOccurrenceCount = expectedDifferences.length;
+    const expectedRootLocations = expectedDifferences.map((field) => ({ path: field, count: 1 }));
+    if (
+      before?.appDir !== appRoot || !configuration || typeof configuration !== "object" || Array.isArray(configuration) ||
+      (!compactProfile && !expandedProfile) ||
+      (expandedProfile && (configuration.outputFileTracingRoot !== root || configuration.repoRoot !== appRoot ||
+        configuration.turbopack.root !== root)) ||
+      sourceText.split(root).length - 1 !== rootOccurrenceCount || sourceText.includes(RUNTIME_ROOT) ||
+      canonicalJson(jsonStringTokenLocations(before, root)) !== canonicalJson(expectedRootLocations) ||
+      jsonStringTokenLocations(before, RUNTIME_ROOT).length !== 0
+    ) throw new Error("CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED");
+    const sealedText = sourceText.split(root).join(RUNTIME_ROOT);
+    const after = parseJsonWithoutDuplicateKeys(sealedText, "CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_NORMALIZED");
+    const differences = differingJsonKeys(before, after);
+    if (
+      canonicalJson(differences) !== canonicalJson(expectedDifferences) || after.appDir !== `${RUNTIME_ROOT}/apps/clover-launch-studio` ||
+      (expandedProfile && (after.config.outputFileTracingRoot !== RUNTIME_ROOT ||
+        after.config.repoRoot !== `${RUNTIME_ROOT}/apps/clover-launch-studio` || after.config.turbopack.root !== RUNTIME_ROOT)) ||
+      sealedText.split(RUNTIME_ROOT).length - 1 !== rootOccurrenceCount || sealedText.includes(root) ||
+      canonicalJson(jsonStringTokenLocations(after, RUNTIME_ROOT)) !== canonicalJson(expectedRootLocations) ||
+      jsonStringTokenLocations(after, root).length !== 0
+    ) throw new Error("CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_NORMALIZATION_REJECTED");
+    assertPublicOutputFile(
+      { path: exactPath },
+      Buffer.from(`${canonicalJson(after)}\n`, "utf8"),
+      [root]
+    );
+    sealedBytes = Buffer.from(sealedText, "utf8");
+    normalization = {
+      classification: "next-required-server-files-runtime-root",
+      profile,
+      fields: expectedDifferences,
+      rootOccurrenceCount,
+      beforeSha256: sha256(sourceBytes),
+      afterSha256: sha256(sealedBytes)
+    };
+  }
+  const pinnedVendorSample = exactPath === PINNED_VENDOR_GENERIC_PATH_SAMPLE.path && sha256(sealedBytes) === PINNED_VENDOR_GENERIC_PATH_SAMPLE.sha256;
+  assertPublicOutputFile({ path: exactPath }, sealedBytes, [root], { genericHostPathScan: !pinnedVendorSample });
+  return { sealedBytes, normalization };
+}
+
+export function buildExternalDeploymentInputManifest(outputRoot, repositoryRoot, { expectedManifest = null } = {}) {
+  const output = realpathSync(outputRoot);
+  const outputManifest = buildOutputManifest(output, { excludedPath: null });
+  if (outputManifest.symlinks.some(({ path: outputPath }) => isVercelFunctionConfigPath(outputPath))) {
+    throw new Error("CLOVER_VC_CONFIG_SYMLINK_REJECTED");
+  }
+  const configEntries = outputManifest.files.filter(({ path: outputPath }) => isVercelFunctionConfigPath(outputPath));
+  const referencedByPath = new Map();
+  const configs = [];
+  let totalReferenceCount = 0;
+  for (const configEntry of configEntries) {
+    const configPath = path.join(output, ...configEntry.path.split("/"));
+    const configBytes = readFileSync(configPath);
+    const config = parseExactJsonBytes(configBytes, `CLOVER_VC_CONFIG:${configEntry.path}`);
+    const map = config?.filePathMap;
+    if (map !== undefined && (!map || typeof map !== "object" || Array.isArray(map))) {
+      throw new Error(`CLOVER_VC_CONFIG_FILE_PATH_MAP_REJECTED:${configEntry.path}`);
+    }
+    const functionDirectory = path.posix.dirname(configEntry.path);
+    const pathFields = [["handler", config?.handler], ["entrypoint", config?.entrypoint]].filter(([, value]) => value !== undefined);
+    if (pathFields.length !== 1 || config?.assets !== undefined && (
+      !config.assets || typeof config.assets !== "object" || Object.keys(config.assets).length !== 0
+    )) throw new Error(`CLOVER_VC_CONFIG_CONTAINED_INPUT_REJECTED:${configEntry.path}`);
+    const containedInputs = pathFields.map(([field, rawPath]) => {
+      const relativePath = exactSourcePath(rawPath);
+      const containedPath = exactSourcePath(functionDirectory === "." ? relativePath : `${functionDirectory}/${relativePath}`);
+      if (functionDirectory !== "." && !containedPath.startsWith(`${functionDirectory}/`)) {
+        throw new Error(`CLOVER_VC_CONFIG_CONTAINED_INPUT_REJECTED:${configEntry.path}`);
+      }
+      const containedEntry = outputManifest.files.find(({ path: outputPath }) => outputPath === containedPath);
+      if (!containedEntry) throw new Error(`CLOVER_VC_CONFIG_CONTAINED_INPUT_MISSING:${configEntry.path}:${field}`);
+      return { field, relativePath, path: containedPath, mode: containedEntry.mode, bytes: containedEntry.bytes, sha256: containedEntry.sha256 };
+    });
+    const references = [];
+    for (const [rawKey, rawValue] of Object.entries(map ?? {}).sort(([left], [right]) => compareUtf8(left, right))) {
+      if (typeof rawValue !== "string" || rawKey !== rawValue) {
+        throw new Error(`CLOVER_VC_CONFIG_FILE_PATH_MAP_IDENTITY_REJECTED:${configEntry.path}`);
+      }
+      const externalPath = exactExternalDeploymentInputPath(rawValue);
+      if (references.at(-1) === externalPath) throw new Error(`CLOVER_VC_CONFIG_FILE_PATH_MAP_DUPLICATE_REJECTED:${configEntry.path}`);
+      references.push(externalPath);
+      totalReferenceCount += 1;
+      const referencedBy = referencedByPath.get(externalPath) ?? [];
+      referencedBy.push(configEntry.path);
+      referencedByPath.set(externalPath, referencedBy);
+    }
+    configs.push({
+      path: configEntry.path,
+      bytes: configEntry.bytes,
+      sha256: configEntry.sha256,
+      referenceCount: references.length,
+      references,
+      containedInputs
+    });
+  }
+  if (referencedByPath.size > 0 && repositoryRoot === undefined) throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_REPOSITORY_REQUIRED");
+  if (expectedManifest !== null) {
+    exactKeys(expectedManifest, [
+      "schemaVersion", "allowedRoots", "configs", "files", "configCount", "totalReferenceCount", "regularFileCount",
+      "aggregateRegularFileBytes", "aggregateSourceRegularFileBytes", "pathListSha256", "sourceInventorySha256",
+      "sealedInventorySha256", "rootSha256"
+    ], "CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MANIFEST");
+    const expectedBody = { ...expectedManifest };
+    delete expectedBody.rootSha256;
+    if (
+      expectedManifest.schemaVersion !== EXTERNAL_DEPLOYMENT_INPUT_SCHEMA ||
+      expectedManifest.rootSha256 !== sha256(`${canonicalJson(expectedBody)}\n`) ||
+      canonicalJson(expectedManifest.allowedRoots) !== canonicalJson(EXTERNAL_DEPLOYMENT_INPUT_ROOTS) ||
+      canonicalJson(expectedManifest.configs) !== canonicalJson(configs) || expectedManifest.configCount !== configs.length ||
+      expectedManifest.totalReferenceCount !== totalReferenceCount || !Array.isArray(expectedManifest.files) ||
+      expectedManifest.regularFileCount !== referencedByPath.size
+    ) throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MANIFEST_REJECTED");
+    let aggregateRegularFileBytes = 0;
+    let aggregateSourceRegularFileBytes = 0;
+    let previousExternalPath = null;
+    for (const expectedFile of expectedManifest.files) {
+      exactKeys(expectedFile, [
+        "path", "mode", "bytes", "sha256", "sourceBytes", "sourceSha256", "normalization", "referencedBy"
+      ], "CLOVER_EXTERNAL_DEPLOYMENT_INPUT_FILE");
+      const externalPath = exactExternalDeploymentInputPath(expectedFile.path);
+      if (
+        previousExternalPath !== null && compareUtf8(previousExternalPath, externalPath) >= 0 ||
+        typeof expectedFile.mode !== "string" || !/^(?:0644|0664|0755)$/u.test(expectedFile.mode) ||
+        !Number.isSafeInteger(expectedFile.bytes) || expectedFile.bytes < 0 ||
+        !Number.isSafeInteger(expectedFile.sourceBytes) || expectedFile.sourceBytes < 0 ||
+        typeof expectedFile.sha256 !== "string" || !/^[0-9a-f]{64}$/u.test(expectedFile.sha256) ||
+        typeof expectedFile.sourceSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(expectedFile.sourceSha256) ||
+        !Array.isArray(expectedFile.referencedBy)
+      ) throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_FILE_REJECTED");
+      previousExternalPath = externalPath;
+      if (expectedFile.normalization === null) {
+        if (
+          externalPath === "apps/clover-launch-studio/.next/required-server-files.json" ||
+          expectedFile.sourceBytes !== expectedFile.bytes || expectedFile.sourceSha256 !== expectedFile.sha256
+        ) {
+          throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_NORMALIZATION_REJECTED");
+        }
+      } else {
+        exactKeys(expectedFile.normalization, [
+          "classification", "profile", "fields", "rootOccurrenceCount", "beforeSha256", "afterSha256"
+        ], "CLOVER_EXTERNAL_DEPLOYMENT_INPUT_NORMALIZATION");
+        const expandedNormalization = expectedFile.normalization.profile === REQUIRED_SERVER_FILES_EXPANDED_PROFILE;
+        const compactNormalization = expectedFile.normalization.profile === REQUIRED_SERVER_FILES_APP_DIR_ONLY_PROFILE;
+        const expectedFields = expandedNormalization
+          ? ["appDir", "config.outputFileTracingRoot", "config.repoRoot", "config.turbopack.root"]
+          : ["appDir"];
+        if (
+          externalPath !== "apps/clover-launch-studio/.next/required-server-files.json" ||
+          expectedFile.normalization.classification !== "next-required-server-files-runtime-root" ||
+          (!expandedNormalization && !compactNormalization) ||
+          canonicalJson(expectedFile.normalization.fields) !== canonicalJson(expectedFields) ||
+          expectedFile.normalization.rootOccurrenceCount !== expectedFields.length ||
+          expectedFile.normalization.beforeSha256 !== expectedFile.sourceSha256 || expectedFile.normalization.afterSha256 !== expectedFile.sha256
+        ) throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_NORMALIZATION_REJECTED");
+      }
+      const file = requireExternalDeploymentInputFile(repositoryRoot, externalPath);
+      if (
+        canonicalJson(expectedFile.referencedBy) !== canonicalJson(referencedByPath.get(externalPath)) ||
+        file.mode.toString(8).padStart(4, "0") !== expectedFile.mode || file.bytes.length !== expectedFile.bytes ||
+        sha256(file.bytes) !== expectedFile.sha256
+      ) throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_RESTORATION_REJECTED:${externalPath}`);
+      if (externalPath === "apps/clover-launch-studio/.next/required-server-files.json") {
+        const sealedText = decodeUtf8Fatal(file.bytes, "CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SEALED");
+        const sealed = parseJsonWithoutDuplicateKeys(sealedText, "CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SEALED");
+        const sealedConfiguration = sealed?.config;
+        const expandedNormalization = expectedFile.normalization?.profile === REQUIRED_SERVER_FILES_EXPANDED_PROFILE;
+        const compactNormalization = expectedFile.normalization?.profile === REQUIRED_SERVER_FILES_APP_DIR_ONLY_PROFILE;
+        const sealedHasOutputFileTracingRoot = sealedConfiguration && typeof sealedConfiguration === "object" && !Array.isArray(sealedConfiguration)
+          && Object.hasOwn(sealedConfiguration, "outputFileTracingRoot");
+        const sealedHasRepoRoot = sealedConfiguration && typeof sealedConfiguration === "object" && !Array.isArray(sealedConfiguration)
+          && Object.hasOwn(sealedConfiguration, "repoRoot");
+        const sealedHasTurbopack = sealedConfiguration && typeof sealedConfiguration === "object" && !Array.isArray(sealedConfiguration)
+          && Object.hasOwn(sealedConfiguration, "turbopack");
+        const expectedRootLocations = expectedFile.normalization.fields.map((field) => ({ path: field, count: 1 }));
+        if (
+          sealed?.appDir !== `${RUNTIME_ROOT}/apps/clover-launch-studio` || !sealedConfiguration ||
+          typeof sealedConfiguration !== "object" || Array.isArray(sealedConfiguration) ||
+          (!expandedNormalization && !compactNormalization) ||
+          (compactNormalization && (sealedHasOutputFileTracingRoot || sealedHasRepoRoot || sealedHasTurbopack)) ||
+          (expandedNormalization && (!sealedHasOutputFileTracingRoot || !sealedHasRepoRoot || !sealedHasTurbopack ||
+            sealedConfiguration.outputFileTracingRoot !== RUNTIME_ROOT ||
+            sealedConfiguration.repoRoot !== `${RUNTIME_ROOT}/apps/clover-launch-studio` ||
+            !sealedConfiguration.turbopack || typeof sealedConfiguration.turbopack !== "object" ||
+            Array.isArray(sealedConfiguration.turbopack) || sealedConfiguration.turbopack.root !== RUNTIME_ROOT)) ||
+          sealedText.split(RUNTIME_ROOT).length - 1 !== expectedFile.normalization.rootOccurrenceCount || sealedText.includes(realpathSync(repositoryRoot)) ||
+          canonicalJson(jsonStringTokenLocations(sealed, RUNTIME_ROOT)) !== canonicalJson(expectedRootLocations) ||
+          jsonStringTokenLocations(sealed, realpathSync(repositoryRoot)).length !== 0
+        ) throw new Error("CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SEALED_REJECTED");
+        assertPublicOutputFile(
+          { path: externalPath },
+          Buffer.from(`${canonicalJson(sealed)}\n`, "utf8"),
+          [realpathSync(repositoryRoot)]
+        );
+      }
+      const pinnedVendorSample = externalPath === PINNED_VENDOR_GENERIC_PATH_SAMPLE.path && expectedFile.sha256 === PINNED_VENDOR_GENERIC_PATH_SAMPLE.sha256;
+      assertPublicOutputFile({ path: externalPath }, file.bytes, [realpathSync(repositoryRoot)], { genericHostPathScan: !pinnedVendorSample });
+      aggregateRegularFileBytes += file.bytes.length;
+      aggregateSourceRegularFileBytes += expectedFile.sourceBytes;
+    }
+    if (
+      expectedManifest.files.length !== referencedByPath.size || aggregateRegularFileBytes !== expectedManifest.aggregateRegularFileBytes ||
+      aggregateSourceRegularFileBytes !== expectedManifest.aggregateSourceRegularFileBytes ||
+      new Set(expectedManifest.files.map(({ path: externalPath }) => externalPath)).size !== expectedManifest.files.length ||
+      expectedManifest.pathListSha256 !== sha256(`${expectedManifest.files.map(({ path: externalPath }) => externalPath).join("\n")}\n`) ||
+      expectedManifest.sourceInventorySha256 !== sha256(`${canonicalJson(expectedManifest.files.map((entry) => ({
+        path: entry.path, type: "file", mode: entry.mode, bytes: entry.sourceBytes, sha256: entry.sourceSha256
+      })))}\n`) ||
+      expectedManifest.sealedInventorySha256 !== sha256(`${canonicalJson(expectedManifest.files.map((entry) => ({
+        path: entry.path, type: "file", mode: entry.mode, bytes: entry.bytes, sha256: entry.sha256
+      })))}\n`)
+    ) throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MANIFEST_REJECTED");
+    return Object.freeze(structuredClone(expectedManifest));
+  }
+  const files = [];
+  let aggregateRegularFileBytes = 0;
+  let aggregateSourceRegularFileBytes = 0;
+  for (const externalPath of [...referencedByPath.keys()].sort(compareUtf8)) {
+    const file = requireExternalDeploymentInputFile(repositoryRoot, externalPath);
+    const normalized = normalizeExternalDeploymentInputBytes(repositoryRoot, externalPath, file.bytes);
+    aggregateRegularFileBytes += normalized.sealedBytes.length;
+    aggregateSourceRegularFileBytes += file.bytes.length;
+    files.push({
+      path: externalPath,
+      mode: file.mode.toString(8).padStart(4, "0"),
+      bytes: normalized.sealedBytes.length,
+      sha256: sha256(normalized.sealedBytes),
+      sourceBytes: file.bytes.length,
+      sourceSha256: sha256(file.bytes),
+      normalization: normalized.normalization,
+      referencedBy: [...referencedByPath.get(externalPath)].sort(compareUtf8)
+    });
+  }
+  const body = {
+    schemaVersion: EXTERNAL_DEPLOYMENT_INPUT_SCHEMA,
+    allowedRoots: [...EXTERNAL_DEPLOYMENT_INPUT_ROOTS],
+    configs,
+    files,
+    configCount: configs.length,
+    totalReferenceCount,
+    regularFileCount: files.length,
+    aggregateRegularFileBytes,
+    aggregateSourceRegularFileBytes,
+    pathListSha256: sha256(`${files.map(({ path: externalPath }) => externalPath).join("\n")}\n`),
+    sourceInventorySha256: sha256(`${canonicalJson(files.map((entry) => ({
+      path: entry.path, type: "file", mode: entry.mode, bytes: entry.sourceBytes, sha256: entry.sourceSha256
+    })))}\n`),
+    sealedInventorySha256: sha256(`${canonicalJson(files.map((entry) => ({
+      path: entry.path, type: "file", mode: entry.mode, bytes: entry.bytes, sha256: entry.sha256
+    })))}\n`)
+  };
+  return Object.freeze({ ...body, rootSha256: sha256(`${canonicalJson(body)}\n`) });
+}
+
 function writeOctal(buffer, offset, length, value) {
   const encoded = Math.trunc(value).toString(8).padStart(length - 1, "0");
   buffer.write(encoded.slice(-(length - 1)), offset, length - 1, "ascii");
@@ -864,17 +1237,46 @@ function tarHeader(archivePath, { mode, size, type, linkName = "" }) {
   return header;
 }
 
-export function deterministicOutputArchive(outputRoot) {
+export function deterministicOutputArchive(outputRoot, { repositoryRoot, externalInputs = null, sealedWorkspace = false } = {}) {
   const root = realpathSync(outputRoot);
   buildOutputManifest(root, { excludedPath: null });
+  const recomputedExternalInputs = buildExternalDeploymentInputManifest(root, repositoryRoot, {
+    expectedManifest: sealedWorkspace ? externalInputs : null
+  });
+  if (externalInputs !== null && canonicalJson(externalInputs) !== canonicalJson(recomputedExternalInputs)) {
+    throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MUTATION_REJECTED");
+  }
   const parts = [];
-  for (const entry of walk(root).sort((left, right) => compareUtf8(left.path, right.path))) {
-    const archivePath = `output/${entry.path}`;
+  const entries = [
+    ...walk(root).map((entry) => ({ ...entry, namespace: "output", archivePath: `${FROZEN_OUTPUT_ARCHIVE_PREFIX}${entry.path}` })),
+    ...recomputedExternalInputs.files.map((entry) => {
+      const source = requireExternalDeploymentInputFile(repositoryRoot, entry.path);
+      const normalized = sealedWorkspace
+        ? { sealedBytes: source.bytes, normalization: entry.normalization }
+        : normalizeExternalDeploymentInputBytes(repositoryRoot, entry.path, source.bytes);
+      if (
+        source.mode.toString(8).padStart(4, "0") !== entry.mode || !sealedWorkspace && (
+          source.bytes.length !== entry.sourceBytes || sha256(source.bytes) !== entry.sourceSha256
+        ) || normalized.sealedBytes.length !== entry.bytes ||
+        sha256(normalized.sealedBytes) !== entry.sha256
+      ) throw new Error(`CLOVER_EXTERNAL_DEPLOYMENT_INPUT_MUTATION_REJECTED:${entry.path}`);
+      return {
+        type: "file",
+        path: entry.path,
+        bytes: normalized.sealedBytes,
+        stat: { mode: source.mode },
+        namespace: "external",
+        archivePath: `${FROZEN_WORKSPACE_ARCHIVE_PREFIX}${entry.path}`
+      };
+    })
+  ].sort((left, right) => compareUtf8(left.archivePath, right.archivePath));
+  for (const entry of entries) {
+    const { archivePath } = entry;
     if (entry.type === "symlink") {
       parts.push(tarHeader(archivePath, { mode: entry.stat.mode & 0o7777, size: 0, type: "2", linkName: entry.target }));
       continue;
     }
-    const bytes = readFileSync(entry.absolutePath);
+    const bytes = entry.bytes ?? readFileSync(entry.absolutePath);
     const mode = entry.stat.mode & 0o7777;
     parts.push(tarHeader(archivePath, { mode, size: bytes.length, type: "0" }), bytes);
     const padding = (512 - (bytes.length % 512)) % 512;
@@ -892,17 +1294,20 @@ function exactKeys(value, expected, label) {
   return value;
 }
 
-function deploymentInputInventoryRoot(finalManifest) {
+function deploymentInputInventoryRoot(finalManifest, externalInputs) {
   const domain = {
-    schemaVersion: "clover-deployment-input-root-v1",
+    schemaVersion: "clover-deployment-input-root-v2",
     files: finalManifest.files,
-    symlinks: finalManifest.symlinks
+    symlinks: finalManifest.symlinks,
+    externalInputs
   };
   return sha256(`${canonicalJson(domain)}\n`);
 }
 
 export function buildDeploymentInputManifest({
   outputRoot,
+  repositoryRoot,
+  expectedExternalInputs = null,
   sourceProvenance,
   payloadManifest,
   attestation,
@@ -919,11 +1324,12 @@ export function buildDeploymentInputManifest({
   const attestationBytes = readFileSync(attestationPath);
   if (!Buffer.from(`${canonicalJson(attestation)}\n`, "utf8").equals(attestationBytes)) throw new Error("CLOVER_ATTESTATION_SUBSTITUTION_REJECTED");
   const finalManifest = buildOutputManifest(root, { excludedPath: null });
+  const externalInputs = buildExternalDeploymentInputManifest(root, repositoryRoot, { expectedManifest: expectedExternalInputs });
   const attestationEntry = finalManifest.files.find(({ path: outputPath }) => outputPath === ATTESTATION_OUTPUT_PATH);
   if (!attestationEntry || attestationEntry.sha256 !== sha256(attestationBytes) || attestationEntry.bytes !== attestationBytes.length) throw new Error("CLOVER_ATTESTATION_INVENTORY_REJECTED");
   const body = {
     documentType: "clover-tree-deployment-input-manifest",
-    schemaVersion: "0.4.0",
+    schemaVersion: "0.5.0",
     source: {
       commit: sourceProvenance.commit,
       tree: sourceProvenance.tree,
@@ -952,10 +1358,13 @@ export function buildDeploymentInputManifest({
     normalization,
     files: finalManifest.files,
     symlinks: finalManifest.symlinks,
+    externalInputs,
     finalRegularFileCount: finalManifest.regularFileCount,
     finalSymlinkCount: finalManifest.symlinkCount,
     aggregateFinalRegularFileBytes: finalManifest.aggregateRegularFileBytes,
-    deploymentInputRootSha256: deploymentInputInventoryRoot(finalManifest),
+    externalRegularFileCount: externalInputs.regularFileCount,
+    aggregateExternalRegularFileBytes: externalInputs.aggregateRegularFileBytes,
+    deploymentInputRootSha256: deploymentInputInventoryRoot(finalManifest, externalInputs),
     publicSanitized: true,
     privateDataAccessed: false,
     secretsIncluded: false,
@@ -985,8 +1394,8 @@ function parseDeterministicArchive(archive) {
   const bytes = Buffer.from(archive);
   if (bytes.length < 1_024 || bytes.length % 512 !== 0) throw new Error("CLOVER_ARCHIVE_STRUCTURE_REJECTED");
   const entries = [];
-  const paths = new Set();
-  let previousPath = null;
+  const archivePaths = new Set();
+  let previousArchivePath = null;
   let offset = 0;
   let zeroBlocks = 0;
   while (offset < bytes.length) {
@@ -1006,16 +1415,25 @@ function parseDeterministicArchive(archive) {
     const name = tarString(header.subarray(0, 100), "PATH");
     const prefix = tarString(header.subarray(345, 500), "PREFIX");
     const archivePath = prefix ? `${prefix}/${name}` : name;
-    if (!archivePath.startsWith("output/")) throw new Error("CLOVER_ARCHIVE_PATH_REJECTED");
-    const outputPath = exactSourcePath(archivePath.slice("output/".length));
-    if (paths.has(outputPath)) throw new Error("CLOVER_ARCHIVE_DUPLICATE_PATH_REJECTED");
-    if (previousPath !== null && compareUtf8(previousPath, outputPath) >= 0) throw new Error("CLOVER_ARCHIVE_ORDER_REJECTED");
-    previousPath = outputPath;
-    paths.add(outputPath);
+    let namespace;
+    let entryPath;
+    if (archivePath.startsWith(FROZEN_OUTPUT_ARCHIVE_PREFIX)) {
+      namespace = "output";
+      entryPath = exactSourcePath(archivePath.slice(FROZEN_OUTPUT_ARCHIVE_PREFIX.length));
+    } else if (archivePath.startsWith(FROZEN_WORKSPACE_ARCHIVE_PREFIX)) {
+      namespace = "external";
+      entryPath = exactExternalDeploymentInputPath(archivePath.slice(FROZEN_WORKSPACE_ARCHIVE_PREFIX.length));
+    } else {
+      throw new Error("CLOVER_ARCHIVE_PATH_REJECTED");
+    }
+    if (archivePaths.has(archivePath)) throw new Error("CLOVER_ARCHIVE_DUPLICATE_PATH_REJECTED");
+    if (previousArchivePath !== null && compareUtf8(previousArchivePath, archivePath) >= 0) throw new Error("CLOVER_ARCHIVE_ORDER_REJECTED");
+    previousArchivePath = archivePath;
+    archivePaths.add(archivePath);
     const mode = tarOctal(header.subarray(100, 108), "MODE");
     const size = tarOctal(header.subarray(124, 136), "SIZE");
     const type = String.fromCharCode(header[156]);
-    if (type !== "0" && type !== "2") throw new Error("CLOVER_ARCHIVE_TYPE_REJECTED");
+    if (type !== "0" && type !== "2" || namespace === "external" && type !== "0") throw new Error("CLOVER_ARCHIVE_TYPE_REJECTED");
     const permittedMode = type === "0" ? [0o644, 0o664, 0o755].includes(mode) : [0o755, 0o777].includes(mode);
     if (!permittedMode || type === "2" && size !== 0) throw new Error("CLOVER_ARCHIVE_MODE_REJECTED");
     if (offset + size > bytes.length) throw new Error("CLOVER_ARCHIVE_TRUNCATED");
@@ -1028,25 +1446,60 @@ function parseDeterministicArchive(archive) {
     if (target !== null && (target.length === 0 || path.isAbsolute(target) || target.includes("\0") || target.includes("\\") || /\r|\n/u.test(target) || target !== target.normalize("NFC"))) throw new Error("CLOVER_ARCHIVE_LINK_REJECTED");
     const canonicalHeader = tarHeader(archivePath, { mode, size, type, linkName: target ?? "" });
     if (!header.equals(canonicalHeader)) throw new Error("CLOVER_ARCHIVE_HEADER_REJECTED");
-    entries.push({ type: type === "0" ? "file" : "symlink", path: outputPath, mode, content, target });
+    entries.push({ type: type === "0" ? "file" : "symlink", namespace, path: entryPath, archivePath, mode, content, target });
   }
   if (zeroBlocks !== 2 || offset !== bytes.length || bytes.subarray(offset).some((byte) => byte !== 0)) throw new Error("CLOVER_ARCHIVE_TERMINATOR_REJECTED");
-  const entryByPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const entryByPath = new Map(entries.map((entry) => [entry.archivePath, entry]));
   const directories = new Set();
   for (const entry of entries) {
-    const segments = entry.path.split("/");
+    const segments = entry.archivePath.split("/");
     for (let index = 1; index < segments.length; index += 1) directories.add(segments.slice(0, index).join("/"));
   }
   for (const entry of entries) {
-    if (directories.has(entry.path)) throw new Error("CLOVER_ARCHIVE_PATH_COLLISION_REJECTED");
+    if (directories.has(entry.archivePath)) throw new Error("CLOVER_ARCHIVE_PATH_COLLISION_REJECTED");
+  }
+  const archivedExternalPaths = entries.filter(({ namespace }) => namespace === "external").map(({ path: entryPath }) => entryPath).sort(compareUtf8);
+  const referencedExternalPaths = new Set();
+  const archivedConfigs = entries.filter(({ namespace, type, path: entryPath }) =>
+    namespace === "output" && type === "file" && isVercelFunctionConfigPath(entryPath));
+  if (entries.some(({ namespace, type, path: entryPath }) =>
+    namespace === "output" && type === "symlink" && isVercelFunctionConfigPath(entryPath))) {
+    throw new Error("CLOVER_ARCHIVE_VC_CONFIG_SYMLINK_REJECTED");
+  }
+  for (const configEntry of archivedConfigs) {
+    const config = parseExactJsonBytes(configEntry.content, `CLOVER_ARCHIVE_VC_CONFIG:${configEntry.path}`);
+    const map = config?.filePathMap;
+    if (map !== undefined && (!map || typeof map !== "object" || Array.isArray(map))) throw new Error("CLOVER_ARCHIVE_VC_CONFIG_REJECTED");
+    for (const [rawKey, rawValue] of Object.entries(map ?? {})) {
+      if (typeof rawValue !== "string" || rawKey !== rawValue) throw new Error("CLOVER_ARCHIVE_VC_CONFIG_REJECTED");
+      referencedExternalPaths.add(exactExternalDeploymentInputPath(rawValue));
+    }
+    const pathFields = [["handler", config?.handler], ["entrypoint", config?.entrypoint]].filter(([, value]) => value !== undefined);
+    if (pathFields.length !== 1 || config?.assets !== undefined && (
+      !config.assets || typeof config.assets !== "object" || Object.keys(config.assets).length !== 0
+    )) throw new Error("CLOVER_ARCHIVE_VC_CONFIG_REJECTED");
+    for (const [, rawPath] of pathFields) {
+      const functionDirectory = path.posix.dirname(configEntry.path);
+      const relativePath = exactSourcePath(rawPath);
+      const containedPath = exactSourcePath(functionDirectory === "." ? relativePath : `${functionDirectory}/${relativePath}`);
+      const containedArchivePath = `${FROZEN_OUTPUT_ARCHIVE_PREFIX}${containedPath}`;
+      if (functionDirectory !== "." && !containedPath.startsWith(`${functionDirectory}/`) || entryByPath.get(containedArchivePath)?.type !== "file") {
+        throw new Error("CLOVER_ARCHIVE_VC_CONFIG_CONTAINED_INPUT_REJECTED");
+      }
+    }
+  }
+  if (canonicalJson(archivedExternalPaths) !== canonicalJson([...referencedExternalPaths].sort(compareUtf8))) {
+    throw new Error("CLOVER_ARCHIVE_EXTERNAL_INPUT_INVENTORY_REJECTED");
   }
   const resolveLink = (linkPath, target) => {
     const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(linkPath), target));
-    try { return exactSourcePath(resolved); } catch { throw new Error("CLOVER_ARCHIVE_LINK_REJECTED"); }
+    if (!resolved.startsWith(FROZEN_OUTPUT_ARCHIVE_PREFIX)) throw new Error("CLOVER_ARCHIVE_LINK_REJECTED");
+    try { exactSourcePath(resolved.slice(FROZEN_OUTPUT_ARCHIVE_PREFIX.length)); } catch { throw new Error("CLOVER_ARCHIVE_LINK_REJECTED"); }
+    return resolved;
   };
   for (const entry of entries.filter(({ type }) => type === "symlink")) {
-    const visited = new Set([entry.path]);
-    let resolved = resolveLink(entry.path, entry.target);
+    const visited = new Set([entry.archivePath]);
+    let resolved = resolveLink(entry.archivePath, entry.target);
     while (entryByPath.get(resolved)?.type === "symlink") {
       if (visited.has(resolved)) throw new Error("CLOVER_ARCHIVE_LINK_REJECTED");
       visited.add(resolved);
@@ -1058,18 +1511,19 @@ function parseDeterministicArchive(archive) {
   return entries;
 }
 
-export function restoreDeterministicOutputArchive(archive, restoreRoot) {
+export function restoreDeterministicOutputArchive(archive, restoreRoot, { expectedExternalInputs = null } = {}) {
   const destination = path.resolve(restoreRoot);
   if (existsSync(destination)) throw new Error("CLOVER_ARCHIVE_RESTORE_DESTINATION_REJECTED");
   const destinationParent = path.dirname(destination);
   const parentStat = lstatSync(destinationParent);
   if (!parentStat.isDirectory() || parentStat.isSymbolicLink() || realpathSync(destinationParent) !== destinationParent) throw new Error("CLOVER_ARCHIVE_RESTORE_DESTINATION_REJECTED");
   const entries = parseDeterministicArchive(archive);
-  const outputRoot = path.join(destination, "output");
+  const outputRoot = path.join(destination, ".vercel", "output");
   try {
     mkdirSync(outputRoot, { recursive: true, mode: 0o755 });
     for (const entry of entries.filter(({ type }) => type === "file")) {
-      const target = path.join(outputRoot, ...entry.path.split("/"));
+      const targetRoot = entry.namespace === "output" ? outputRoot : destination;
+      const target = path.join(targetRoot, ...entry.path.split("/"));
       mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
       writeFileSync(target, entry.content, { mode: entry.mode, flag: "wx" });
       chmodSync(target, entry.mode);
@@ -1078,8 +1532,13 @@ export function restoreDeterministicOutputArchive(archive, restoreRoot) {
       const target = path.join(outputRoot, ...entry.path.split("/"));
       mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
       symlinkSync(entry.target, target);
+      if ((lstatSync(target).mode & 0o7777) !== entry.mode) {
+        try { lchmodSync(target, entry.mode); } catch { throw new Error(`CLOVER_ARCHIVE_SYMLINK_MODE_REJECTED:${entry.path}`); }
+      }
+      if ((lstatSync(target).mode & 0o7777) !== entry.mode) throw new Error(`CLOVER_ARCHIVE_SYMLINK_MODE_REJECTED:${entry.path}`);
     }
     buildOutputManifest(outputRoot, { excludedPath: null });
+    buildExternalDeploymentInputManifest(outputRoot, destination, { expectedManifest: expectedExternalInputs });
     return outputRoot;
   } catch (error) {
     if (existsSync(destination)) rmSync(destination, { recursive: true, force: true });
@@ -1090,17 +1549,23 @@ export function restoreDeterministicOutputArchive(archive, restoreRoot) {
 function createFinalArchiveManifest({ archive, deploymentInputManifest, attestation, payloadManifest, sourceProvenance }) {
   const body = {
     documentType: "clover-tree-final-archive-manifest",
-    schemaVersion: "0.4.0",
+    schemaVersion: "0.5.0",
     sourceCommit: sourceProvenance.commit,
     buildInvocationId: sourceProvenance.buildInvocationId,
     deploymentInputRootSha256: deploymentInputManifest.deploymentInputRootSha256,
     deploymentInputManifestSelfHash: deploymentInputManifest.manifestSelfHash,
+    externalInputRootSha256: deploymentInputManifest.externalInputs.rootSha256,
+    externalInputPathListSha256: deploymentInputManifest.externalInputs.pathListSha256,
+    externalSourceInventorySha256: deploymentInputManifest.externalInputs.sourceInventorySha256,
+    externalSealedInventorySha256: deploymentInputManifest.externalInputs.sealedInventorySha256,
+    externalRegularFileCount: deploymentInputManifest.externalInputs.regularFileCount,
+    aggregateExternalRegularFileBytes: deploymentInputManifest.externalInputs.aggregateRegularFileBytes,
     payloadManifestRootSha256: payloadManifest.rootSha256,
     attestationRawSha256: deploymentInputManifest.attestation.rawSha256,
     attestationSelfHash: attestation.attestationHash,
     archiveBytes: archive.length,
     archiveSha256: sha256(archive),
-    archiveFormat: "deterministic-ustar-v1",
+    archiveFormat: "deterministic-frozen-workspace-ustar-v2",
     publicSanitized: true,
     privateDataAccessed: false,
     secretsIncluded: false,
@@ -1165,6 +1630,7 @@ function createDeploymentAttestationTransaction({ outputRoot, repositoryRoot, ev
   writeFileSync(manifestPath, `${canonicalJson(outputManifest)}\n`, { mode: 0o644, flag: "wx" });
   const deploymentInputManifest = buildDeploymentInputManifest({
     outputRoot: root,
+    repositoryRoot: repository,
     sourceProvenance: provenance,
     payloadManifest: outputManifest,
     attestation,
@@ -1172,7 +1638,7 @@ function createDeploymentAttestationTransaction({ outputRoot, repositoryRoot, ev
   });
   const deploymentInputManifestPath = path.join(evidence, DEPLOYMENT_INPUT_MANIFEST_FILE);
   writeFileSync(deploymentInputManifestPath, `${canonicalJson(deploymentInputManifest)}\n`, { mode: 0o644, flag: "wx" });
-  const archive = deterministicOutputArchive(root);
+  const archive = deterministicOutputArchive(root, { repositoryRoot: repository, externalInputs: deploymentInputManifest.externalInputs });
   const archivePath = path.join(evidence, FINAL_ARCHIVE_FILE);
   writeFileSync(archivePath, archive, { mode: 0o644, flag: "wx" });
   chmodSync(archivePath, 0o644);
@@ -1182,31 +1648,46 @@ function createDeploymentAttestationTransaction({ outputRoot, repositoryRoot, ev
   const restoreParent = mkdtempSync(path.join(tmpdir(), "clover-frozen-output-restore-"));
   const restoreRoot = path.join(realpathSync(restoreParent), "restored");
   try {
-    const restoredOutput = restoreDeterministicOutputArchive(archive, restoreRoot);
+    const restoredOutput = restoreDeterministicOutputArchive(archive, restoreRoot, { expectedExternalInputs: deploymentInputManifest.externalInputs });
     const restoredDeploymentInputManifest = buildDeploymentInputManifest({
       outputRoot: restoredOutput,
+      repositoryRoot: restoreRoot,
+      expectedExternalInputs: deploymentInputManifest.externalInputs,
       sourceProvenance: provenance,
       payloadManifest: outputManifest,
       attestation,
       normalization
     });
     if (canonicalJson(restoredDeploymentInputManifest) !== canonicalJson(deploymentInputManifest)) throw new Error("CLOVER_ARCHIVE_RESTORATION_IDENTITY_REJECTED");
-    if (!deterministicOutputArchive(restoredOutput).equals(archive)) throw new Error("CLOVER_ARCHIVE_RESTORATION_BYTES_REJECTED");
+    if (!deterministicOutputArchive(restoredOutput, {
+      repositoryRoot: restoreRoot,
+      externalInputs: restoredDeploymentInputManifest.externalInputs,
+      sealedWorkspace: true
+    }).equals(archive)) throw new Error("CLOVER_ARCHIVE_RESTORATION_BYTES_REJECTED");
   } finally {
     rmSync(restoreParent, { recursive: true, force: true });
   }
   let frozenOutput = null;
   if (frozenOutputRoot !== null) {
-    const frozenDestination = createFreshExternalDirectory(frozenOutputRoot, [root, evidence], "CLOVER_FROZEN_OUTPUT_DESTINATION");
-    frozenOutput = restoreDeterministicOutputArchive(archive, path.join(frozenDestination, ".vercel"));
+    const frozenDestination = validateFreshExternalDirectoryPath(frozenOutputRoot, [root, evidence], "CLOVER_FROZEN_OUTPUT_DESTINATION");
+    frozenOutput = restoreDeterministicOutputArchive(archive, frozenDestination, { expectedExternalInputs: deploymentInputManifest.externalInputs });
     const frozenManifest = buildDeploymentInputManifest({
       outputRoot: frozenOutput,
+      repositoryRoot: frozenDestination,
+      expectedExternalInputs: deploymentInputManifest.externalInputs,
       sourceProvenance: provenance,
       payloadManifest: outputManifest,
       attestation,
       normalization
     });
-    if (canonicalJson(frozenManifest) !== canonicalJson(deploymentInputManifest) || !deterministicOutputArchive(frozenOutput).equals(archive)) throw new Error("CLOVER_FROZEN_OUTPUT_IDENTITY_REJECTED");
+    if (
+      canonicalJson(frozenManifest) !== canonicalJson(deploymentInputManifest) ||
+      !deterministicOutputArchive(frozenOutput, {
+        repositoryRoot: frozenDestination,
+        externalInputs: frozenManifest.externalInputs,
+        sealedWorkspace: true
+      }).equals(archive)
+    ) throw new Error("CLOVER_FROZEN_OUTPUT_IDENTITY_REJECTED");
   }
   return {
     attestation,
@@ -1349,6 +1830,12 @@ function verifyLayerOneAttestation(attestation, provenance, payloadManifest) {
 export function verifyDeploymentInputEvidence({ outputRoot, repositoryRoot, evidenceDirectory, sourceProvenance = null }) {
   const root = realpathSync(outputRoot);
   const repository = realpathSync(repositoryRoot);
+  const outputParent = path.dirname(root);
+  const inferredWorkspace = path.basename(root) === "output" && path.basename(outputParent) === ".vercel"
+    ? path.dirname(outputParent)
+    : repository;
+  const deploymentWorkspace = inferredWorkspace === repository ? repository : requireCanonicalRealDirectory(inferredWorkspace, "CLOVER_FROZEN_WORKSPACE");
+  const sealedWorkspace = deploymentWorkspace !== repository;
   const evidence = realpathSync(evidenceDirectory);
   if (evidence === root || evidence.startsWith(`${root}${path.sep}`)) throw new Error("CLOVER_EXTERNAL_EVIDENCE_LOCATION_REJECTED");
   const provenance = sourceProvenance ?? deriveSourceProvenance({ repositoryRoot: repository });
@@ -1366,13 +1853,19 @@ export function verifyDeploymentInputEvidence({ outputRoot, repositoryRoot, evid
   verifyLayerOneAttestation(attestationRead.value, provenance, recomputedPayload);
   const recomputedDeploymentInput = buildDeploymentInputManifest({
     outputRoot: root,
+    repositoryRoot: deploymentWorkspace,
+    expectedExternalInputs: sealedWorkspace ? deploymentInputRead.value.externalInputs : null,
     sourceProvenance: provenance,
     payloadManifest: recomputedPayload,
     attestation: attestationRead.value,
     normalization: attestationRead.value.normalization
   });
   if (canonicalJson(deploymentInputRead.value) !== canonicalJson(recomputedDeploymentInput)) throw new Error("CLOVER_DEPLOYMENT_INPUT_MUTATION_REJECTED");
-  const recomputedArchive = deterministicOutputArchive(root);
+  const recomputedArchive = deterministicOutputArchive(root, {
+    repositoryRoot: deploymentWorkspace,
+    externalInputs: recomputedDeploymentInput.externalInputs,
+    sealedWorkspace
+  });
   if (!recomputedArchive.equals(archive)) throw new Error("CLOVER_ARCHIVE_SUBSTITUTION_REJECTED");
   const recomputedArchiveManifest = createFinalArchiveManifest({
     archive,
@@ -1384,9 +1877,12 @@ export function verifyDeploymentInputEvidence({ outputRoot, repositoryRoot, evid
   if (canonicalJson(archiveManifestRead.value) !== canonicalJson(recomputedArchiveManifest)) throw new Error("CLOVER_ARCHIVE_MANIFEST_REJECTED");
   const restoreParent = mkdtempSync(path.join(tmpdir(), "clover-frozen-output-verify-"));
   try {
-    const restoredOutput = restoreDeterministicOutputArchive(archive, path.join(realpathSync(restoreParent), "restored"));
+    const restoredWorkspace = path.join(realpathSync(restoreParent), "restored");
+    const restoredOutput = restoreDeterministicOutputArchive(archive, restoredWorkspace, { expectedExternalInputs: recomputedDeploymentInput.externalInputs });
     const restoredManifest = buildDeploymentInputManifest({
       outputRoot: restoredOutput,
+      repositoryRoot: restoredWorkspace,
+      expectedExternalInputs: recomputedDeploymentInput.externalInputs,
       sourceProvenance: provenance,
       payloadManifest: recomputedPayload,
       attestation: attestationRead.value,
@@ -1902,7 +2398,9 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     return matches[0];
   };
   const sourceChildNames = src.children.map((child) => safeNodeName(child.name)).sort(compareUtf8);
-  if (canonicalJson(sourceChildNames) !== canonicalJson([".vercel", "out"])) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  const expectsExternalInputs = verifiedEvidence.deploymentInputManifest.externalInputs.regularFileCount > 0;
+  const expectedSourceChildNames = expectsExternalInputs ? [".vercel", "apps", "out"] : [".vercel", "out"];
+  if (canonicalJson(sourceChildNames) !== canonicalJson(expectedSourceChildNames)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
   const vercel = childByName(src, ".vercel");
   exactKeys(vercel, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
   if (vercel.type !== "directory" || vercel.mode !== 0o40555 || !Array.isArray(vercel.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
@@ -1933,7 +2431,7 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   };
   validateIgnoredProviderTree(providerOut);
   const rawEntries = [];
-  const flatten = (directory, prefix = "") => {
+  const flatten = (directory, prefix) => {
     const names = directory.children.map((child) => safeNodeName(child.name));
     if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
     for (const node of directory.children.sort((left, right) => compareUtf8(left.name, right.name))) {
@@ -1956,20 +2454,29 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
       }
     }
   };
-  flatten(output);
+  flatten(output, ".vercel/output");
+  if (expectsExternalInputs) {
+    const apps = childByName(src, "apps");
+    exactKeys(apps, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
+    if (apps.type !== "directory" || apps.mode !== 0o40555 || !Array.isArray(apps.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+    flatten(apps, "apps");
+  }
   const contentByPath = new Map();
   for (const candidate of providerDeployment.contents) {
     exactKeys(candidate, ["path", "uid", "request", "response"], "CLOVER_PROVIDER_CONTENT");
     exactKeys(candidate.response, ["data"], "CLOVER_PROVIDER_CONTENT_RESPONSE");
-    if (typeof candidate.path !== "string" || !candidate.path.startsWith("src/.vercel/output/") || typeof candidate.uid !== "string" || !/^[0-9a-f]{40}$/u.test(candidate.uid)) throw new Error("CLOVER_PROVIDER_CONTENT_REJECTED");
-    const outputPath = exactSourcePath(candidate.path.slice("src/.vercel/output/".length));
-    if (contentByPath.has(outputPath)) throw new Error("CLOVER_PROVIDER_CONTENT_DUPLICATE_REJECTED");
+    if (typeof candidate.path !== "string" || !candidate.path.startsWith("src/") || typeof candidate.uid !== "string" || !/^[0-9a-f]{40}$/u.test(candidate.uid)) throw new Error("CLOVER_PROVIDER_CONTENT_REJECTED");
+    const workspacePath = exactSourcePath(candidate.path.slice("src/".length));
+    if (!workspacePath.startsWith(".vercel/output/") && !EXTERNAL_DEPLOYMENT_INPUT_ROOTS.some((root) => workspacePath.startsWith(root))) {
+      throw new Error("CLOVER_PROVIDER_CONTENT_REJECTED");
+    }
+    if (contentByPath.has(workspacePath)) throw new Error("CLOVER_PROVIDER_CONTENT_DUPLICATE_REJECTED");
     readRequest(candidate.request, {
       method: "GET",
       url: canonicalProviderUrl("v8", `deployments/${raw.id}/files/${candidate.uid}`, [["path", candidate.path], ["teamId", VERCEL_TEAM_ID]]),
       response: candidate.response
     }, "CLOVER_PROVIDER_CONTENT_REQUEST");
-    contentByPath.set(outputPath, { uid: candidate.uid, bytes: decodeCanonicalBase64(candidate.response.data, "CLOVER_PROVIDER_FILE_CONTENT") });
+    contentByPath.set(workspacePath, { uid: candidate.uid, bytes: decodeCanonicalBase64(candidate.response.data, "CLOVER_PROVIDER_FILE_CONTENT") });
   }
   const providerEntries = rawEntries.filter(({ type }) => type !== "directory").map((entry) => {
     const content = contentByPath.get(entry.path);
@@ -1981,13 +2488,16 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   }).sort((left, right) => compareUtf8(left.path, right.path));
   if (contentByPath.size !== providerEntries.length) throw new Error("CLOVER_PROVIDER_CONTENT_INVENTORY_REJECTED");
   const expectedEntries = [
-    ...verifiedEvidence.deploymentInputManifest.files.map((entry) => ({ type: "file", ...entry })),
-    ...verifiedEvidence.deploymentInputManifest.symlinks.map((entry) => ({ type: "symlink", ...entry }))
+    ...verifiedEvidence.deploymentInputManifest.files.map((entry) => ({ type: "file", ...entry, path: `.vercel/output/${entry.path}` })),
+    ...verifiedEvidence.deploymentInputManifest.symlinks.map((entry) => ({ type: "symlink", ...entry, path: `.vercel/output/${entry.path}` })),
+    ...verifiedEvidence.deploymentInputManifest.externalInputs.files.map((entry) => ({
+      type: "file", path: entry.path, mode: entry.mode, bytes: entry.bytes, sha256: entry.sha256
+    }))
   ].sort((left, right) => compareUtf8(left.path, right.path));
   const expectedDirectories = [...new Set(expectedEntries.flatMap(({ path: outputPath }) => {
     const segments = outputPath.split("/");
     return segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join("/"));
-  }))].sort(compareUtf8);
+  }))].filter((directory) => ![".vercel", ".vercel/output", "apps"].includes(directory)).sort(compareUtf8);
   const providerDirectories = rawEntries.filter(({ type }) => type === "directory").map(({ path: outputPath }) => outputPath).sort(compareUtf8);
   if (canonicalJson(providerEntries) !== canonicalJson(expectedEntries) || canonicalJson(providerDirectories) !== canonicalJson(expectedDirectories)) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH");
   if (requestIntervals.length < 27 || requestIntervals.length !== 27 + providerEntries.length) throw new Error("CLOVER_PROVIDER_OBSERVATION_INVENTORY_REJECTED");
@@ -2003,7 +2513,7 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   ) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED");
   const body = {
     documentType: "clover-tree-provider-deployment-receipt",
-    schemaVersion: "0.7.0",
+    schemaVersion: "0.8.0",
     provider: "vercel",
     generatedAt,
     providerRequestEvidenceSchemaVersion: PROVIDER_REQUEST_EVIDENCE_SCHEMA,
@@ -2038,6 +2548,9 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     archiveSha256: verifiedEvidence.archiveManifest.archiveSha256,
     finalRegularFileCount: verifiedEvidence.deploymentInputManifest.finalRegularFileCount,
     finalSymlinkCount: verifiedEvidence.deploymentInputManifest.finalSymlinkCount,
+    externalRegularFileCount: verifiedEvidence.deploymentInputManifest.externalInputs.regularFileCount,
+    externalRegularFileBytes: verifiedEvidence.deploymentInputManifest.externalInputs.aggregateRegularFileBytes,
+    externalInputRootSha256: verifiedEvidence.deploymentInputManifest.externalInputs.rootSha256,
     providerFileContentsRead: true,
     providerDeploymentReadEndpoint: providerDeployment.deployment.request.url,
     providerFileTreeReadEndpoint: providerDeployment.fileTree.request.url,
@@ -2164,6 +2677,9 @@ function main() {
       deploymentInputRootSha256: result.deploymentInputManifest.deploymentInputRootSha256,
       deploymentInputManifestSelfHash: result.deploymentInputManifest.manifestSelfHash,
       deploymentInputManifestRawSha256: result.deploymentInputManifestRawSha256,
+      externalInputRootSha256: result.deploymentInputManifest.externalInputs.rootSha256,
+      externalRegularFileCount: result.deploymentInputManifest.externalInputs.regularFileCount,
+      aggregateExternalRegularFileBytes: result.deploymentInputManifest.externalInputs.aggregateRegularFileBytes,
       archiveSha256: result.archiveSha256,
       archiveBytes: result.archiveBytes,
       archiveManifestSelfHash: result.archiveManifest.manifestSelfHash,
