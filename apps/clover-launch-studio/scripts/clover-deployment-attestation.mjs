@@ -42,6 +42,12 @@ export const VERCEL_CLI_INTEGRITY = "sha512-lChRklfQeumAGYSMiur5DUbUNFMxvuaoaAff
 export const VERCEL_BUILD_COMMAND = `npx --yes vercel@${VERCEL_CLI_VERSION} build --yes`;
 const RUNTIME_ROOT = "/var/task";
 const MAX_PROVIDER_RESPONSE_PROJECTION_BYTES = 32 * 1024 * 1024;
+const PROVIDER_REQUEST_EVIDENCE_SCHEMA = "clover-vercel-provider-request-evidence-v0.2";
+const PROVIDER_REQUEST_PROJECTION_HASH_DOMAIN = "canonical-public-sanitized-json-v1";
+const PROVIDER_RESPONSE_PROJECTION_HASH_DOMAIN = "canonical-sanitized-json-v1";
+const MAX_PROVIDER_REQUEST_DURATION_MS = 30 * 60_000;
+const PROVIDER_CREATED_AT_CLOCK_SKEW_MS = 60_000;
+const NO_PROVIDER_REQUEST_BODY = Object.freeze({ body: null });
 
 export function deriveRuntimeDeploymentKey(commit) {
   assertHex(commit, 40, "source commit");
@@ -1407,26 +1413,49 @@ function decodeCanonicalBase64(value, label) {
   return bytes;
 }
 
-function exactProviderRequest(value, { method, url, response, nowTime }, label) {
+function exactProviderRequest(value, { method, url, response, requestProjection = NO_PROVIDER_REQUEST_BODY, nowTime }, label) {
   exactKeys(value, [
-    "method", "url", "status", "redirected", "observedAt", "responseMediaTypeEssence", "responseCharset", "responseOtherMediaTypeParameters", "responseHashDomain",
+    "schemaVersion", "method", "url", "status", "requestStartedAt", "responseObservedAt", "transport",
+    "requestProjection", "requestProjectionHashDomain", "requestProjectionBytes", "requestProjectionSha256",
+    "responseMediaTypeEssence", "responseCharset", "responseOtherMediaTypeParameters", "responseHashDomain",
     "responseProjectionBytes", "responseProjectionSha256"
   ], label);
+  exactKeys(value.transport, [
+    "transportKind", "cliPackage", "cliVersion", "cliIntegrity", "responseView", "redirectTelemetry", "redirectClaim",
+    "callerInvocationCount", "automaticRetryPolicy", "actualWireAttemptCount"
+  ], `${label}_TRANSPORT`);
+  const requestBytes = Buffer.from(`${canonicalJson(requestProjection)}\n`, "utf8");
   const responseBytes = Buffer.from(`${canonicalJson(response)}\n`, "utf8");
-  const observedTime = Date.parse(value.observedAt);
+  const requestStartedTime = Date.parse(value.requestStartedAt);
+  const responseObservedTime = Date.parse(value.responseObservedAt);
+  const wireAttemptsExposed = Number.isSafeInteger(value.transport.actualWireAttemptCount) &&
+    value.transport.actualWireAttemptCount >= 1 && value.transport.actualWireAttemptCount <= 4;
   if (
-    value.method !== method || value.url !== url || value.status !== 200 || value.redirected !== false ||
-    !Number.isFinite(observedTime) || new Date(observedTime).toISOString() !== value.observedAt ||
-    observedTime > nowTime + 5_000 || observedTime < nowTime - 30 * 60_000 ||
+    value.schemaVersion !== PROVIDER_REQUEST_EVIDENCE_SCHEMA || value.method !== method || value.url !== url || value.status !== 200 ||
+    !Number.isFinite(requestStartedTime) || new Date(requestStartedTime).toISOString() !== value.requestStartedAt ||
+    !Number.isFinite(responseObservedTime) || new Date(responseObservedTime).toISOString() !== value.responseObservedAt ||
+    requestStartedTime > responseObservedTime || responseObservedTime - requestStartedTime > MAX_PROVIDER_REQUEST_DURATION_MS ||
+    responseObservedTime > nowTime + 5_000 || responseObservedTime < nowTime - MAX_PROVIDER_REQUEST_DURATION_MS ||
+    requestStartedTime < nowTime - MAX_PROVIDER_REQUEST_DURATION_MS ||
+    value.transport.transportKind !== "vercel-api-cli" || value.transport.cliPackage !== "vercel" ||
+    value.transport.cliVersion !== VERCEL_CLI_VERSION || value.transport.cliIntegrity !== VERCEL_CLI_INTEGRITY ||
+    value.transport.responseView !== "final-json-response-only" ||
+    value.transport.redirectTelemetry !== "not-exposed-by-vercel-api-cli" || value.transport.redirectClaim !== null ||
+    value.transport.callerInvocationCount !== 1 ||
+    value.transport.automaticRetryPolicy !== "maximum-three-byte-identical-retries" ||
+    value.transport.actualWireAttemptCount !== "not-exposed" && !wireAttemptsExposed ||
+    canonicalJson(value.requestProjection) !== canonicalJson(requestProjection) ||
+    value.requestProjectionHashDomain !== PROVIDER_REQUEST_PROJECTION_HASH_DOMAIN ||
+    !Number.isSafeInteger(value.requestProjectionBytes) || value.requestProjectionBytes !== requestBytes.length ||
+    value.requestProjectionBytes > MAX_PROVIDER_RESPONSE_PROJECTION_BYTES || value.requestProjectionSha256 !== sha256(requestBytes) ||
     value.responseMediaTypeEssence !== "application/json" || value.responseCharset !== null && value.responseCharset !== "utf-8" ||
-    canonicalJson(value.responseOtherMediaTypeParameters) !== "[]" || value.responseHashDomain !== "canonical-sanitized-json-v1" ||
+    canonicalJson(value.responseOtherMediaTypeParameters) !== "[]" || value.responseHashDomain !== PROVIDER_RESPONSE_PROJECTION_HASH_DOMAIN ||
     !Number.isSafeInteger(value.responseProjectionBytes) || value.responseProjectionBytes !== responseBytes.length ||
-    value.responseProjectionBytes > MAX_PROVIDER_RESPONSE_PROJECTION_BYTES ||
-    value.responseProjectionSha256 !== sha256(responseBytes)
+    value.responseProjectionBytes > MAX_PROVIDER_RESPONSE_PROJECTION_BYTES || value.responseProjectionSha256 !== sha256(responseBytes)
   ) {
     throw new Error(`${label}_REJECTED`);
   }
-  return observedTime;
+  return Object.freeze({ requestStartedTime, responseObservedTime });
 }
 
 function canonicalProviderUrl(version, route, query = []) {
@@ -1554,62 +1583,142 @@ function exactProviderEffectSnapshot(value, { readRequest, label }) {
       validate: (response) => canonicalProviderOpaqueInventory(response, "environment-variable-name-scope-and-update-metadata-v1", `${label}_ENVIRONMENT_VARIABLES_RESPONSE`, { boundedLimit: 1_000, environmentVariables: true })
     }
   };
-  const times = [];
+  const intervals = [];
   for (const [key, definition] of Object.entries(definitions)) {
     exactKeys(value[key], ["request", "response"], `${label}_${key.toUpperCase()}`);
     definition.validate(value[key].response);
-    times.push(readRequest(value[key].request, { method: "GET", url: definition.url, response: value[key].response }, `${label}_${key.toUpperCase()}_REQUEST`));
+    intervals.push(readRequest(value[key].request, { method: "GET", url: definition.url, response: value[key].response }, `${label}_${key.toUpperCase()}_REQUEST`));
   }
-  return { ...value, earliestTime: Math.min(...times), latestTime: Math.max(...times) };
+  return {
+    ...value,
+    earliestRequestStartedTime: Math.min(...intervals.map(({ requestStartedTime }) => requestStartedTime)),
+    latestResponseObservedTime: Math.max(...intervals.map(({ responseObservedTime }) => responseObservedTime))
+  };
 }
 
-function exactProviderEvent(value, { action, url, readRequest }, label) {
-  const keys = ["action", "eventId", "observedAt", "bypassCountBefore", "bypassCountAfter", "operation", "request", "requestSemantics"];
-  if (action === "create") keys.push("createdEntry", "responseEntryCount");
+function exactProviderBypassEntry(value, label) {
+  exactKeys(value, ["providerCreatedAt", "createdByPresent", "correlationNoteSha256", "scope"], label);
+  if (
+    !Number.isSafeInteger(value.providerCreatedAt) || value.providerCreatedAt < 0 ||
+    value.createdByPresent !== true || typeof value.correlationNoteSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(value.correlationNoteSha256) ||
+    value.scope !== "automation-bypass"
+  ) throw new Error(`${label}_REJECTED`);
+  return value;
+}
+
+function exactProviderBypassReadback(value, { expectedCount, expectedEntry, url, readRequest }, label) {
+  exactKeys(value, ["request", "response"], label);
+  exactKeys(value.response, ["projectId", "teamId", "bypassCount", "activeEntry"], `${label}_RESPONSE`);
+  if (
+    value.response.projectId !== VERCEL_PROJECT_ID || value.response.teamId !== VERCEL_TEAM_ID ||
+    value.response.bypassCount !== expectedCount ||
+    expectedCount === 0 && value.response.activeEntry !== null ||
+    expectedCount === 1 && canonicalJson(exactProviderBypassEntry(value.response.activeEntry, `${label}_ACTIVE_ENTRY`)) !== canonicalJson(expectedEntry)
+  ) throw new Error(`${label}_RESPONSE_REJECTED`);
+  const interval = readRequest(value.request, { method: "GET", url, response: value.response }, `${label}_REQUEST`);
+  return { ...value, ...interval };
+}
+
+function exactProviderEvent(value, { action, url, projectReadUrl, readRequest, expectedCreatedEntry = null }, label) {
+  const keys = [
+    "action", "eventId", "observedAt", "bypassCountBefore", "bypassCountAfter", "operation", "request", "requestSemantics",
+    "beforeReadback", "afterReadback"
+  ];
+  if (action === "create") keys.push("createdEntry", "providerIdentityMatchedInMemory", "responseEntryCount");
   else keys.push("response");
   exactKeys(value, keys, label);
-  const time = Date.parse(value.observedAt);
+  const eventTime = Date.parse(value.observedAt);
   if (
     value.action !== action || typeof value.eventId !== "string" || !/^[a-z][A-Za-z0-9:_-]{7,127}$/u.test(value.eventId) ||
-    !Number.isFinite(time) || new Date(time).toISOString() !== value.observedAt ||
+    !Number.isFinite(eventTime) || new Date(eventTime).toISOString() !== value.observedAt ||
     value.operation !== (action === "create" ? "create-one-automation-bypass" : "revoke-exact-automation-bypass-without-regeneration") ||
     value.bypassCountBefore !== (action === "create" ? 0 : 1) || value.bypassCountAfter !== (action === "create" ? 1 : 0)
   ) throw new Error(`${label}_REJECTED`);
   if (action === "create") {
     exactKeys(value.requestSemantics, ["scope", "suppliedValue", "valueSource"], `${label}_REQUEST_SEMANTICS`);
-    exactKeys(value.createdEntry, ["createdAt", "createdByPresent", "scope"], `${label}_CREATED_ENTRY`);
+    const createdEntry = exactProviderBypassEntry(value.createdEntry, `${label}_CREATED_ENTRY`);
     if (
       value.requestSemantics.scope !== "automation-bypass" || value.requestSemantics.suppliedValue !== false || value.requestSemantics.valueSource !== "provider-generated" ||
-      value.responseEntryCount !== 1 || value.createdEntry.scope !== "automation-bypass" ||
-      !Number.isSafeInteger(value.createdEntry.createdAt) || value.createdEntry.createdAt !== time ||
-      value.createdEntry.createdByPresent !== true
+      value.responseEntryCount !== 1 || value.providerIdentityMatchedInMemory !== true
     ) throw new Error(`${label}_CREATED_ENTRY_REJECTED`);
-    const requestTime = readRequest(value.request, {
+    const before = exactProviderBypassReadback(value.beforeReadback, {
+      expectedCount: 0, expectedEntry: null, url: projectReadUrl, readRequest
+    }, `${label}_BEFORE_READBACK`);
+    const request = readRequest(value.request, {
       method: "PATCH",
       url,
-      response: { createdEntry: value.createdEntry, responseEntryCount: value.responseEntryCount }
+      requestProjection: {
+        generate: {
+          correlationNoteSha256: createdEntry.correlationNoteSha256,
+          suppliedValue: false,
+          valueSource: "provider-generated"
+        }
+      },
+      response: { createdEntry, responseEntryCount: value.responseEntryCount }
     }, `${label}_REQUEST`);
-    if (requestTime !== time) throw new Error(`${label}_TIME_REJECTED`);
-  } else {
-    exactKeys(value.requestSemantics, ["exactCreatedBypass", "regenerate"], `${label}_REQUEST_SEMANTICS`);
-    if (value.requestSemantics.exactCreatedBypass !== true || value.requestSemantics.regenerate !== false) throw new Error(`${label}_REQUEST_SEMANTICS_REJECTED`);
-    exactKeys(value.response, ["protectionBypass"], `${label}_RESPONSE`);
-    exactKeys(value.response.protectionBypass, [], `${label}_RESPONSE_BYPASS`);
-    const requestTime = readRequest(value.request, { method: "PATCH", url, response: value.response }, `${label}_REQUEST`);
-    if (requestTime !== time) throw new Error(`${label}_TIME_REJECTED`);
+    const after = exactProviderBypassReadback(value.afterReadback, {
+      expectedCount: 1, expectedEntry: createdEntry, url: projectReadUrl, readRequest
+    }, `${label}_AFTER_READBACK`);
+    if (
+      eventTime !== request.responseObservedTime || before.responseObservedTime > request.requestStartedTime ||
+      request.responseObservedTime > after.requestStartedTime ||
+      createdEntry.providerCreatedAt < request.requestStartedTime - PROVIDER_CREATED_AT_CLOCK_SKEW_MS ||
+      createdEntry.providerCreatedAt > request.responseObservedTime + PROVIDER_CREATED_AT_CLOCK_SKEW_MS
+    ) throw new Error(`${label}_TIME_REJECTED`);
+    return {
+      eventTime,
+      request,
+      createdEntry,
+      earliestRequestStartedTime: before.requestStartedTime,
+      latestResponseObservedTime: after.responseObservedTime
+    };
   }
-  return time;
+  exactKeys(value.requestSemantics, ["exactCreatedBypass", "regenerate"], `${label}_REQUEST_SEMANTICS`);
+  const boundCreatedEntry = exactProviderBypassEntry(expectedCreatedEntry, `${label}_EXPECTED_ENTRY`);
+  if (value.requestSemantics.exactCreatedBypass !== true || value.requestSemantics.regenerate !== false) {
+    throw new Error(`${label}_REQUEST_SEMANTICS_REJECTED`);
+  }
+  exactKeys(value.response, ["protectionBypass"], `${label}_RESPONSE`);
+  exactKeys(value.response.protectionBypass, [], `${label}_RESPONSE_BYPASS`);
+  const before = exactProviderBypassReadback(value.beforeReadback, {
+    expectedCount: 1, expectedEntry: boundCreatedEntry, url: projectReadUrl, readRequest
+  }, `${label}_BEFORE_READBACK`);
+  const request = readRequest(value.request, {
+    method: "PATCH",
+    url,
+    requestProjection: {
+      revoke: {
+        exactCreatedBypassIdentityMatchedInMemory: true,
+        regenerate: false,
+        secretDisposition: "in-memory-only-not-projected-or-hashed"
+      }
+    },
+    response: value.response
+  }, `${label}_REQUEST`);
+  const after = exactProviderBypassReadback(value.afterReadback, {
+    expectedCount: 0, expectedEntry: null, url: projectReadUrl, readRequest
+  }, `${label}_AFTER_READBACK`);
+  if (
+    eventTime !== request.responseObservedTime || before.responseObservedTime > request.requestStartedTime ||
+    request.responseObservedTime > after.requestStartedTime
+  ) throw new Error(`${label}_TIME_REJECTED`);
+  return {
+    eventTime,
+    request,
+    earliestRequestStartedTime: before.requestStartedTime,
+    latestResponseObservedTime: after.responseObservedTime
+  };
 }
 
 export function createProviderDeploymentReceipt({ providerDeployment, verifiedEvidence, now = new Date() }) {
   const nowTime = now instanceof Date ? now.getTime() : Number.NaN;
   if (!Number.isFinite(nowTime) || new Date(nowTime).toISOString() !== now.toISOString()) throw new Error("CLOVER_PROVIDER_RECEIPT_TIME_REJECTED");
   const generatedAt = new Date(nowTime).toISOString();
-  const observationTimes = [];
+  const requestIntervals = [];
   const readRequest = (value, specification, label) => {
-    const observedTime = exactProviderRequest(value, { ...specification, nowTime }, label);
-    observationTimes.push(observedTime);
-    return observedTime;
+    const interval = exactProviderRequest(value, { ...specification, nowTime }, label);
+    requestIntervals.push({ ...interval, label });
+    return interval;
   };
   exactKeys(providerDeployment, ["deployment", "deploymentInvocation", "fileTree", "contents", "protection", "providerEffects"], "CLOVER_PROVIDER_EVIDENCE");
   exactKeys(providerDeployment.deployment, ["request", "response"], "CLOVER_PROVIDER_DEPLOYMENT_READBACK");
@@ -1634,7 +1743,7 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     raw.meta.gitRemoteUrl !== "https://github.com/chrisdortch/first.git" || raw.meta.gitRootDirectory !== "apps/clover-launch-studio"
   ) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_REJECTED");
   if (typeof raw.url !== "string" || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+vercel\.app$/u.test(raw.url)) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_REJECTED");
-  const deploymentReadTime = readRequest(providerDeployment.deployment.request, {
+  const deploymentRead = readRequest(providerDeployment.deployment.request, {
     method: "GET",
     url: canonicalProviderUrl("v13", `deployments/${raw.id}`, [["teamId", VERCEL_TEAM_ID]]),
     response: raw
@@ -1670,14 +1779,15 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   ) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED");
 
   const effects = providerDeployment.providerEffects;
-  exactKeys(effects, ["afterDeployment", "beforeDeployment", "newDeploymentId"], "CLOVER_PROVIDER_EFFECTS");
+  exactKeys(effects, ["afterDeployment", "beforeDeployment", "newDeploymentId", "postRevocation"], "CLOVER_PROVIDER_EFFECTS");
   if (effects.newDeploymentId !== raw.id) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
   const effectsBefore = exactProviderEffectSnapshot(effects.beforeDeployment, { readRequest, label: "CLOVER_PROVIDER_EFFECT_BEFORE" });
   const effectsAfter = exactProviderEffectSnapshot(effects.afterDeployment, { readRequest, label: "CLOVER_PROVIDER_EFFECT_AFTER" });
+  const effectsPostRevocation = exactProviderEffectSnapshot(effects.postRevocation, { readRequest, label: "CLOVER_PROVIDER_EFFECT_POST_REVOCATION" });
   if (
-    effectsBefore.latestTime >= invocationStartedTime || invocationCompletedTime >= deploymentReadTime ||
-    deploymentReadTime > effectsAfter.earliestTime || invocationCompletedTime >= effectsAfter.earliestTime ||
-    effectsBefore.latestTime >= effectsAfter.earliestTime
+    effectsBefore.latestResponseObservedTime >= invocationStartedTime || invocationCompletedTime > deploymentRead.requestStartedTime ||
+    deploymentRead.responseObservedTime > effectsAfter.earliestRequestStartedTime ||
+    effectsBefore.latestResponseObservedTime >= effectsAfter.earliestRequestStartedTime
   ) throw new Error("CLOVER_PROVIDER_EFFECT_CHRONOLOGY_REJECTED");
   const beforeDeployments = effectsBefore.deployments.response;
   const afterDeployments = effectsAfter.deployments.response;
@@ -1714,31 +1824,58 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   exactKeys(protection, [
     "deploymentId", "baseline", "create", "revoke", "bypassCountSequence", "regenerationDisabled", "shareUrlCreated",
     "vercelCurlUsed", "bypassValueDisclosed", "bypassValuePersisted", "bypassValueUploaded", "bypassValueAttached", "bypassValueScreenshotted",
-    "ownerLoginRequested", "postRevocationAuthenticatedRequestCount"
+    "ownerLoginRequested", "postRevocationAuthenticatedApplicationRequestCount"
   ], "CLOVER_PROVIDER_PROTECTION");
   if (protection.deploymentId !== raw.id) throw new Error("CLOVER_PROVIDER_PROTECTION_REJECTED");
-  exactKeys(protection.baseline, ["observedAt", "request", "response"], "CLOVER_PROVIDER_PROTECTION_BASELINE");
+  exactKeys(protection.baseline, ["request", "response"], "CLOVER_PROVIDER_PROTECTION_BASELINE");
   const projectReadUrl = canonicalProviderUrl("v9", `projects/${VERCEL_PROJECT_ID}`, [["teamId", VERCEL_TEAM_ID]]);
   const bypassUrl = canonicalProviderUrl("v1", `projects/${VERCEL_PROJECT_ID}/protection-bypass`, [["teamId", VERCEL_TEAM_ID]]);
-  const baselineRequestTime = readRequest(protection.baseline.request, { method: "GET", url: projectReadUrl, response: protection.baseline.response }, "CLOVER_PROVIDER_PROTECTION_BASELINE_REQUEST");
-  const baselineTime = Date.parse(protection.baseline.observedAt);
-  if (
-    !Number.isFinite(baselineTime) || new Date(baselineTime).toISOString() !== protection.baseline.observedAt || baselineRequestTime !== baselineTime
-  ) throw new Error("CLOVER_PROVIDER_PROTECTION_TIME_REJECTED");
+  const baselineRequest = readRequest(protection.baseline.request, { method: "GET", url: projectReadUrl, response: protection.baseline.response }, "CLOVER_PROVIDER_PROTECTION_BASELINE_REQUEST");
   const baselineOrdinary = canonicalProtectionSnapshot(protection.baseline.response, "CLOVER_PROVIDER_PROTECTION_BASELINE");
-  const createTime = exactProviderEvent(protection.create, { action: "create", url: bypassUrl, readRequest }, "CLOVER_PROVIDER_PROTECTION_CREATE");
-  const revokeTime = exactProviderEvent(protection.revoke, { action: "revoke", url: bypassUrl, readRequest }, "CLOVER_PROVIDER_PROTECTION_REVOKE");
+  const createEvidence = exactProviderEvent(protection.create, {
+    action: "create", url: bypassUrl, projectReadUrl, readRequest
+  }, "CLOVER_PROVIDER_PROTECTION_CREATE");
+  const revokeEvidence = exactProviderEvent(protection.revoke, {
+    action: "revoke", url: bypassUrl, projectReadUrl, readRequest, expectedCreatedEntry: createEvidence.createdEntry
+  }, "CLOVER_PROVIDER_PROTECTION_REVOKE");
   const afterDeploymentProtection = { ...effectsAfter.project.response };
   delete afterDeploymentProtection.projectSettingsSha256;
   delete afterDeploymentProtection.accessPolicySha256;
+  const postRevocationProtection = { ...effectsPostRevocation.project.response };
+  delete postRevocationProtection.projectSettingsSha256;
+  delete postRevocationProtection.accessPolicySha256;
+  const postRevocationOrdinary = canonicalProtectionSnapshot(postRevocationProtection, "CLOVER_PROVIDER_POST_REVOCATION_PROTECTION");
+  const postRevocationProduction = effectsPostRevocation.deployments.response.entries.filter(({ target }) => target === "production");
   if (
-    effectsAfter.latestTime >= baselineTime || baselineTime >= createTime || createTime >= revokeTime ||
+    effectsPostRevocation.project.response.providerProjectUpdatedAt < effectsAfter.project.response.providerProjectUpdatedAt ||
+    canonicalJson(stableProjectSnapshot(effectsPostRevocation.project.response)) !== canonicalJson(stableProjectSnapshot(effectsAfter.project.response))
+  ) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_PROJECT_CHANGED");
+  if (canonicalJson(postRevocationProduction) !== canonicalJson(afterProduction)) {
+    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_PRODUCTION_CHANGED");
+  }
+  if (canonicalJson(effectsPostRevocation.deployments.response) !== canonicalJson(effectsAfter.deployments.response)) {
+    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_DEPLOYMENTS_CHANGED");
+  }
+  for (const [key, error] of [
+    ["domains", "CLOVER_PROVIDER_POST_REVOCATION_DOMAINS_CHANGED"],
+    ["aliases", "CLOVER_PROVIDER_POST_REVOCATION_ALIASES_CHANGED"],
+    ["customEnvironments", "CLOVER_PROVIDER_POST_REVOCATION_CUSTOM_ENVIRONMENTS_CHANGED"],
+    ["environmentVariables", "CLOVER_PROVIDER_POST_REVOCATION_ENVIRONMENT_VARIABLES_CHANGED"]
+  ]) {
+    if (canonicalJson(effectsPostRevocation[key].response) !== canonicalJson(effectsAfter[key].response)) throw new Error(error);
+  }
+  if (
+    effectsAfter.latestResponseObservedTime > baselineRequest.requestStartedTime ||
+    baselineRequest.responseObservedTime > createEvidence.earliestRequestStartedTime ||
+    createEvidence.latestResponseObservedTime > revokeEvidence.earliestRequestStartedTime ||
+    revokeEvidence.latestResponseObservedTime >= effectsPostRevocation.earliestRequestStartedTime ||
     canonicalJson(protection.baseline.response) !== canonicalJson(afterDeploymentProtection) ||
+    canonicalJson(baselineOrdinary) !== canonicalJson(postRevocationOrdinary) ||
     canonicalJson(protection.bypassCountSequence) !== "[0,1,0]" ||
     protection.regenerationDisabled !== true || protection.shareUrlCreated !== false || protection.vercelCurlUsed !== false ||
     protection.bypassValueDisclosed !== false || protection.bypassValuePersisted !== false || protection.bypassValueUploaded !== false ||
     protection.bypassValueAttached !== false || protection.bypassValueScreenshotted !== false || protection.ownerLoginRequested !== false ||
-    protection.postRevocationAuthenticatedRequestCount !== 0
+    protection.postRevocationAuthenticatedApplicationRequestCount !== 0
   ) throw new Error("CLOVER_PROVIDER_PROTECTION_REJECTED");
 
   const safeNodeName = (name) => {
@@ -1853,20 +1990,29 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   }))].sort(compareUtf8);
   const providerDirectories = rawEntries.filter(({ type }) => type === "directory").map(({ path: outputPath }) => outputPath).sort(compareUtf8);
   if (canonicalJson(providerEntries) !== canonicalJson(expectedEntries) || canonicalJson(providerDirectories) !== canonicalJson(expectedDirectories)) throw new Error("CLOVER_PROVIDER_DEPLOYMENT_INPUT_MISMATCH");
-  if (observationTimes.length < 17 || observationTimes.length !== 17 + providerEntries.length) throw new Error("CLOVER_PROVIDER_OBSERVATION_INVENTORY_REJECTED");
-  const earliestObservationTime = Math.min(...observationTimes);
-  const latestObservationTime = Math.max(...observationTimes);
-  if (latestObservationTime - earliestObservationTime > 30 * 60_000) throw new Error("CLOVER_PROVIDER_OBSERVATION_WINDOW_REJECTED");
-  if (latestObservationTime !== revokeTime) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED");
+  if (requestIntervals.length < 27 || requestIntervals.length !== 27 + providerEntries.length) throw new Error("CLOVER_PROVIDER_OBSERVATION_INVENTORY_REJECTED");
+  const earliestRequestStartedTime = Math.min(...requestIntervals.map(({ requestStartedTime }) => requestStartedTime));
+  const latestResponseObservedTime = Math.max(...requestIntervals.map(({ responseObservedTime }) => responseObservedTime));
+  const postRevocationIntervals = requestIntervals.filter(({ label }) => label.startsWith("CLOVER_PROVIDER_EFFECT_POST_REVOCATION_"));
+  const preFinalSnapshotIntervals = requestIntervals.filter(({ label }) => !label.startsWith("CLOVER_PROVIDER_EFFECT_POST_REVOCATION_"));
+  const latestPreFinalSnapshotResponseTime = Math.max(...preFinalSnapshotIntervals.map(({ responseObservedTime }) => responseObservedTime));
+  if (latestResponseObservedTime - earliestRequestStartedTime > MAX_PROVIDER_REQUEST_DURATION_MS) throw new Error("CLOVER_PROVIDER_OBSERVATION_WINDOW_REJECTED");
+  if (
+    postRevocationIntervals.length !== 6 || latestPreFinalSnapshotResponseTime >= effectsPostRevocation.earliestRequestStartedTime ||
+    latestResponseObservedTime !== effectsPostRevocation.latestResponseObservedTime
+  ) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED");
   const body = {
     documentType: "clover-tree-provider-deployment-receipt",
-    schemaVersion: "0.5.0",
+    schemaVersion: "0.7.0",
     provider: "vercel",
     generatedAt,
-    providerObservationEarliestAt: new Date(earliestObservationTime).toISOString(),
-    providerObservationLatestAt: new Date(latestObservationTime).toISOString(),
-    providerObservationSpanMilliseconds: latestObservationTime - earliestObservationTime,
-    providerObservationCount: observationTimes.length,
+    providerRequestEvidenceSchemaVersion: PROVIDER_REQUEST_EVIDENCE_SCHEMA,
+    providerControlPlaneTransportKind: "vercel-api-cli",
+    providerControlPlaneRedirectTelemetry: "not-exposed-by-vercel-api-cli",
+    providerRequestEarliestStartedAt: new Date(earliestRequestStartedTime).toISOString(),
+    providerResponseLatestObservedAt: new Date(latestResponseObservedTime).toISOString(),
+    providerRequestSpanMilliseconds: latestResponseObservedTime - earliestRequestStartedTime,
+    providerRequestCount: requestIntervals.length,
     projectId: raw.project.id,
     projectName: raw.project.name,
     projectFramework: raw.project.framework,
@@ -1904,33 +2050,45 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     deploymentExecutionExitCode: providerDeployment.deploymentInvocation.exitCode,
     deploymentInvocationReturnedId: providerDeployment.deploymentInvocation.returnedDeploymentId,
     deploymentInvocationReturnedImmutableUrl: providerDeployment.deploymentInvocation.returnedImmutableUrl,
-    providerEffectReadCount: 12,
+    providerEffectReadCount: 18,
     deploymentCountBefore: beforeDeployments.count,
     deploymentCountAfter: afterDeployments.count,
+    deploymentCountPostRevocation: effectsPostRevocation.deployments.response.count,
     newDeploymentCount: 1,
     newDeploymentId: raw.id,
     productionDeploymentCountBefore: beforeProduction.length,
     productionDeploymentCountAfter: afterProduction.length,
+    productionDeploymentCountPostRevocation: postRevocationProduction.length,
     productionInventorySha256Before: sha256(`${canonicalJson(beforeProduction)}\n`),
     productionInventorySha256After: sha256(`${canonicalJson(afterProduction)}\n`),
+    productionInventorySha256PostRevocation: sha256(`${canonicalJson(postRevocationProduction)}\n`),
     projectSettingsSha256Before: effectsBefore.project.response.projectSettingsSha256,
     projectSettingsSha256After: effectsAfter.project.response.projectSettingsSha256,
+    projectSettingsSha256PostRevocation: effectsPostRevocation.project.response.projectSettingsSha256,
     accessPolicySha256Before: effectsBefore.project.response.accessPolicySha256,
     accessPolicySha256After: effectsAfter.project.response.accessPolicySha256,
+    accessPolicySha256PostRevocation: effectsPostRevocation.project.response.accessPolicySha256,
     providerProjectUpdatedAtBeforeDeployment: effectsBefore.project.response.providerProjectUpdatedAt,
     providerProjectUpdatedAtAfterDeployment: effectsAfter.project.response.providerProjectUpdatedAt,
+    providerProjectUpdatedAtPostRevocation: effectsPostRevocation.project.response.providerProjectUpdatedAt,
     domainInventorySha256Before: effectsBefore.domains.response.inventorySha256,
     domainInventorySha256After: effectsAfter.domains.response.inventorySha256,
+    domainInventorySha256PostRevocation: effectsPostRevocation.domains.response.inventorySha256,
     aliasInventorySha256Before: effectsBefore.aliases.response.inventorySha256,
     aliasInventorySha256After: effectsAfter.aliases.response.inventorySha256,
+    aliasInventorySha256PostRevocation: effectsPostRevocation.aliases.response.inventorySha256,
     persistentEnvironmentCountBefore: effectsBefore.customEnvironments.response.count,
     persistentEnvironmentCountAfter: effectsAfter.customEnvironments.response.count,
+    persistentEnvironmentCountPostRevocation: effectsPostRevocation.customEnvironments.response.count,
     persistentEnvironmentInventorySha256Before: effectsBefore.customEnvironments.response.inventorySha256,
     persistentEnvironmentInventorySha256After: effectsAfter.customEnvironments.response.inventorySha256,
+    persistentEnvironmentInventorySha256PostRevocation: effectsPostRevocation.customEnvironments.response.inventorySha256,
     environmentVariableCountBefore: effectsBefore.environmentVariables.response.count,
     environmentVariableCountAfter: effectsAfter.environmentVariables.response.count,
+    environmentVariableCountPostRevocation: effectsPostRevocation.environmentVariables.response.count,
     environmentVariableMetadataInventorySha256Before: effectsBefore.environmentVariables.response.inventorySha256,
     environmentVariableMetadataInventorySha256After: effectsAfter.environmentVariables.response.inventorySha256,
+    environmentVariableMetadataInventorySha256PostRevocation: effectsPostRevocation.environmentVariables.response.inventorySha256,
     productionTrafficChanged: false,
     projectSettingsChanged: false,
     accessPolicyChanged: false,
@@ -1940,12 +2098,20 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     environmentVariableMetadataChanged: false,
     providerProjectUpdatedAtBefore: protection.baseline.response.providerProjectUpdatedAt,
     ordinaryProtectionBaselineSha256: sha256(`${canonicalJson(baselineOrdinary)}\n`),
-    ordinaryProtectionPreservationBasis: "authenticated-baseline-plus-scoped-protection-bypass-only-operations",
+    ordinaryProtectionFinalSha256: sha256(`${canonicalJson(postRevocationOrdinary)}\n`),
+    ordinaryProtectionPreservationBasis: "authoritative-post-revocation-full-provider-effect-readback",
+    postRevocationProviderEffectSha256: sha256(`${canonicalJson(effects.postRevocation)}\n`),
+    postRevocationProviderResponseLatestObservedAt: new Date(effectsPostRevocation.latestResponseObservedTime).toISOString(),
     finalAutomationBypassCount: 0,
     protectionEvidenceSha256: sha256(`${canonicalJson(protection)}\n`),
     automationBypassLifecycle: "0->1->0",
+    logicalCreateCallerInvocationCount: protection.create.request.transport.callerInvocationCount,
+    logicalRevokeCallerInvocationCount: protection.revoke.request.transport.callerInvocationCount,
+    automaticTransportRetryPolicy: "maximum-three-byte-identical-retries",
+    createActualWireAttemptCount: protection.create.request.transport.actualWireAttemptCount,
+    revokeActualWireAttemptCount: protection.revoke.request.transport.actualWireAttemptCount,
     regenerationDisabled: true,
-    postRevocationAuthenticatedRequestCount: 0,
+    postRevocationAuthenticatedApplicationRequestCount: 0,
     ssoProtectionPreserved: true,
     publicSanitized: true,
     privateDataAccessed: false,
