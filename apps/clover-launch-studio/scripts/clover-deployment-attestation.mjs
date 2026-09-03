@@ -59,6 +59,7 @@ const EXTERNAL_DEPLOYMENT_INPUT_SCHEMA = "clover-vercel-file-path-map-external-i
 const REQUIRED_SERVER_FILES_APP_DIR_ONLY_PROFILE = "next-app-dir-only";
 const REQUIRED_SERVER_FILES_EXPANDED_PROFILE = "next-expanded-build-roots";
 const REQUIRED_SERVER_FILES_REPOSITORY_ROOT_PROFILE = "next-repository-build-roots-runtime-server-disabled";
+const REQUIRED_SERVER_FILES_PATH = "apps/clover-launch-studio/.next/required-server-files.json";
 const EXTERNAL_DEPLOYMENT_INPUT_ROOTS = Object.freeze([
   "apps/clover-launch-studio/.next/",
   "apps/clover-launch-studio/node_modules/"
@@ -550,12 +551,56 @@ function requireLauncherSourceIdentity(configuration, sourceProvenance, label) {
   return configuration;
 }
 
-function verifyLauncherSourceIdentities(outputRoot, sourceProvenance) {
+function exactRequiredServerFilesConfiguration(bytes, label) {
+  const document = parseJsonWithoutDuplicateKeys(decodeUtf8Fatal(bytes, label), label);
+  const configuration = document?.config;
+  if (!configuration || typeof configuration !== "object" || Array.isArray(configuration)) {
+    throw new Error(`CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED:${label}`);
+  }
+  return configuration;
+}
+
+function requireLauncherRequiredServerFilesIdentity(outputRoot, expectedConfiguration, label, { requireInventory = true } = {}) {
   const launchers = walk(outputRoot).filter(({ type, path: outputPath }) =>
     type === "file" && isCanonicalNextFunctionLauncherPath(outputPath));
-  if (launchers.length === 0) throw new Error("CLOVER_LAUNCHER_SOURCE_IDENTITY_REJECTED:missing");
+  if (requireInventory && launchers.length === 0) {
+    throw new Error(`CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED:${label}:missing`);
+  }
   for (const launcher of launchers) {
-    const text = decodeUtf8Fatal(readFileSync(launcher.absolutePath), `CLOVER_LAUNCHER_SOURCE_IDENTITY:${launcher.path}`);
+    const text = decodeUtf8Fatal(readFileSync(launcher.absolutePath), `CLOVER_NORMALIZATION:${launcher.path}`);
+    const configuration = extractLauncherConfig(text, launcher.path);
+    if (canonicalJson(configuration) !== canonicalJson(expectedConfiguration)) {
+      throw new Error(`CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED:${label}:${launcher.path}`);
+    }
+  }
+}
+
+function requiredServerFilesConfigurationForLauncherIdentity({
+  repositoryRoot,
+  expectedRuntimeDeploymentKey = null,
+  expectedSourceProvenance = null,
+  sealedExternalInput = false,
+  label
+}) {
+  const requiredFile = requireExternalDeploymentInputFile(repositoryRoot, REQUIRED_SERVER_FILES_PATH);
+  const bytes = sealedExternalInput
+    ? requiredFile.bytes
+    : normalizeExternalDeploymentInputBytes(
+      repositoryRoot,
+      REQUIRED_SERVER_FILES_PATH,
+      requiredFile.bytes,
+      expectedRuntimeDeploymentKey,
+      expectedSourceProvenance
+    ).sealedBytes;
+  return exactRequiredServerFilesConfiguration(bytes, label);
+}
+
+function verifyLauncherSourceIdentities(outputRoot, sourceProvenance, { requireInventory = true } = {}) {
+  const launchers = walk(outputRoot).filter(({ type, path: outputPath }) =>
+    type === "file" && isCanonicalNextFunctionLauncherPath(outputPath));
+  if (requireInventory && launchers.length === 0) throw new Error("CLOVER_LAUNCHER_SOURCE_IDENTITY_REJECTED:missing");
+  for (const launcher of launchers) {
+    const text = decodeUtf8Fatal(readFileSync(launcher.absolutePath), `CLOVER_NORMALIZATION:${launcher.path}`);
     requireLauncherSourceIdentity(extractLauncherConfig(text, launcher.path), sourceProvenance, launcher.path);
   }
 }
@@ -767,6 +812,24 @@ export function requireExactVercelCliInvocation(builds) {
 export function normalizeGeneratedOutput({ outputRoot, checkoutRoot, sourceProvenance = null }) {
   const root = realpathSync(outputRoot);
   const sourceRoot = realpathSync(checkoutRoot);
+  const requiredFile = requireExternalDeploymentInputFile(sourceRoot, REQUIRED_SERVER_FILES_PATH);
+  const requiredSourceConfiguration = exactRequiredServerFilesConfiguration(
+    requiredFile.bytes,
+    "CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_SOURCE"
+  );
+  const normalizedRequiredServerFiles = normalizeExternalDeploymentInputBytes(
+    sourceRoot,
+    REQUIRED_SERVER_FILES_PATH,
+    requiredFile.bytes,
+    sourceProvenance?.runtimeDeploymentKey ?? null,
+    sourceProvenance
+  );
+  const requiredNormalizedConfiguration = exactRequiredServerFilesConfiguration(
+    normalizedRequiredServerFiles.sealedBytes,
+    "CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_NORMALIZED"
+  );
+  if (sourceProvenance !== null) verifyLauncherSourceIdentities(root, sourceProvenance, { requireInventory: false });
+  requireLauncherRequiredServerFilesIdentity(root, requiredSourceConfiguration, "source", { requireInventory: false });
   const buildsPath = requireInternalRegularFile(root, "builds.json", "CLOVER_BUILDS_FILE");
   const builds = parseExactJsonBytes(readFileSync(buildsPath), "CLOVER_BUILDS_JSON");
   if (builds.target !== "preview" || builds.error || builds.builds?.some((build) => build.error)) {
@@ -817,6 +880,7 @@ export function normalizeGeneratedOutput({ outputRoot, checkoutRoot, sourceProve
   for (const entry of walk(root).filter(({ type }) => type === "file")) {
     assertPublicOutputFile(entry, readFileSync(entry.absolutePath), [sourceRoot, cliRoot, nodeExecutable]);
   }
+  requireLauncherRequiredServerFilesIdentity(root, requiredNormalizedConfiguration, "normalized", { requireInventory: false });
   const sanitizedCliInvocation = Object.freeze({
     rawCliExecutable: replaceExact(rawCliExecutable, metadataReplacements),
     canonicalCliExecutable: replaceExact(canonicalCliExecutable, metadataReplacements),
@@ -968,7 +1032,10 @@ function requireCanonicalNextFunctionLauncherBindings({ files, symlinks, configR
   for (const { path: configPath, config } of configRecords) {
     const functionDirectory = path.posix.dirname(configPath);
     const isFunctionConfig = functionDirectory.startsWith("functions/") && functionDirectory.endsWith(".func");
+    const mapsRequiredServerFiles = config?.filePathMap && typeof config.filePathMap === "object"
+      && !Array.isArray(config.filePathMap) && Object.hasOwn(config.filePathMap, REQUIRED_SERVER_FILES_PATH);
     if (!isFunctionConfig) {
+      if (mapsRequiredServerFiles) throw new Error(`${label}_FOREIGN_REQUIRED_SERVER_FILES_REJECTED:${configPath}`);
       const foreignSelectors = [config?.handler, config?.entrypoint].filter((value) => typeof value === "string");
       for (const selector of foreignSelectors) {
         const relativeSelectorPath = exactSourcePath(selector);
@@ -987,14 +1054,15 @@ function requireCanonicalNextFunctionLauncherBindings({ files, symlinks, configR
       middlewareCount += 1;
       if (
         config?.runtime !== "edge" || config?.entrypoint !== "index.js" || config?.handler !== undefined ||
-        config?.launcherType !== undefined || !frameworkExact || filePaths.has(canonicalLauncherPath)
+        config?.launcherType !== undefined || !frameworkExact || filePaths.has(canonicalLauncherPath) || mapsRequiredServerFiles
       ) throw new Error(`${label}_MIDDLEWARE_BINDING_REJECTED:${configPath}`);
       continue;
     }
     if (
       config?.runtime !== "nodejs24.x" || config?.handler !== NEXT_FUNCTION_LAUNCHER_RELATIVE_PATH ||
       config?.entrypoint !== undefined || config?.launcherType !== "Nodejs" || !frameworkExact ||
-      !filePaths.has(canonicalLauncherPath)
+      !filePaths.has(canonicalLauncherPath) || !mapsRequiredServerFiles ||
+      config.filePathMap[REQUIRED_SERVER_FILES_PATH] !== REQUIRED_SERVER_FILES_PATH
     ) throw new Error(`${label}_LAUNCHER_BINDING_REJECTED:${configPath}`);
     const references = referencesByLauncher.get(canonicalLauncherPath) ?? [];
     references.push(configPath);
@@ -1264,6 +1332,19 @@ export function buildExternalDeploymentInputManifest(outputRoot, repositoryRoot,
     label: "CLOVER_VC_CONFIG"
   });
   if (referencedByPath.size > 0 && repositoryRoot === undefined) throw new Error("CLOVER_EXTERNAL_DEPLOYMENT_INPUT_REPOSITORY_REQUIRED");
+  requireLauncherRequiredServerFilesIdentity(
+    output,
+    requiredServerFilesConfigurationForLauncherIdentity({
+      repositoryRoot,
+      expectedRuntimeDeploymentKey,
+      expectedSourceProvenance,
+      sealedExternalInput: expectedManifest !== null,
+      label: expectedManifest === null
+        ? "CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_SEALED"
+        : "CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_RESTORED"
+    }),
+    expectedManifest === null ? "sealed" : "restored"
+  );
   if (expectedManifest !== null) {
     exactKeys(expectedManifest, [
       "schemaVersion", "allowedRoots", "configs", "files", "configCount", "totalReferenceCount", "regularFileCount",
@@ -2150,6 +2231,17 @@ export function verifyDeploymentInputEvidence({ outputRoot, repositoryRoot, evid
   const provenance = sourceProvenance ?? deriveSourceProvenance({ repositoryRoot: repository });
   buildOutputManifest(root, { excludedPath: null });
   verifyLauncherSourceIdentities(root, provenance);
+  requireLauncherRequiredServerFilesIdentity(
+    root,
+    requiredServerFilesConfigurationForLauncherIdentity({
+      repositoryRoot: deploymentWorkspace,
+      expectedRuntimeDeploymentKey: provenance.runtimeDeploymentKey,
+      expectedSourceProvenance: provenance,
+      sealedExternalInput: sealedWorkspace,
+      label: "CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_VERIFICATION"
+    }),
+    "verification"
+  );
   const payloadRead = readCanonicalDocument(path.join(evidence, PAYLOAD_MANIFEST_FILE), "CLOVER_PAYLOAD_MANIFEST");
   const attestationRead = readCanonicalDocument(requireInternalRegularFile(root, ATTESTATION_OUTPUT_PATH, "CLOVER_ATTESTATION_FILE"), "CLOVER_ATTESTATION_FILE");
   const deploymentInputRead = readCanonicalDocument(path.join(evidence, DEPLOYMENT_INPUT_MANIFEST_FILE), "CLOVER_DEPLOYMENT_INPUT_MANIFEST");

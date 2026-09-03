@@ -1862,17 +1862,25 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
   mkdirSync(path.join(outputRoot, "static/assets"), { recursive: true });
   writeFileSync(path.join(outputRoot, "builds.json"), JSON.stringify({ target: "preview", argv: [process.execPath, cliExecutable, "build", "--yes"], cliVersion: VERCEL_CLI_VERSION, builds: [] }));
   writeFileSync(path.join(outputRoot, "diagnostics/cli_traces.json"), JSON.stringify({ cwd: checkoutRoot, cli: cliExecutable }));
-  const configuration = {
-    deploymentId: sourceProvenance.runtimeDeploymentKey,
-    distDir: ".next",
-    distDirRoot: ".next",
-    experimental: { runtimeServerDeploymentId: false },
-    env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(sourceProvenance) },
-    outputFileTracingRoot: checkoutRoot,
-    repoRoot: checkoutRoot,
-    turbopack: { root: checkoutRoot },
-    unrelated: "preserved"
-  };
+  const configuration = requiredServerFilesProfile === "compact"
+    ? { unrelated: "preserved" }
+    : {
+        ...(requiredServerFilesProfile === "repository-root"
+          ? {
+              deploymentId: sourceProvenance.runtimeDeploymentKey,
+              distDir: ".next",
+              distDirRoot: ".next",
+              experimental: { runtimeServerDeploymentId: false },
+              env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(sourceProvenance) }
+            }
+          : {}),
+        outputFileTracingRoot: checkoutRoot,
+        repoRoot: requiredServerFilesProfile === "repository-root"
+          ? checkoutRoot
+          : path.join(checkoutRoot, "apps/clover-launch-studio"),
+        turbopack: { root: checkoutRoot },
+        unrelated: "preserved"
+      };
   const launcherPath = path.join(outputRoot, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
   writeFileSync(launcherPath, exactNextLauncher(configuration));
   const requiredServerFilesPath = "apps/clover-launch-studio/.next/required-server-files.json";
@@ -1885,28 +1893,7 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
   writeFileSync(path.join(checkoutRoot, tracedPackagePath), "module.exports = {};\n", { mode: 0o644 });
   const requiredServerFiles = {
     appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
-    config: requiredServerFilesProfile === "compact"
-      ? { unrelated: "preserved" }
-      : {
-          ...(requiredServerFilesProfile === "repository-root"
-            ? {
-                deploymentId: sourceProvenance.runtimeDeploymentKey,
-                distDir: ".next",
-                distDirRoot: ".next"
-              }
-            : {}),
-          outputFileTracingRoot: checkoutRoot,
-          repoRoot: requiredServerFilesProfile === "repository-root"
-            ? checkoutRoot
-            : path.join(checkoutRoot, "apps/clover-launch-studio"),
-          turbopack: { root: checkoutRoot },
-          ...(requiredServerFilesProfile === "repository-root"
-            ? {
-                experimental: { runtimeServerDeploymentId: false },
-                env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(sourceProvenance) }
-              }
-            : {})
-        }
+    config: configuration
   };
   if (!["compact", "expanded", "repository-root"].includes(requiredServerFilesProfile)) {
     throw new Error("unknown required-server-files profile");
@@ -1937,8 +1924,8 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
   return { installRoot, cliRoot, binRoot, cliExecutable, canonicalCliExecutable: path.join(cliRoot, "dist/vc.js") };
 }
 
-function mutateFirstLauncherConfiguration(outputRoot, mutate) {
-  const launcherPath = path.join(outputRoot, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
+function mutateLauncherConfiguration(outputRoot, launcherRelativePath, mutate) {
+  const launcherPath = path.join(outputRoot, ...launcherRelativePath.split("/"));
   const source = readFileSync(launcherPath, "utf8");
   const prefix = "const conf = ";
   const start = source.indexOf(prefix);
@@ -1948,6 +1935,14 @@ function mutateFirstLauncherConfiguration(outputRoot, mutate) {
   const configuration = JSON.parse(source.slice(start + prefix.length, end));
   mutate(configuration);
   writeFileSync(launcherPath, `${source.slice(0, start + prefix.length)}${JSON.stringify(configuration)}${source.slice(end)}`);
+}
+
+function mutateFirstLauncherConfiguration(outputRoot, mutate) {
+  mutateLauncherConfiguration(
+    outputRoot,
+    "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs",
+    mutate
+  );
 }
 
 const fixtureNodeConfigPath = "functions/index.func/.vc-config.json";
@@ -2712,6 +2707,105 @@ test("every Next launcher binds the exact source provenance and runtime deployme
       });
     }
 
+    for (const [name, mutate] of [
+      ["launcher arbitrary configuration value diverges from required-server-files", (configuration) => {
+        configuration.unrelated = "source-divergent-runtime";
+      }],
+      ["launcher root field diverges from required-server-files", (configuration) => {
+        configuration.outputFileTracingRoot = `${checkoutRoot}-substituted`;
+      }],
+      ["launcher adds a configuration field absent from required-server-files", (configuration) => {
+        configuration.basePath = "/source-divergent-runtime";
+      }]
+    ]) {
+      await t.test(name, () => {
+        const output = path.join(checkoutRoot, `output-${name.replaceAll(" ", "-")}`);
+        const evidence = `${output}-evidence`;
+        writeRawBuildOutput(output, checkoutRoot);
+        mutateFirstLauncherConfiguration(output, mutate);
+        const before = rawTreeIdentity(output);
+        assert.throws(
+          () => createDeploymentAttestation({
+            outputRoot: output,
+            repositoryRoot: checkoutRoot,
+            evidenceDirectory: evidence,
+            sourceProvenance: build
+          }),
+          /CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED/u
+        );
+        assert.deepEqual(rawTreeIdentity(output), before);
+        assert.equal(existsSync(evidence), false);
+      });
+    }
+
+    await t.test("required-server-files cannot diverge from otherwise unchanged launchers", () => {
+      const output = path.join(checkoutRoot, "output-required-server-files-substitution");
+      const evidence = path.join(checkoutRoot, "evidence-required-server-files-substitution");
+      writeRawBuildOutput(output, checkoutRoot);
+      const requiredServerFilesPath = path.join(
+        checkoutRoot,
+        "apps/clover-launch-studio/.next/required-server-files.json"
+      );
+      const originalRequiredServerFiles = readFileSync(requiredServerFilesPath);
+      const originalRequiredServerFilesMode = lstatSync(requiredServerFilesPath).mode & 0o7777;
+      try {
+        const requiredServerFiles = JSON.parse(originalRequiredServerFiles.toString("utf8"));
+        requiredServerFiles.config.unrelated = "source-divergent-required-server-files";
+        writeFileSync(requiredServerFilesPath, `${JSON.stringify(requiredServerFiles)}\n`);
+        const before = rawTreeIdentity(output);
+        assert.throws(
+          () => createDeploymentAttestation({
+            outputRoot: output,
+            repositoryRoot: checkoutRoot,
+            evidenceDirectory: evidence,
+            sourceProvenance: build
+          }),
+          /CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED/u
+        );
+        assert.deepEqual(rawTreeIdentity(output), before);
+        assert.equal(existsSync(evidence), false);
+      } finally {
+        writeFileSync(requiredServerFilesPath, originalRequiredServerFiles);
+        chmodSync(requiredServerFilesPath, originalRequiredServerFilesMode);
+      }
+    });
+
+    await t.test("every canonical launcher independently equals required-server-files configuration", () => {
+      const output = path.join(checkoutRoot, "output-cross-launcher-substitution");
+      const evidence = path.join(checkoutRoot, "evidence-cross-launcher-substitution");
+      writeRawBuildOutput(output, checkoutRoot);
+      const secondFunctionDirectory = path.join(output, "functions/second.func");
+      const secondLauncherRelativePath = "functions/second.func/apps/clover-launch-studio/___next_launcher.cjs";
+      mkdirSync(path.dirname(path.join(output, secondLauncherRelativePath)), { recursive: true });
+      writeFileSync(
+        path.join(output, secondLauncherRelativePath),
+        readFileSync(path.join(output, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs"))
+      );
+      writeFileSync(path.join(secondFunctionDirectory, ".vc-config.json"), JSON.stringify({
+        handler: fixtureLauncherRelativePath,
+        runtime: "nodejs24.x",
+        launcherType: "Nodejs",
+        framework: { slug: "nextjs", version: "16.3.3" },
+        assets: [],
+        filePathMap: { ["apps/clover-launch-studio/.next/required-server-files.json"]: "apps/clover-launch-studio/.next/required-server-files.json" }
+      }));
+      mutateLauncherConfiguration(output, secondLauncherRelativePath, (configuration) => {
+        configuration.basePath = "/second-launcher-substitution";
+      });
+      const before = rawTreeIdentity(output);
+      assert.throws(
+        () => createDeploymentAttestation({
+          outputRoot: output,
+          repositoryRoot: checkoutRoot,
+          evidenceDirectory: evidence,
+          sourceProvenance: build
+        }),
+        /CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED:source:functions\/second\.func\//u
+      );
+      assert.deepEqual(rawTreeIdentity(output), before);
+      assert.equal(existsSync(evidence), false);
+    });
+
     const exactLauncherBinding = (source) => {
       const producer = "var NextServer = require(\"next/dist/compiled/next-server/server.runtime.prod.js\").default;\n// @preserve next-server-preload-target\n";
       const consumer = ";\nvar nextServer = new NextServer({\n  conf,\n  dir: \".\",\n  minimalMode: true,\n  customServer: false\n});";
@@ -2877,6 +2971,55 @@ test("every Next launcher binds the exact source provenance and runtime deployme
         /CLOVER_LAUNCHER_SOURCE_IDENTITY_REJECTED/u
       );
     });
+
+    await t.test("a post-seal arbitrary launcher configuration substitution is rejected before manifest comparison", () => {
+      const output = path.join(checkoutRoot, "output-post-seal-configuration");
+      const evidence = path.join(checkoutRoot, "evidence-post-seal-configuration");
+      writeRawBuildOutput(output, checkoutRoot);
+      createDeploymentAttestation({
+        outputRoot: output,
+        repositoryRoot: checkoutRoot,
+        evidenceDirectory: evidence,
+        sourceProvenance: build
+      });
+      mutateFirstLauncherConfiguration(output, (configuration) => {
+        configuration.basePath = "/post-seal-substitution";
+      });
+      assert.throws(
+        () => verifyDeploymentInputEvidence({
+          outputRoot: output,
+          repositoryRoot: checkoutRoot,
+          evidenceDirectory: evidence,
+          sourceProvenance: build
+        }),
+        /CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED/u
+      );
+    });
+
+    await t.test("a frozen-workspace launcher substitution is rejected before archive restoration can be accepted", () => {
+      const output = path.join(checkoutRoot, "output-frozen-configuration");
+      const evidence = path.join(checkoutRoot, "evidence-frozen-configuration");
+      const frozen = path.join(checkoutRoot, "frozen-configuration");
+      writeRawBuildOutput(output, checkoutRoot);
+      const sealed = createDeploymentAttestation({
+        outputRoot: output,
+        repositoryRoot: checkoutRoot,
+        evidenceDirectory: evidence,
+        frozenOutputRoot: frozen,
+        sourceProvenance: build
+      });
+      mutateFirstLauncherConfiguration(sealed.frozenOutput, (configuration) => {
+        configuration.basePath = "/frozen-workspace-substitution";
+      });
+      assert.throws(
+        () => buildExternalDeploymentInputManifest(sealed.frozenOutput, frozen, {
+          expectedManifest: sealed.deploymentInputManifest.externalInputs,
+          expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+          expectedSourceProvenance: build
+        }),
+        /CLOVER_LAUNCHER_REQUIRED_SERVER_FILES_IDENTITY_REJECTED:restored/u
+      );
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -2927,6 +3070,11 @@ test("every Vercel function config selects its canonical same-directory Next lau
         delete configuration.handler;
       });
     }, /CLOVER_VC_CONFIG_CONTAINED_INPUT_REJECTED/u);
+    await rejectsFullTransaction("Node launcher must map its exact required-server-files configuration", (output) => {
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        delete configuration.filePathMap["apps/clover-launch-studio/.next/required-server-files.json"];
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
     await rejectsFullTransaction("duplicate handler selectors", (output) => {
       mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
         configuration.entrypoint = fixtureLauncherRelativePath;
@@ -2999,6 +3147,13 @@ test("every Vercel function config selects its canonical same-directory Next lau
     await rejectsFullTransaction("middleware framework substitution", (output) => {
       mutateFunctionConfig(output, fixtureMiddlewareConfigPath, (configuration) => {
         configuration.framework.slug = "other";
+      });
+    }, /CLOVER_VC_CONFIG_MIDDLEWARE_BINDING_REJECTED/u);
+    await rejectsFullTransaction("middleware cannot claim a Node launcher required-server-files configuration", (output) => {
+      mutateFunctionConfig(output, fixtureMiddlewareConfigPath, (configuration) => {
+        configuration.filePathMap = {
+          "apps/clover-launch-studio/.next/required-server-files.json": "apps/clover-launch-studio/.next/required-server-files.json"
+        };
       });
     }, /CLOVER_VC_CONFIG_MIDDLEWARE_BINDING_REJECTED/u);
     await rejectsFullTransaction("missing middleware config", (output) => {
@@ -3996,6 +4151,9 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
     const originalConfig = readFileSync(configPath);
     const originalMiddlewareConfig = readFileSync(middlewareConfigPath);
     const baseline = buildExternalDeploymentInputManifest(output, checkoutRoot);
+    const requiredServerFilesPath = path.join(checkoutRoot, "apps/clover-launch-studio/.next/required-server-files.json");
+    const originalRequiredServerFiles = readFileSync(requiredServerFilesPath);
+    const originalRequiredServerFilesMode = lstatSync(requiredServerFilesPath).mode & 0o7777;
     assert.equal(baseline.schemaVersion, "clover-vercel-file-path-map-external-inputs-v2");
     assert.equal(baseline.configCount, 2);
     assert.equal(baseline.totalReferenceCount, 3);
@@ -4012,6 +4170,12 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
     ]);
     assert.equal(normalized.normalization.profile, "next-expanded-build-roots");
     assert.equal(normalized.normalization.rootOccurrenceCount, 4);
+    await t.test("external inputs require the repository root before launcher parity", () => {
+      assert.throws(
+        () => buildExternalDeploymentInputManifest(output),
+        /CLOVER_EXTERNAL_DEPLOYMENT_INPUT_REPOSITORY_REQUIRED/u
+      );
+    });
 
     const expandedArchive = deterministicOutputArchive(output, { repositoryRoot: checkoutRoot, externalInputs: baseline });
     const expandedWorkspace = path.join(checkoutRoot, "expanded-sealed-workspace");
@@ -4054,15 +4218,11 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
     });
 
     await t.test("compact Vercel required-server-files profile seals its sole exact app root", () => {
-      const requiredPath = path.join(checkoutRoot, "apps/clover-launch-studio/.next/required-server-files.json");
-      const original = readFileSync(requiredPath);
-      const compact = {
-        appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
-        config: { unrelated: "preserved" }
-      };
-      writeFileSync(requiredPath, JSON.stringify(compact));
+      const compactOutput = path.join(checkoutRoot, "compact-output");
       try {
-        const manifest = buildExternalDeploymentInputManifest(output, checkoutRoot);
+        writeRawBuildOutput(compactOutput, checkoutRoot, { requiredServerFilesProfile: "compact" });
+        normalizeGeneratedOutput({ outputRoot: compactOutput, checkoutRoot });
+        const manifest = buildExternalDeploymentInputManifest(compactOutput, checkoutRoot);
         const compactNormalized = manifest.files.find(({ path: entryPath }) => entryPath === "apps/clover-launch-studio/.next/required-server-files.json");
         assert.deepEqual(compactNormalized.normalization.fields, ["appDir"]);
         assert.equal(compactNormalized.normalization.profile, "next-app-dir-only");
@@ -4070,38 +4230,30 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
         assert.equal(compactNormalized.sourceBytes - compactNormalized.bytes, checkoutRoot.length - "/var/task".length);
         assert.notEqual(compactNormalized.sourceSha256, compactNormalized.sha256);
       } finally {
-        writeFileSync(requiredPath, original);
+        writeFileSync(requiredServerFilesPath, originalRequiredServerFiles, { mode: originalRequiredServerFilesMode });
+        chmodSync(requiredServerFilesPath, originalRequiredServerFilesMode);
       }
     });
 
     await t.test("Next 16.3.3 repository-root profile binds disabled runtime-server deployment IDs across Node 24 lanes", () => {
-      const requiredPath = path.join(checkoutRoot, "apps/clover-launch-studio/.next/required-server-files.json");
-      const original = readFileSync(requiredPath);
       try {
         for (const nodeVersion of ["v24.16.0", "v24.19.0"]) {
-          const successor = {
-            version: 1,
-            appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
-            config: {
-              deploymentId: expectedRuntimeDeploymentKey,
-              distDir: ".next",
-              distDirRoot: ".next",
-              outputFileTracingRoot: checkoutRoot,
-              repoRoot: checkoutRoot,
-              turbopack: { root: checkoutRoot },
-              experimental: { runtimeServerDeploymentId: false },
-              env: {
-                CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify({ ...expectedSourceProvenance, nodeVersion })
-              }
-            }
-          };
           const laneSourceProvenance = { ...expectedSourceProvenance, nodeVersion };
-          writeFileSync(requiredPath, JSON.stringify(successor));
+          const laneOutput = path.join(checkoutRoot, `repository-root-${nodeVersion}-output`);
+          writeRawBuildOutput(laneOutput, checkoutRoot, {
+            requiredServerFilesProfile: "repository-root",
+            sourceProvenance: laneSourceProvenance
+          });
+          normalizeGeneratedOutput({
+            outputRoot: laneOutput,
+            checkoutRoot,
+            sourceProvenance: laneSourceProvenance
+          });
           assert.throws(
-            () => buildExternalDeploymentInputManifest(output, checkoutRoot, { expectedRuntimeDeploymentKey }),
+            () => buildExternalDeploymentInputManifest(laneOutput, checkoutRoot, { expectedRuntimeDeploymentKey }),
             /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_PROFILE_DOWNGRADE_REJECTED/u
           );
-          const manifest = buildExternalDeploymentInputManifest(output, checkoutRoot, {
+          const manifest = buildExternalDeploymentInputManifest(laneOutput, checkoutRoot, {
             expectedRuntimeDeploymentKey,
             expectedSourceProvenance: laneSourceProvenance
           });
@@ -4111,7 +4263,7 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
             "appDir", "config.outputFileTracingRoot", "config.repoRoot", "config.turbopack.root"
           ]);
           assert.equal(normalizedFile.normalization.rootOccurrenceCount, 4);
-          const archive = deterministicOutputArchive(output, {
+          const archive = deterministicOutputArchive(laneOutput, {
             repositoryRoot: checkoutRoot,
             externalInputs: manifest,
             expectedRuntimeDeploymentKey,
@@ -4125,7 +4277,8 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
           });
         }
       } finally {
-        writeFileSync(requiredPath, original);
+        writeFileSync(requiredServerFilesPath, originalRequiredServerFiles, { mode: originalRequiredServerFilesMode });
+        chmodSync(requiredServerFilesPath, originalRequiredServerFilesMode);
       }
     });
 
