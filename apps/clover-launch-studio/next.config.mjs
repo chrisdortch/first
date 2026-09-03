@@ -17,6 +17,9 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   deploymentId: buildProvenance.runtimeDeploymentKey,
+  experimental: {
+    runtimeServerDeploymentId: false
+  },
   env: {
     CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(buildProvenance)
   },

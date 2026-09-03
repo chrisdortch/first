@@ -1424,16 +1424,29 @@ jobs:
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
-          const exactPrimaryTailCorrectionPathListSha256 = 'bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b';
-          const exactPrimaryTailCorrectionPaths = [
+          const exactTenthCiEvidenceCorrectionCommit = '0637de0baebdc9d7f9f86dbd048bc757fb50288c';
+          const exactTenthCiEvidenceCorrectionTree = '0389684d5bcc3f8ff5f3a79969d7411560e8619e';
+          const exactTenthCiEvidenceCorrectionParent = exactNinthCiEvidenceCorrectionCommit;
+          const exactTenthCiEvidenceCorrectionPathListSha256 = 'bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b';
+          const exactTenthCiEvidenceCorrectionPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
             'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
-          const exactCiEvidenceCorrectionPathListSha256 = '2742cef520281742f3c02e06f9e1a8052aadb0d57260150a22a4fa48a0240379';
+          const exactEleventhCiEvidenceCorrectionAuthorizedPathListSha256 = '71ddde190db58a71ec969b4af5fb437ee6434ca8531221bbf83299c21d1865be';
+          const exactEleventhCiEvidenceCorrectionAuthorizedPaths = [
+            '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/next.config.mjs',
+            'apps/clover-launch-studio/src/lib/live-truth.ts',
+            'apps/clover-launch-studio/test/launch-studio-app.test.mjs',
+            'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
+          const exactCiEvidenceCorrectionPathListSha256 = 'a176d1815862b579fa1ec62b7432e759ab7dc7f44f96f5c2cfd8dc843be9c0b7';
           const exactCiEvidenceCorrectionPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/next.config.mjs',
             'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
             'apps/clover-launch-studio/src/lib/launch-session-service.ts',
             'apps/clover-launch-studio/src/lib/live-truth.ts',
@@ -1442,9 +1455,10 @@ jobs:
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
-          const exactAuthorizedBoundaryPathListSha256 = 'bcc3f4c93d2e74400602f3b688e69714d1550b22ff8edf7de0049f2f0bf793a0';
+          const exactAuthorizedBoundaryPathListSha256 = '94e5eea81c72df564e07000bd00acfc1554b7474d70a9a3940425e89d5a8d272';
           const exactAuthorizedBoundaryPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/next.config.mjs',
             'apps/clover-launch-studio/package.json',
             'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
             'apps/clover-launch-studio/src/app/api/health/route.ts',
@@ -1555,7 +1569,7 @@ jobs:
             const ancestryText = gitText(['rev-list', '--ancestry-path', '--reverse', `${exactSourceClosureCommit}..${head}`]);
             const ancestryCommitIds = ancestryText === '' ? [] : ancestryText.split('\n');
             requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds)
-              && [10, 11, 12].includes(commitIds.length),
+              && commitIds.length === 11,
               'CI-evidence correction chain depth or first-parent topology mismatch');
             const initialAuthorizedPaths = exactSortedPaths(exactInitialCiEvidenceCorrectionPaths);
             const secondAuthorizedPaths = exactSortedPaths(exactSecondCiEvidenceCorrectionPaths);
@@ -1566,7 +1580,8 @@ jobs:
             const seventhAuthorizedPaths = exactSortedPaths(exactSeventhCiEvidenceCorrectionPaths);
             const eighthAuthorizedPaths = exactSortedPaths(exactEighthCiEvidenceCorrectionPaths);
             const ninthAuthorizedPaths = exactSortedPaths(exactNinthCiEvidenceCorrectionPaths);
-            const primaryTailPaths = exactSortedPaths(exactPrimaryTailCorrectionPaths);
+            const tenthAuthorizedPaths = exactSortedPaths(exactTenthCiEvidenceCorrectionPaths);
+            const eleventhAuthorizedPaths = exactSortedPaths(exactEleventhCiEvidenceCorrectionAuthorizedPaths);
             const cumulativeAuthorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
             requireCondition(pathListSha256(initialAuthorizedPaths) === exactInitialCiEvidenceCorrectionPathListSha256
               && pathListSha256(secondAuthorizedPaths) === exactSecondCiEvidenceCorrectionPathListSha256
@@ -1577,7 +1592,8 @@ jobs:
               && pathListSha256(seventhAuthorizedPaths) === exactSeventhCiEvidenceCorrectionPathListSha256
               && pathListSha256(eighthAuthorizedPaths) === exactEighthCiEvidenceCorrectionPathListSha256
               && pathListSha256(ninthAuthorizedPaths) === exactNinthCiEvidenceCorrectionPathListSha256
-              && pathListSha256(primaryTailPaths) === exactPrimaryTailCorrectionPathListSha256
+              && pathListSha256(tenthAuthorizedPaths) === exactTenthCiEvidenceCorrectionPathListSha256
+              && pathListSha256(eleventhAuthorizedPaths) === exactEleventhCiEvidenceCorrectionAuthorizedPathListSha256
               && pathListSha256(cumulativeAuthorizedPaths) === exactCiEvidenceCorrectionPathListSha256,
             'CI-evidence correction boundary constants are inconsistent');
             const fixedPrefix = [
@@ -1634,6 +1650,12 @@ jobs:
                 tree: exactNinthCiEvidenceCorrectionTree,
                 parent: exactNinthCiEvidenceCorrectionParent,
                 paths: ninthAuthorizedPaths
+              },
+              {
+                commit: exactTenthCiEvidenceCorrectionCommit,
+                tree: exactTenthCiEvidenceCorrectionTree,
+                parent: exactTenthCiEvidenceCorrectionParent,
+                paths: tenthAuthorizedPaths
               }
             ];
             let expectedParent = exactSourceClosureCommit;
@@ -1649,12 +1671,10 @@ jobs:
                   && gitText(['rev-parse', `${commit}^{tree}`]) === fixed.tree
                   && canonicalJson(paths) === canonicalJson(fixed.paths),
                 `fixed CI-evidence correction ${index + 1} identity mismatch`);
-              } else if (index === fixedPrefix.length) {
-                requireCondition(canonicalJson(paths) === canonicalJson(primaryTailPaths),
-                  'primary observable-provider-evidence correction did not change the exact four-path boundary');
               } else {
-                requireCondition(paths.every((file) => primaryTailPaths.includes(file)),
-                  'optional observable-provider-evidence correction changed an unauthorized path');
+                requireCondition(index === fixedPrefix.length
+                  && paths.every((file) => eleventhAuthorizedPaths.includes(file)),
+                'source-only deployment-identity correction changed an unauthorized path or exceeded depth 11');
               }
               expectedParent = commit;
             }
@@ -1724,7 +1744,7 @@ jobs:
               && pathListSha256(integratedPaths) === exactIntegratedPrPathListSha256,
             'CI exact integrated PR boundary mismatch');
             const authorizedPaths = exactSortedPaths(exactAuthorizedBoundaryPaths);
-            requireCondition(authorizedPaths.length === 17
+            requireCondition(authorizedPaths.length === 18
               && pathListSha256(authorizedPaths) === exactAuthorizedBoundaryPathListSha256
               && sourceClosurePaths.every((file) => authorizedPaths.includes(file))
               && exactCiEvidenceCorrectionPaths.every((file) => authorizedPaths.includes(file)),
@@ -1941,7 +1961,7 @@ jobs:
               && /^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
               && value.currentCandidate.cleanWorktree === true && value.currentCandidate.role === 'exact-pr-head'
               && Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-              && [10, 11, 12].includes(value.currentCandidate.correctionChainDepth)
+              && value.currentCandidate.correctionChainDepth === 11
               && value.currentCandidate.correctionCommitIds.length === value.currentCandidate.correctionChainDepth,
             `${label}.currentCandidate identity mismatch`);
             exactKeys(value.correctionChain,
@@ -4209,7 +4229,7 @@ jobs:
               ['source-closure-baseline', (source) => { source.sourceClosureBaseline.parent = '0'.repeat(40); }],
               ['source-closure-commit', (source) => { source.sourceClosureCommit.commit = '0'.repeat(40); }],
               ['current-parent', (source) => { source.currentCandidate.immediateParent = '0'.repeat(40); }],
-              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 13; }],
+              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 12; }],
               ['correction-ids', (source) => { source.correctionChain.commitIds = ['0'.repeat(40)]; }],
               ['source-closure-cumulative', (source) => {
                 source.sourceClosureDelta.currentCumulative.headCommit = '0'.repeat(40);
@@ -4218,7 +4238,7 @@ jobs:
                 source.ciEvidenceCorrectionDelta.pathListSha256 = '0'.repeat(64);
               }],
               ['integrated-pr', (source) => { source.integratedPrDelta.pathCount = 71; }],
-              ['authorized-boundary', (source) => { source.authorizedSourceBoundary.maximumPathCount = 18; }],
+              ['authorized-boundary', (source) => { source.authorizedSourceBoundary.maximumPathCount = 19; }],
               ['execution-context', (source) => { source.executionContext.localSourceClosureContext = 'disabled-non-pr'; }],
               ['authority', (source) => { source.authority.consequentialAuthorityGranted = true; }]
             ];

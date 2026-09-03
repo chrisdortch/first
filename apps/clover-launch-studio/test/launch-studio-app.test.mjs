@@ -17,6 +17,7 @@ const source = {
   crypto: read("src/lib/crypto.ts"),
   handoff: read("src/lib/handoff-codex-adapter.ts"),
   healthRoute: read("src/app/api/health/route.ts"),
+  nextConfig: read("next.config.mjs"),
   routes: [
     "src/app/api/sessions/route.ts",
     "src/app/api/sessions/[sessionId]/route.ts",
@@ -32,6 +33,12 @@ const source = {
   treeRoute: read("src/app/api/tree/route.ts"),
   package: read("package.json")
 };
+
+test("Next configuration keeps the Clover build key distinct from a provider runtime deployment ID", () => {
+  assert.match(source.nextConfig, /deploymentId:\s*buildProvenance\.runtimeDeploymentKey/u);
+  assert.match(source.nextConfig, /experimental:\s*\{\s*runtimeServerDeploymentId:\s*false\s*\}/u);
+  assert.doesNotMatch(source.nextConfig, /NEXT_DEPLOYMENT_ID|VERCEL_DEPLOYMENT_ID|\bdpl_/u);
+});
 
 async function loadCompiledRuntime() {
   const directory = mkdtempSync(join(tmpdir(), "clover-launch-studio-runtime-"));

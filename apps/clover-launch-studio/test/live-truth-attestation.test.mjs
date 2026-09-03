@@ -92,6 +92,7 @@ const candidateCommit = hex40("a");
 const candidateTree = hex40("b");
 const candidateParent = hex40("c");
 const runtimeDeploymentKey = `clover-${candidateCommit.slice(0, 24)}`;
+const providerDeploymentId = `dpl_${"A".repeat(32)}`;
 const runtimeRequestUrl = "https://clover-tree-command-center-abc.vercel.app/api/tree";
 const mergedStackAHead = "fce3cbc5073f7f4a4f9cd8a51af9636f524ac8f7";
 const mergedStackABase = "be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb";
@@ -323,7 +324,7 @@ function previewEnvironment(overrides = {}) {
     VERCEL_ENV: "preview",
     VERCEL_URL: "clover-tree-command-center-abc.vercel.app",
     VERCEL_PROJECT_ID: "prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ",
-    VERCEL_DEPLOYMENT_ID: "dpl_Abc123",
+    VERCEL_DEPLOYMENT_ID: providerDeploymentId,
     VERCEL_REGION: "iad1",
     VERCEL_GIT_COMMIT_SHA: candidateCommit,
     VERCEL_SKEW_PROTECTION_ENABLED: "1",
@@ -535,6 +536,11 @@ test("strict public DTO parsing rejects endpoint, issuer and deployment substitu
     (candidate) => { candidate.observationMethod = "unavailable"; },
     (candidate) => { candidate.errorCode = "substituted-current-error"; },
     (candidate) => { candidate.region = "invalid region"; },
+    (candidate) => { candidate.buildRuntimeDeploymentKey = `clover-${hex40("e").slice(0, 24)}`; },
+    (candidate) => { candidate.providerDeploymentId = "dpl_short"; },
+    (candidate) => { candidate.runtimeServerDeploymentId = "arbitrary-runtime-id"; },
+    (candidate) => { candidate.runtimeServerDeploymentId = `dpl_${"B".repeat(32)}`; },
+    (candidate) => { candidate.runtimeDeploymentKey = candidate.runtimeServerDeploymentId; },
     (candidate) => { candidate.externalProviderIdentity.aliases = []; }
   ]) {
     const substituted = structuredClone(deployment);
@@ -1422,11 +1428,14 @@ test("deployment self uses an injected getEnv-compatible reader, reads only the 
   assert.equal(observation.freshness, "current");
   assert.equal(observation.evidenceClass, "deployment-self-observation");
   assert.equal(observation.sourceIdentity, "vercel-functions-get-env");
-  assert.equal(observation.runtimeDeploymentKey, runtimeDeploymentKey);
-  assert.equal(observation.deploymentId, null);
+  assert.equal(observation.buildRuntimeDeploymentKey, runtimeDeploymentKey);
+  assert.equal(observation.providerDeploymentId, providerDeploymentId);
+  assert.equal(observation.runtimeServerDeploymentId, runtimeDeploymentKey);
+  assert.equal("runtimeDeploymentKey" in observation, false);
+  assert.equal("deploymentId" in observation, false);
   assert.equal(observation.externalProviderIdentity.providerDeploymentId, null);
   assert.equal(observation.externalProviderIdentity.verifiedByWebRuntime, false);
-  assert.equal(JSON.stringify(observation).includes("dpl_Abc123"), false);
+  assert.equal(JSON.stringify(observation).includes(providerDeploymentId), true);
   assert.equal(observation.gitCommitSha, candidateCommit);
   assert.equal(observation.environmentKeysRead.includes("CLOVER_PRIVATE_VALUE"), false);
   assert.equal(observation.environmentKeysRead.includes("VERCEL_AUTOMATION_BYPASS_SECRET"), false);
@@ -1437,6 +1446,26 @@ test("deployment self uses an injected getEnv-compatible reader, reads only the 
 });
 
 test("prebuilt runtime identity accepts only the exact source-bound preview contract", async (t) => {
+  await t.test("identical Vercel provider and runtime deployment IDs remain source-bound", () => {
+    const observation = deploymentObservation(previewEnvironment(), runtimeRequestUrl, providerDeploymentId);
+    assert.deepEqual(observation.failures, []);
+    assert.equal(observation.status, "current");
+    assert.equal(observation.buildRuntimeDeploymentKey, runtimeDeploymentKey);
+    assert.equal(observation.providerDeploymentId, providerDeploymentId);
+    assert.equal(observation.runtimeServerDeploymentId, providerDeploymentId);
+  });
+  await t.test("provider identity and the custom Clover runtime identity remain separate", () => {
+    const withProvider = deploymentObservation(previewEnvironment(), runtimeRequestUrl, runtimeDeploymentKey);
+    const withoutProvider = deploymentObservation(previewEnvironment({ VERCEL_DEPLOYMENT_ID: undefined }), runtimeRequestUrl, runtimeDeploymentKey);
+    for (const observation of [withProvider, withoutProvider]) {
+      assert.equal(observation.status, "current");
+      assert.deepEqual(observation.failures, []);
+      assert.equal(observation.buildRuntimeDeploymentKey, runtimeDeploymentKey);
+      assert.equal(observation.runtimeServerDeploymentId, runtimeDeploymentKey);
+    }
+    assert.equal(withProvider.providerDeploymentId, providerDeploymentId);
+    assert.equal(withoutProvider.providerDeploymentId, null);
+  });
   await t.test("missing CLI Git SHA uses sealed build and output-attestation binding", () => {
     const observation = deploymentObservation(previewEnvironment({ VERCEL_GIT_COMMIT_SHA: undefined }));
     assert.equal(observation.status, "current");
@@ -1454,18 +1483,38 @@ test("prebuilt runtime identity accepts only the exact source-bound preview cont
     assert.equal(observation.status, "contradictory");
     assert.equal(observation.failures.includes("deployment-source-identity"), true);
   });
-  await t.test("wrong project, non-preview environment and missing or provider-style runtime key fail closed", () => {
+  await t.test("wrong project, non-preview environment and missing or substituted runtime identity fail closed", () => {
     const cases = [
       [previewEnvironment({ VERCEL_PROJECT_ID: "prj_substituted" }), "deployment-project-identity", runtimeDeploymentKey],
       [previewEnvironment({ VERCEL_ENV: "production" }), "deployment-not-preview", runtimeDeploymentKey],
       [previewEnvironment(), "deployment-runtime-key-unavailable", null],
-      [previewEnvironment(), "deployment-runtime-key-identity", "dpl_externalProviderIdentity"]
+      [previewEnvironment(), "deployment-runtime-key-identity", `dpl_${"B".repeat(32)}`],
+      [previewEnvironment({ VERCEL_DEPLOYMENT_ID: undefined }), "deployment-runtime-key-identity", providerDeploymentId],
+      [previewEnvironment(), "deployment-runtime-key-identity", `clover-${hex40("e").slice(0, 24)}`],
+      [previewEnvironment(), "deployment-runtime-key-identity", `clover_${hex40("e").slice(0, 24)}`],
+      [previewEnvironment(), "deployment-runtime-key-identity", "arbitrary-runtime-id"],
+      [previewEnvironment(), "deployment-runtime-key-identity", " dpl_" + "A".repeat(32)],
+      [previewEnvironment(), "deployment-runtime-key-identity", `dpl_${"A".repeat(20)}\u0301`]
     ];
     for (const [environment, failure, nextDeploymentId] of cases) {
       const observation = deploymentObservation(environment, runtimeRequestUrl, nextDeploymentId);
       assert.notEqual(observation.status, "current", failure);
       assert.equal(observation.failures.includes(failure), true, failure);
       assert.equal(observation.externalProviderIdentity.providerDeploymentId, null);
+    }
+  });
+  await t.test("malformed or domain-substituted provider identities fail closed without normalization", () => {
+    const cases = [
+      previewEnvironment({ VERCEL_DEPLOYMENT_ID: "dpl_short" }),
+      previewEnvironment({ VERCEL_DEPLOYMENT_ID: providerDeploymentId + " " }),
+      previewEnvironment({ VERCEL_DEPLOYMENT_ID: `dpl_${"A".repeat(20)}\u0301` }),
+      previewEnvironment({ VERCEL_DEPLOYMENT_ID: runtimeDeploymentKey })
+    ];
+    for (const environment of cases) {
+      const observation = deploymentObservation(environment, runtimeRequestUrl, runtimeDeploymentKey);
+      assert.equal(observation.status, "contradictory");
+      assert.equal(observation.failures.includes("deployment-provider-id-invalid"), true);
+      assert.equal(observation.providerDeploymentId, null);
     }
   });
   await t.test("validated request host is a truthful fallback when VERCEL_URL is absent", () => {
@@ -1493,6 +1542,16 @@ test("prebuilt runtime identity accepts only the exact source-bound preview cont
     assert.equal(observation.status, "current");
     assert.equal(observation.region, null);
     assert.equal(observation.regionStatus, "unavailable");
+  });
+  await t.test("invalid region and skew values remain contradictory", () => {
+    for (const [environment, failure] of [
+      [previewEnvironment({ VERCEL_REGION: "invalid region" }), "deployment-region-invalid"],
+      [previewEnvironment({ VERCEL_SKEW_PROTECTION_ENABLED: "true" }), "deployment-skew-protection-invalid"]
+    ]) {
+      const observation = deploymentObservation(environment);
+      assert.equal(observation.status, "contradictory");
+      assert.equal(observation.failures.includes(failure), true);
+    }
   });
 });
 
@@ -1525,6 +1584,15 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
   const action = reconcileTreeTruth({ baseline, build, github, deployment, attestation: comparison }).currentActionCard;
   assert.equal(action.action, "ACCEPT SOURCE-GROUNDED TREE PREVIEW");
   assert.deepEqual(action.authority, { mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false });
+  const providerRuntimeDeployment = deploymentObservation(previewEnvironment(), runtimeRequestUrl, providerDeploymentId);
+  const providerRuntimeReady = computeTruthReadiness({ github, deployment: providerRuntimeDeployment, attestation: comparison }, build);
+  assert.equal(providerRuntimeReady.runtimeDeploymentIdentityStatus, "verified");
+  assert.equal(providerRuntimeReady.treePreviewRuntimeObserved, true);
+  assert.deepEqual(providerRuntimeDeployment.failures, []);
+  const providerRuntimeAction = reconcileTreeTruth({ baseline, build, github, deployment: providerRuntimeDeployment, attestation: comparison });
+  assert.deepEqual(providerRuntimeAction.contradictions.value, []);
+  assert.equal(providerRuntimeAction.currentActionCard.action, "ACCEPT SOURCE-GROUNDED TREE PREVIEW");
+  assert.equal(providerRuntimeAction.currentActionCard.authority.productionAuthorized, false);
   const substituted = sealedAttestation({ buildInvocationId: `clover-build:${hex64("8")}` });
   const rejected = await compareDeploymentAttestation(build, substituted);
   assert.equal(rejected.status, "inconsistent");
