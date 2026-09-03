@@ -1340,6 +1340,9 @@ jobs:
           const exactSourceClosureParent = exactSourceClosureBaselineCommit;
           const exactSourceClosureDeltaPathCount = 16;
           const exactSourceClosureDeltaPathListSha256 = '9451e0782b1fcdc26d1771f39c878bef12b4187490ce654c6f55968f9c6796ba';
+          const exactCurrentSourceClosurePathCount = 17;
+          const exactCurrentSourceClosurePathListSha256 = 'bf1fedd3eac5795dce5495703593e2c33561bbb0f31728e3cddf5dac2354129f';
+          const exactCurrentSourceClosureAdditionalPaths = ['apps/clover-launch-studio/next.config.mjs'];
           const exactIntegratedPrPathCount = 72;
           const exactIntegratedPrPathListSha256 = '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8';
           const exactFirstCiEvidenceCorrectionCommit = '5ad65259fe86e0167fa4a35ed13c19306c2de7ad';
@@ -1434,12 +1437,22 @@ jobs:
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
-          const exactEleventhCiEvidenceCorrectionAuthorizedPathListSha256 = '71ddde190db58a71ec969b4af5fb437ee6434ca8531221bbf83299c21d1865be';
-          const exactEleventhCiEvidenceCorrectionAuthorizedPaths = [
+          const exactEleventhCiEvidenceCorrectionCommit = '84ba0a60574959bf4eaf552494b74cee580aacd1';
+          const exactEleventhCiEvidenceCorrectionTree = 'f2368e9fc7d026cde4aabfd494d707d41a70f83b';
+          const exactEleventhCiEvidenceCorrectionParent = exactTenthCiEvidenceCorrectionCommit;
+          const exactEleventhCiEvidenceCorrectionPathListSha256 = '71ddde190db58a71ec969b4af5fb437ee6434ca8531221bbf83299c21d1865be';
+          const exactEleventhCiEvidenceCorrectionPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
             'apps/clover-launch-studio/next.config.mjs',
             'apps/clover-launch-studio/src/lib/live-truth.ts',
             'apps/clover-launch-studio/test/launch-studio-app.test.mjs',
+            'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
+          const exactTwelfthCiEvidenceCorrectionAuthorizedPathListSha256 = 'bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b';
+          const exactTwelfthCiEvidenceCorrectionAuthorizedPaths = [
+            '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
@@ -1569,7 +1582,7 @@ jobs:
             const ancestryText = gitText(['rev-list', '--ancestry-path', '--reverse', `${exactSourceClosureCommit}..${head}`]);
             const ancestryCommitIds = ancestryText === '' ? [] : ancestryText.split('\n');
             requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds)
-              && commitIds.length === 11,
+              && commitIds.length >= 12 && commitIds.length <= 13,
               'CI-evidence correction chain depth or first-parent topology mismatch');
             const initialAuthorizedPaths = exactSortedPaths(exactInitialCiEvidenceCorrectionPaths);
             const secondAuthorizedPaths = exactSortedPaths(exactSecondCiEvidenceCorrectionPaths);
@@ -1581,7 +1594,8 @@ jobs:
             const eighthAuthorizedPaths = exactSortedPaths(exactEighthCiEvidenceCorrectionPaths);
             const ninthAuthorizedPaths = exactSortedPaths(exactNinthCiEvidenceCorrectionPaths);
             const tenthAuthorizedPaths = exactSortedPaths(exactTenthCiEvidenceCorrectionPaths);
-            const eleventhAuthorizedPaths = exactSortedPaths(exactEleventhCiEvidenceCorrectionAuthorizedPaths);
+            const eleventhAuthorizedPaths = exactSortedPaths(exactEleventhCiEvidenceCorrectionPaths);
+            const twelfthAuthorizedPaths = exactSortedPaths(exactTwelfthCiEvidenceCorrectionAuthorizedPaths);
             const cumulativeAuthorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
             requireCondition(pathListSha256(initialAuthorizedPaths) === exactInitialCiEvidenceCorrectionPathListSha256
               && pathListSha256(secondAuthorizedPaths) === exactSecondCiEvidenceCorrectionPathListSha256
@@ -1593,7 +1607,8 @@ jobs:
               && pathListSha256(eighthAuthorizedPaths) === exactEighthCiEvidenceCorrectionPathListSha256
               && pathListSha256(ninthAuthorizedPaths) === exactNinthCiEvidenceCorrectionPathListSha256
               && pathListSha256(tenthAuthorizedPaths) === exactTenthCiEvidenceCorrectionPathListSha256
-              && pathListSha256(eleventhAuthorizedPaths) === exactEleventhCiEvidenceCorrectionAuthorizedPathListSha256
+              && pathListSha256(eleventhAuthorizedPaths) === exactEleventhCiEvidenceCorrectionPathListSha256
+              && pathListSha256(twelfthAuthorizedPaths) === exactTwelfthCiEvidenceCorrectionAuthorizedPathListSha256
               && pathListSha256(cumulativeAuthorizedPaths) === exactCiEvidenceCorrectionPathListSha256,
             'CI-evidence correction boundary constants are inconsistent');
             const fixedPrefix = [
@@ -1656,6 +1671,12 @@ jobs:
                 tree: exactTenthCiEvidenceCorrectionTree,
                 parent: exactTenthCiEvidenceCorrectionParent,
                 paths: tenthAuthorizedPaths
+              },
+              {
+                commit: exactEleventhCiEvidenceCorrectionCommit,
+                tree: exactEleventhCiEvidenceCorrectionTree,
+                parent: exactEleventhCiEvidenceCorrectionParent,
+                paths: eleventhAuthorizedPaths
               }
             ];
             let expectedParent = exactSourceClosureCommit;
@@ -1671,10 +1692,14 @@ jobs:
                   && gitText(['rev-parse', `${commit}^{tree}`]) === fixed.tree
                   && canonicalJson(paths) === canonicalJson(fixed.paths),
                 `fixed CI-evidence correction ${index + 1} identity mismatch`);
+              } else if (index === fixedPrefix.length) {
+                requireCondition(canonicalJson(paths) === canonicalJson(twelfthAuthorizedPaths)
+                  && pathListSha256(paths) === exactTwelfthCiEvidenceCorrectionAuthorizedPathListSha256,
+                'primary deployment-input normalization correction changed an unauthorized or incomplete path set');
               } else {
-                requireCondition(index === fixedPrefix.length
-                  && paths.every((file) => eleventhAuthorizedPaths.includes(file)),
-                'source-only deployment-identity correction changed an unauthorized path or exceeded depth 11');
+                requireCondition(index === fixedPrefix.length + 1
+                  && paths.every((file) => twelfthAuthorizedPaths.includes(file)),
+                'optional deployment-input normalization correction changed an unauthorized path or exceeded depth 13');
               }
               expectedParent = commit;
             }
@@ -1726,9 +1751,13 @@ jobs:
             const currentCumulativePaths = exactRawDiffEntries(
               exactSourceClosureBaselineCommit, head, ['M']
             ).map(({ path: file }) => file);
-            requireCondition(canonicalJson(currentCumulativePaths) === canonicalJson(sourceClosurePaths)
-              && currentCumulativePaths.length === exactSourceClosureDeltaPathCount
-              && pathListSha256(currentCumulativePaths) === exactSourceClosureDeltaPathListSha256,
+            const expectedCurrentCumulativePaths = exactSortedPaths([
+              ...sourceClosurePaths,
+              ...exactCurrentSourceClosureAdditionalPaths
+            ]);
+            requireCondition(canonicalJson(currentCumulativePaths) === canonicalJson(expectedCurrentCumulativePaths)
+              && currentCumulativePaths.length === exactCurrentSourceClosurePathCount
+              && pathListSha256(currentCumulativePaths) === exactCurrentSourceClosurePathListSha256,
             'CI current candidate altered the cumulative source-closure path boundary');
             const correctionChain = exactCorrectionChain(head, process.env.CLOVER_TREE_EXACT_PR_HEAD);
             const expectedCiEvidenceCorrectionPaths = exactCiEvidenceCorrectionPaths;
@@ -1961,7 +1990,8 @@ jobs:
               && /^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
               && value.currentCandidate.cleanWorktree === true && value.currentCandidate.role === 'exact-pr-head'
               && Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-              && value.currentCandidate.correctionChainDepth === 11
+              && value.currentCandidate.correctionChainDepth >= 12
+              && value.currentCandidate.correctionChainDepth <= 13
               && value.currentCandidate.correctionCommitIds.length === value.currentCandidate.correctionChainDepth,
             `${label}.currentCandidate identity mismatch`);
             exactKeys(value.correctionChain,
@@ -4229,7 +4259,7 @@ jobs:
               ['source-closure-baseline', (source) => { source.sourceClosureBaseline.parent = '0'.repeat(40); }],
               ['source-closure-commit', (source) => { source.sourceClosureCommit.commit = '0'.repeat(40); }],
               ['current-parent', (source) => { source.currentCandidate.immediateParent = '0'.repeat(40); }],
-              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 12; }],
+              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 14; }],
               ['correction-ids', (source) => { source.correctionChain.commitIds = ['0'.repeat(40)]; }],
               ['source-closure-cumulative', (source) => {
                 source.sourceClosureDelta.currentCumulative.headCommit = '0'.repeat(40);

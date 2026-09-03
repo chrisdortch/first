@@ -1756,10 +1756,88 @@ test("source provenance binds deleted base objects and preserves current candida
   }
 });
 
+function exactNextLauncher(configuration) {
+  return [
+    '"use strict";',
+    "",
+    "// src/vercel-request-context.ts",
+    'var SYMBOL_FOR_REQ_CONTEXT = Symbol.for("@vercel/request-context");',
+    "function getContext() {",
+    "  const fromSymbol = globalThis;",
+    "  return fromSymbol[SYMBOL_FOR_REQ_CONTEXT]?.get?.() ?? {};",
+    "}",
+    "",
+    "// src/next-request-context.ts",
+    'var import_async_hooks = require("async_hooks");',
+    'var name = "@next/request-context";',
+    "var NEXT_REQUEST_CONTEXT_SYMBOL = Symbol.for(name);",
+    'var INTERNAL_STORAGE_FIELD_SYMBOL = Symbol.for("internal.storage");',
+    "function getOrCreateContextSingleton() {",
+    "  const _globalThis = globalThis;",
+    "  if (!_globalThis[NEXT_REQUEST_CONTEXT_SYMBOL]) {",
+    "    const storage = new import_async_hooks.AsyncLocalStorage();",
+    "    const Context = {",
+    "      get: () => storage.getStore(),",
+    "      [INTERNAL_STORAGE_FIELD_SYMBOL]: storage",
+    "    };",
+    "    _globalThis[NEXT_REQUEST_CONTEXT_SYMBOL] = Context;",
+    "  }",
+    "  return _globalThis[NEXT_REQUEST_CONTEXT_SYMBOL];",
+    "}",
+    "var NextRequestContext = getOrCreateContextSingleton();",
+    "function withNextRequestContext(value, callback) {",
+    "  const storage = NextRequestContext[INTERNAL_STORAGE_FIELD_SYMBOL];",
+    "  return storage.run(value, callback);",
+    "}",
+    "",
+    "// src/server-launcher.ts",
+    "process.chdir(__dirname);",
+    "var region = process.env.VERCEL_REGION || process.env.NOW_REGION;",
+    "if (!process.env.NODE_ENV) {",
+    '  process.env.NODE_ENV = region === "dev1" ? "development" : "production";',
+    "}",
+    'if (process.env.NODE_ENV !== "production" && region !== "dev1") {',
+    "  console.warn(",
+    '    `Warning: NODE_ENV was incorrectly set to "${process.env.NODE_ENV}", this value is being overridden to "production"`',
+    "  );",
+    '  process.env.NODE_ENV = "production";',
+    "}",
+    'if (process.env.VERCEL_SKEW_PROTECTION_ENABLED === "1" && process.env.VERCEL_DEPLOYMENT_ID && !process.env.NEXT_DEPLOYMENT_ID) {',
+    "  process.env.NEXT_DEPLOYMENT_ID = process.env.VERCEL_DEPLOYMENT_ID;",
+    "}",
+    'process.env.__NEXT_PRIVATE_PREBUNDLED_REACT = "next"',
+    'var NextServer = require("next/dist/compiled/next-server/server.runtime.prod.js").default;',
+    "// @preserve next-server-preload-target",
+    `const conf = ${JSON.stringify(configuration)};`,
+    "var nextServer = new NextServer({",
+    "  conf,",
+    '  dir: ".",',
+    "  minimalMode: true,",
+    "  customServer: false",
+    "});",
+    "var serve = (handler) => async (req, res) => {",
+    "  const vercelContext = getContext();",
+    "  await withNextRequestContext({ waitUntil: vercelContext.waitUntil }, () => {",
+    "    // @preserve entryDirectory handler",
+    "    return handler(req, res);",
+    "  });",
+    "};",
+    "module.exports = serve(nextServer.getRequestHandler());",
+    'if ((conf.experimental?.ppr || conf.experimental?.cacheComponents || conf.cacheComponents) && "getRequestHandlerWithMetadata" in nextServer && typeof nextServer.getRequestHandlerWithMetadata === "function") {',
+    "  module.exports.getRequestHandlerWithMetadata = (metadata) => serve(nextServer.getRequestHandlerWithMetadata(metadata));",
+    "}",
+    "if (process.env.NEXT_PRIVATE_PRELOAD_ENTRIES) {",
+    "  module.exports.preload = nextServer.unstable_preloadEntries.bind(nextServer);",
+    "}",
+    ""
+  ].join("\n");
+}
+
 function writeRawBuildOutput(outputRoot, checkoutRoot, {
   launcherKind = "direct",
   installRoot = path.join(checkoutRoot, "cli-install"),
-  requiredServerFilesProfile = "expanded"
+  requiredServerFilesProfile = "repository-root",
+  sourceProvenance = build
 } = {}) {
   rmSync(outputRoot, { recursive: true, force: true });
   mkdirSync(installRoot, { recursive: true });
@@ -1784,9 +1862,19 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
   mkdirSync(path.join(outputRoot, "static/assets"), { recursive: true });
   writeFileSync(path.join(outputRoot, "builds.json"), JSON.stringify({ target: "preview", argv: [process.execPath, cliExecutable, "build", "--yes"], cliVersion: VERCEL_CLI_VERSION, builds: [] }));
   writeFileSync(path.join(outputRoot, "diagnostics/cli_traces.json"), JSON.stringify({ cwd: checkoutRoot, cli: cliExecutable }));
-  const configuration = { outputFileTracingRoot: checkoutRoot, repoRoot: checkoutRoot, turbopack: { root: checkoutRoot }, unrelated: "preserved" };
+  const configuration = {
+    deploymentId: sourceProvenance.runtimeDeploymentKey,
+    distDir: ".next",
+    distDirRoot: ".next",
+    experimental: { runtimeServerDeploymentId: false },
+    env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(sourceProvenance) },
+    outputFileTracingRoot: checkoutRoot,
+    repoRoot: checkoutRoot,
+    turbopack: { root: checkoutRoot },
+    unrelated: "preserved"
+  };
   const launcherPath = path.join(outputRoot, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
-  writeFileSync(launcherPath, `const conf = ${JSON.stringify(configuration)};\nvar nextServer = true;\n`);
+  writeFileSync(launcherPath, exactNextLauncher(configuration));
   const requiredServerFilesPath = "apps/clover-launch-studio/.next/required-server-files.json";
   const generatedServerPath = "apps/clover-launch-studio/.next/server/generated.js";
   const tracedPackagePath = "apps/clover-launch-studio/node_modules/client-only/index.js";
@@ -1800,12 +1888,27 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
     config: requiredServerFilesProfile === "compact"
       ? { unrelated: "preserved" }
       : {
+          ...(requiredServerFilesProfile === "repository-root"
+            ? {
+                deploymentId: sourceProvenance.runtimeDeploymentKey,
+                distDir: ".next",
+                distDirRoot: ".next"
+              }
+            : {}),
           outputFileTracingRoot: checkoutRoot,
-          repoRoot: path.join(checkoutRoot, "apps/clover-launch-studio"),
-          turbopack: { root: checkoutRoot }
+          repoRoot: requiredServerFilesProfile === "repository-root"
+            ? checkoutRoot
+            : path.join(checkoutRoot, "apps/clover-launch-studio"),
+          turbopack: { root: checkoutRoot },
+          ...(requiredServerFilesProfile === "repository-root"
+            ? {
+                experimental: { runtimeServerDeploymentId: false },
+                env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(sourceProvenance) }
+              }
+            : {})
         }
   };
-  if (requiredServerFilesProfile !== "compact" && requiredServerFilesProfile !== "expanded") {
+  if (!["compact", "expanded", "repository-root"].includes(requiredServerFilesProfile)) {
     throw new Error("unknown required-server-files profile");
   }
   writeFileSync(path.join(checkoutRoot, requiredServerFilesPath), JSON.stringify(requiredServerFiles), { mode: 0o664 });
@@ -1813,6 +1916,8 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
   writeFileSync(path.join(outputRoot, "functions/index.func/.vc-config.json"), JSON.stringify({
     handler: "apps/clover-launch-studio/___next_launcher.cjs",
     runtime: "nodejs24.x",
+    launcherType: "Nodejs",
+    framework: { slug: "nextjs", version: "16.3.3" },
     assets: [],
     filePathMap: {
       [generatedServerPath]: generatedServerPath,
@@ -1824,11 +1929,42 @@ function writeRawBuildOutput(outputRoot, checkoutRoot, {
   writeFileSync(path.join(outputRoot, "functions/middleware.func/.vc-config.json"), JSON.stringify({
     runtime: "edge",
     entrypoint: "index.js",
+    framework: { slug: "nextjs", version: "16.3.3" },
     assets: []
   }));
   writeFileSync(path.join(outputRoot, "static/assets/app.js"), "console.log('public-sanitized');\n");
   symlinkSync("assets/app.js", path.join(outputRoot, "static/current.js"));
   return { installRoot, cliRoot, binRoot, cliExecutable, canonicalCliExecutable: path.join(cliRoot, "dist/vc.js") };
+}
+
+function mutateFirstLauncherConfiguration(outputRoot, mutate) {
+  const launcherPath = path.join(outputRoot, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
+  const source = readFileSync(launcherPath, "utf8");
+  const prefix = "const conf = ";
+  const start = source.indexOf(prefix);
+  const end = source.indexOf(";\nvar nextServer", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const configuration = JSON.parse(source.slice(start + prefix.length, end));
+  mutate(configuration);
+  writeFileSync(launcherPath, `${source.slice(0, start + prefix.length)}${JSON.stringify(configuration)}${source.slice(end)}`);
+}
+
+const fixtureNodeConfigPath = "functions/index.func/.vc-config.json";
+const fixtureMiddlewareConfigPath = "functions/middleware.func/.vc-config.json";
+const fixtureLauncherRelativePath = "apps/clover-launch-studio/___next_launcher.cjs";
+const fixtureAlternateHandlerRelativePath = "apps/clover-launch-studio/alternate_handler.js";
+
+function mutateFunctionConfig(outputRoot, configRelativePath, mutate) {
+  const configPath = path.join(outputRoot, ...configRelativePath.split("/"));
+  const configuration = JSON.parse(readFileSync(configPath, "utf8"));
+  mutate(configuration);
+  writeFileSync(configPath, JSON.stringify(configuration));
+}
+
+function addAlternateFunctionHandler(outputRoot) {
+  const alternatePath = path.join(outputRoot, "functions/index.func", ...fixtureAlternateHandlerRelativePath.split("/"));
+  writeFileSync(alternatePath, "module.exports = () => 'substituted';\n");
 }
 
 function exactVercelCliFixture(launcherKind = "npm-bin-vc") {
@@ -2498,11 +2634,17 @@ test("generated preview output normalization, manifest, attestation and archive 
     };
     const restore = path.join(checkoutRoot, "restore");
     const restoredOutput = restoreDeterministicOutputArchive(readFileSync(first.archivePath), restore, {
-      expectedExternalInputs: first.deploymentInputManifest.externalInputs
+      expectedExternalInputs: first.deploymentInputManifest.externalInputs,
+      expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+      expectedSourceProvenance: build
     });
     assert.deepEqual(buildOutputManifest(restoredOutput), buildOutputManifest(output));
     assert.deepEqual(
-      buildExternalDeploymentInputManifest(restoredOutput, restore, { expectedManifest: first.deploymentInputManifest.externalInputs }),
+      buildExternalDeploymentInputManifest(restoredOutput, restore, {
+        expectedManifest: first.deploymentInputManifest.externalInputs,
+        expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+        expectedSourceProvenance: build
+      }),
       first.deploymentInputManifest.externalInputs
     );
     assert.equal(readFileSync(path.join(restore, "apps/clover-launch-studio/.next/required-server-files.json"), "utf8").includes(checkoutRoot), false);
@@ -2522,22 +2664,360 @@ test("generated preview output normalization, manifest, attestation and archive 
   }
 });
 
-test("compact Next required-server-files profile survives the complete seal, archive and restoration lifecycle", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "clover-compact-output-attestation-"));
-  const output = path.join(root, "output");
-  const evidence = path.join(root, "evidence");
-  const frozenWorkspace = path.join(root, "frozen-workspace");
+test("every Next launcher binds the exact source provenance and runtime deployment identity", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-launcher-source-identity-"));
   try {
     const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
-    writeRawBuildOutput(output, checkoutRoot, { requiredServerFilesProfile: "compact" });
-    const sealed = createDeploymentAttestation({
-      outputRoot: output,
-      repositoryRoot: root,
-      evidenceDirectory: evidence,
-      frozenOutputRoot: frozenWorkspace,
-      sourceProvenance: build
+    const cases = [
+      ["provider deployment ID substituted for the Clover key", (configuration) => {
+        configuration.deploymentId = `dpl_${"A".repeat(32)}`;
+      }],
+      ["missing configured deployment ID", (configuration) => { delete configuration.deploymentId; }],
+      ["runtime-server deployment identity enabled", (configuration) => {
+        configuration.experimental.runtimeServerDeploymentId = true;
+      }],
+      ["runtime-server deployment identity omitted", (configuration) => {
+        delete configuration.experimental.runtimeServerDeploymentId;
+      }],
+      ["embedded source provenance substituted", (configuration) => {
+        configuration.env.CLOVER_BUILD_PROVENANCE_JSON = JSON.stringify({ bad: "source" });
+      }],
+      ["embedded source provenance omitted", (configuration) => {
+        delete configuration.env.CLOVER_BUILD_PROVENANCE_JSON;
+      }],
+      ["additional embedded environment value", (configuration) => {
+        configuration.env.SUBSTITUTED = "value";
+      }],
+      ["launcher distDir traversal", (configuration) => { configuration.distDir = "../../escape"; }],
+      ["launcher distDirRoot traversal", (configuration) => { configuration.distDirRoot = "../.next"; }]
+    ];
+    for (const [name, mutate] of cases) {
+      await t.test(name, () => {
+        const output = path.join(checkoutRoot, `output-${name.replaceAll(" ", "-")}`);
+        const evidence = `${output}-evidence`;
+        writeRawBuildOutput(output, checkoutRoot);
+        mutateFirstLauncherConfiguration(output, mutate);
+        const before = rawTreeIdentity(output);
+        assert.throws(
+          () => createDeploymentAttestation({
+            outputRoot: output,
+            repositoryRoot: checkoutRoot,
+            evidenceDirectory: evidence,
+            sourceProvenance: build
+          }),
+          /CLOVER_LAUNCHER_SOURCE_IDENTITY_REJECTED/u
+        );
+        assert.deepEqual(rawTreeIdentity(output), before);
+        assert.equal(existsSync(evidence), false);
+      });
+    }
+
+    const exactLauncherBinding = (source) => {
+      const producer = "var NextServer = require(\"next/dist/compiled/next-server/server.runtime.prod.js\").default;\n// @preserve next-server-preload-target\n";
+      const consumer = ";\nvar nextServer = new NextServer({\n  conf,\n  dir: \".\",\n  minimalMode: true,\n  customServer: false\n});";
+      const start = source.indexOf(producer);
+      const end = source.indexOf(consumer, start);
+      assert.notEqual(start, -1);
+      assert.notEqual(end, -1);
+      return source.slice(start, end + consumer.length);
+    };
+
+    const exerciseFullLauncherTransaction = ({ output, evidence, frozen, restore }) => {
+      const sealed = createDeploymentAttestation({
+        outputRoot: output,
+        repositoryRoot: checkoutRoot,
+        evidenceDirectory: evidence,
+        sourceProvenance: build,
+        frozenOutputRoot: frozen
+      });
+      const restoredOutput = restoreDeterministicOutputArchive(readFileSync(sealed.archivePath), restore, {
+        expectedExternalInputs: sealed.deploymentInputManifest.externalInputs,
+        expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+        expectedSourceProvenance: build
+      });
+      assert.deepEqual(buildOutputManifest(restoredOutput), buildOutputManifest(sealed.frozenOutput));
+      assert.deepEqual(
+        buildExternalDeploymentInputManifest(restoredOutput, restore, {
+          expectedManifest: sealed.deploymentInputManifest.externalInputs,
+          expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+          expectedSourceProvenance: build
+        }),
+        sealed.deploymentInputManifest.externalInputs
+      );
+    };
+
+    for (const [name, maliciousLauncher] of [
+      ["uncalled-function with an alternate active server", (validBinding) => [
+        '"use strict";',
+        "function neverCalledLauncher() {",
+        ...validBinding.split("\n").map((line) => `  ${line}`),
+        "}",
+        'var ActiveNextServer = require("next/dist/compiled/next-server/server.runtime.prod.js").default;',
+        `const activeConfiguration = ${JSON.stringify({ deploymentId: `dpl_${"A".repeat(32)}` })};`,
+        "var activeNextServer = new ActiveNextServer({",
+        "  conf: activeConfiguration,",
+        '  dir: ".",',
+        "  minimalMode: true,",
+        "  customServer: false",
+        "});",
+        "module.exports = activeNextServer.getRequestHandler();",
+        ""
+      ].join("\n")],
+      ["alternate active server before a top-level return", (validBinding) => [
+        '"use strict";',
+        'var ActiveNextServer = require("next/dist/compiled/next-server/server.runtime.prod.js").default;',
+        `const activeConfiguration = ${JSON.stringify({ deploymentId: `dpl_${"B".repeat(32)}` })};`,
+        "var activeNextServer = new ActiveNextServer({",
+        "  conf: activeConfiguration,",
+        '  dir: ".",',
+        "  minimalMode: true,",
+        "  customServer: false",
+        "});",
+        "module.exports = activeNextServer.getRequestHandler();",
+        "return;",
+        validBinding,
+        ""
+      ].join("\n")]
+    ]) {
+      await t.test(`${name} cannot survive the full output/archive/restore transaction`, () => {
+        const slug = name.replaceAll(" ", "-");
+        const output = path.join(checkoutRoot, `output-${slug}`);
+        const evidence = path.join(checkoutRoot, `evidence-${slug}`);
+        const frozen = path.join(checkoutRoot, `frozen-${slug}`);
+        const restore = path.join(checkoutRoot, `restore-${slug}`);
+        writeRawBuildOutput(output, checkoutRoot);
+        const launcherPath = path.join(output, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
+        const source = readFileSync(launcherPath, "utf8");
+        writeFileSync(launcherPath, maliciousLauncher(exactLauncherBinding(source)));
+        const before = rawTreeIdentity(output);
+        assert.throws(
+          () => exerciseFullLauncherTransaction({ output, evidence, frozen, restore }),
+          /CLOVER_LAUNCHER_CONFIG_REJECTED/u
+        );
+        assert.deepEqual(rawTreeIdentity(output), before);
+        assert.equal(existsSync(evidence), false);
+        assert.equal(existsSync(frozen), false);
+        assert.equal(existsSync(restore), false);
+      });
+    }
+
+    await t.test("a block-comment decoy cannot hide an executable deployment-ID substitution from the full seal and restore transaction", () => {
+      const output = path.join(checkoutRoot, "output-block-comment-decoy");
+      const evidence = path.join(checkoutRoot, "evidence-block-comment-decoy");
+      const frozen = path.join(checkoutRoot, "frozen-block-comment-decoy");
+      writeRawBuildOutput(output, checkoutRoot);
+      const launcherPath = path.join(output, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
+      const validBinding = exactLauncherBinding(readFileSync(launcherPath, "utf8"));
+      mutateFirstLauncherConfiguration(output, (configuration) => {
+        configuration.deploymentId = `dpl_${"A".repeat(32)}`;
+      });
+      writeFileSync(launcherPath, `/*${validBinding}*/\n${readFileSync(launcherPath, "utf8")}`);
+      const before = rawTreeIdentity(output);
+      assert.throws(
+        () => createDeploymentAttestation({
+          outputRoot: output,
+          repositoryRoot: checkoutRoot,
+          evidenceDirectory: evidence,
+          sourceProvenance: build,
+          frozenOutputRoot: frozen
+        }),
+        /CLOVER_LAUNCHER_CONFIG_REJECTED/u
+      );
+      assert.deepEqual(rawTreeIdentity(output), before);
+      assert.equal(existsSync(evidence), false);
+      assert.equal(existsSync(frozen), false);
     });
-    const external = sealed.deploymentInputManifest.externalInputs;
+
+    for (const [name, decorate] of [
+      ["quoted-string", (binding) => `const ignoredLauncherBinding = ${JSON.stringify(binding)};\n`],
+      ["duplicate-executable", (binding) => `${binding}\n`]
+    ]) {
+      await t.test(`${name} launcher binding decoy is rejected`, () => {
+        const output = path.join(checkoutRoot, `output-${name}-decoy`);
+        const evidence = path.join(checkoutRoot, `evidence-${name}-decoy`);
+        writeRawBuildOutput(output, checkoutRoot);
+        const launcherPath = path.join(output, "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs");
+        const source = readFileSync(launcherPath, "utf8");
+        writeFileSync(launcherPath, `${decorate(exactLauncherBinding(source))}${source}`);
+        const before = rawTreeIdentity(output);
+        assert.throws(
+          () => createDeploymentAttestation({
+            outputRoot: output,
+            repositoryRoot: checkoutRoot,
+            evidenceDirectory: evidence,
+            sourceProvenance: build
+          }),
+          /CLOVER_LAUNCHER_CONFIG_REJECTED/u
+        );
+        assert.deepEqual(rawTreeIdentity(output), before);
+        assert.equal(existsSync(evidence), false);
+      });
+    }
+
+    await t.test("a post-seal launcher identity substitution is rejected before manifest comparison", () => {
+      const output = path.join(checkoutRoot, "output-post-seal");
+      const evidence = path.join(checkoutRoot, "evidence-post-seal");
+      writeRawBuildOutput(output, checkoutRoot);
+      createDeploymentAttestation({
+        outputRoot: output,
+        repositoryRoot: checkoutRoot,
+        evidenceDirectory: evidence,
+        sourceProvenance: build
+      });
+      mutateFirstLauncherConfiguration(output, (configuration) => {
+        configuration.deploymentId = `dpl_${"B".repeat(32)}`;
+      });
+      assert.throws(
+        () => verifyDeploymentInputEvidence({
+          outputRoot: output,
+          repositoryRoot: checkoutRoot,
+          evidenceDirectory: evidence,
+          sourceProvenance: build
+        }),
+        /CLOVER_LAUNCHER_SOURCE_IDENTITY_REJECTED/u
+      );
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every Vercel function config selects its canonical same-directory Next launcher exactly once", async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-function-launcher-binding-"));
+  try {
+    const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
+    const rejectsFullTransaction = async (name, mutate, expected) => t.test(name, () => {
+      const slug = name.replaceAll(" ", "-");
+      const output = path.join(checkoutRoot, `output-${slug}`);
+      const evidence = path.join(checkoutRoot, `evidence-${slug}`);
+      const frozen = path.join(checkoutRoot, `frozen-${slug}`);
+      writeRawBuildOutput(output, checkoutRoot);
+      mutate(output);
+      const before = rawTreeIdentity(output);
+      assert.throws(
+        () => createDeploymentAttestation({
+          outputRoot: output,
+          repositoryRoot: checkoutRoot,
+          evidenceDirectory: evidence,
+          frozenOutputRoot: frozen,
+          sourceProvenance: build
+        }),
+        expected
+      );
+      assert.deepEqual(rawTreeIdentity(output), before);
+      assert.equal(existsSync(evidence), false);
+      assert.equal(existsSync(frozen), false);
+    });
+
+    await rejectsFullTransaction("alternate handler with an unused canonical launcher", (output) => {
+      addAlternateFunctionHandler(output);
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        configuration.handler = fixtureAlternateHandlerRelativePath;
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
+    await rejectsFullTransaction("entrypoint cannot substitute for the Node handler", (output) => {
+      addAlternateFunctionHandler(output);
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        delete configuration.handler;
+        configuration.entrypoint = fixtureAlternateHandlerRelativePath;
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
+    await rejectsFullTransaction("missing Node handler", (output) => {
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        delete configuration.handler;
+      });
+    }, /CLOVER_VC_CONFIG_CONTAINED_INPUT_REJECTED/u);
+    await rejectsFullTransaction("duplicate handler selectors", (output) => {
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        configuration.entrypoint = fixtureLauncherRelativePath;
+      });
+    }, /CLOVER_VC_CONFIG_CONTAINED_INPUT_REJECTED/u);
+    await rejectsFullTransaction("Node runtime substitution", (output) => {
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        configuration.runtime = "nodejs20.x";
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
+    await rejectsFullTransaction("Node launcher role substitution", (output) => {
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        configuration.launcherType = "Custom";
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
+    await rejectsFullTransaction("Node framework version substitution", (output) => {
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        configuration.framework.version = "16.3.2";
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
+    await rejectsFullTransaction("non-middleware Node function cannot become edge even when its launcher is deleted", (output) => {
+      addAlternateFunctionHandler(output);
+      unlinkSync(path.join(output, "functions/index.func", ...fixtureLauncherRelativePath.split("/")));
+      mutateFunctionConfig(output, fixtureNodeConfigPath, (configuration) => {
+        configuration.runtime = "edge";
+        configuration.entrypoint = fixtureAlternateHandlerRelativePath;
+        delete configuration.handler;
+        delete configuration.launcherType;
+      });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u);
+    await rejectsFullTransaction("missing canonical Node launcher", (output) => {
+      unlinkSync(path.join(output, "functions/index.func", ...fixtureLauncherRelativePath.split("/")));
+    }, /CLOVER_VC_CONFIG_(?:CONTAINED_INPUT_MISSING|LAUNCHER_BINDING_REJECTED)/u);
+    await rejectsFullTransaction("the complete Node function inventory cannot be omitted", (output) => {
+      rmSync(path.join(output, "functions/index.func"), { recursive: true, force: true });
+    }, /CLOVER_VC_CONFIG_LAUNCHER_INVENTORY_REJECTED/u);
+    await rejectsFullTransaction("unreferenced canonical launcher", (output) => {
+      const extraDirectory = path.join(output, "functions/unused.func/apps/clover-launch-studio");
+      mkdirSync(extraDirectory, { recursive: true });
+      writeFileSync(
+        path.join(extraDirectory, "___next_launcher.cjs"),
+        readFileSync(path.join(output, "functions/index.func", ...fixtureLauncherRelativePath.split("/")))
+      );
+    }, /CLOVER_VC_CONFIG_UNREFERENCED_LAUNCHER_REJECTED/u);
+    await rejectsFullTransaction("root config cannot share a nested function handler", (output) => {
+      writeFileSync(path.join(output, ".vc-config.json"), JSON.stringify({
+        runtime: "nodejs24.x",
+        launcherType: "Nodejs",
+        framework: { slug: "nextjs", version: "16.3.3" },
+        handler: `functions/index.func/${fixtureLauncherRelativePath}`,
+        assets: []
+      }));
+    }, /CLOVER_VC_CONFIG_FOREIGN_CONFIG_LAUNCHER_REJECTED/u);
+    await rejectsFullTransaction("root config cannot share a nested function entrypoint", (output) => {
+      writeFileSync(path.join(output, ".vc-config.json"), JSON.stringify({
+        runtime: "edge",
+        framework: { slug: "nextjs", version: "16.3.3" },
+        entrypoint: `functions/index.func/${fixtureLauncherRelativePath}`,
+        assets: []
+      }));
+    }, /CLOVER_VC_CONFIG_FOREIGN_CONFIG_LAUNCHER_REJECTED/u);
+    await rejectsFullTransaction("middleware cannot select a Node handler", (output) => {
+      mutateFunctionConfig(output, fixtureMiddlewareConfigPath, (configuration) => {
+        configuration.runtime = "nodejs24.x";
+        configuration.handler = "index.js";
+        configuration.launcherType = "Nodejs";
+        delete configuration.entrypoint;
+      });
+    }, /CLOVER_VC_CONFIG_MIDDLEWARE_BINDING_REJECTED/u);
+    await rejectsFullTransaction("middleware framework substitution", (output) => {
+      mutateFunctionConfig(output, fixtureMiddlewareConfigPath, (configuration) => {
+        configuration.framework.slug = "other";
+      });
+    }, /CLOVER_VC_CONFIG_MIDDLEWARE_BINDING_REJECTED/u);
+    await rejectsFullTransaction("missing middleware config", (output) => {
+      unlinkSync(path.join(output, ...fixtureMiddlewareConfigPath.split("/")));
+    }, /CLOVER_VC_CONFIG_MIDDLEWARE_INVENTORY_REJECTED/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("compact historical Next required-server-files profile remains exact without satisfying the successor source profile", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "clover-compact-output-attestation-"));
+  const output = path.join(root, "output");
+  try {
+    const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
+    const frozenWorkspace = path.join(checkoutRoot, "frozen-workspace");
+    writeRawBuildOutput(output, checkoutRoot, { requiredServerFilesProfile: "compact" });
+    normalizeGeneratedOutput({ outputRoot: output, checkoutRoot });
+    const external = buildExternalDeploymentInputManifest(output, checkoutRoot);
     const required = external.files.find(({ path: entryPath }) => entryPath === "apps/clover-launch-studio/.next/required-server-files.json");
     assert.equal(external.schemaVersion, "clover-vercel-file-path-map-external-inputs-v2");
     assert.equal(required.normalization.profile, "next-app-dir-only");
@@ -2545,18 +3025,15 @@ test("compact Next required-server-files profile survives the complete seal, arc
     assert.equal(required.normalization.rootOccurrenceCount, 1);
     assert.equal(required.normalization.beforeSha256, required.sourceSha256);
     assert.equal(required.normalization.afterSha256, required.sha256);
-    const verified = verifyDeploymentInputEvidence({
-      outputRoot: sealed.frozenOutput,
-      repositoryRoot: root,
-      evidenceDirectory: evidence,
-      sourceProvenance: build
-    });
-    assert.equal(verified.deploymentInputManifest.externalInputs.rootSha256, external.rootSha256);
-    assert.equal(deterministicOutputArchive(sealed.frozenOutput, {
-      repositoryRoot: frozenWorkspace,
-      externalInputs: external,
-      sealedWorkspace: true
-    }).equals(readFileSync(sealed.archivePath)), true);
+    assert.throws(
+      () => buildExternalDeploymentInputManifest(output, checkoutRoot, {
+        expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+        expectedSourceProvenance: build
+      }),
+      /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_PROFILE_DOWNGRADE_REJECTED/u
+    );
+    const archive = deterministicOutputArchive(output, { repositoryRoot: checkoutRoot, externalInputs: external });
+    restoreDeterministicOutputArchive(archive, frozenWorkspace, { expectedExternalInputs: external });
     const restoredRequired = JSON.parse(readFileSync(
       path.join(frozenWorkspace, "apps/clover-launch-studio/.next/required-server-files.json"),
       "utf8"
@@ -3246,6 +3723,20 @@ function tarRecordPath(archive, offset) {
   return prefix ? `${prefix}/${name}` : name;
 }
 
+function withRewrittenTarFileContent(archive, archivePath, rewrite) {
+  const candidate = Buffer.from(archive);
+  const offset = tarRecordOffsets(candidate).find((recordOffset) => tarRecordPath(candidate, recordOffset) === archivePath);
+  assert.notEqual(offset, undefined);
+  const sizeText = candidate.subarray(offset + 124, offset + 136).toString("ascii").replace(/[\0 ]+$/u, "");
+  const size = Number.parseInt(sizeText, 8);
+  const contentOffset = offset + 512;
+  const before = candidate.subarray(contentOffset, contentOffset + size);
+  const after = Buffer.from(rewrite(before.toString("utf8")), "utf8");
+  assert.equal(after.length, before.length);
+  after.copy(candidate, contentOffset);
+  return candidate;
+}
+
 test("frozen archive and external evidence verification reject substitutions without partial restore", async (t) => {
   const root = mkdtempSync(path.join(tmpdir(), "clover-archive-adversarial-"));
   try {
@@ -3255,6 +3746,7 @@ test("frozen archive and external evidence verification reject substitutions wit
     const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
     const canonicalRoot = checkoutRoot;
     writeRawBuildOutput(output, checkoutRoot);
+    addAlternateFunctionHandler(output);
     const sealed = createDeploymentAttestation({
       outputRoot: output,
       repositoryRoot: root,
@@ -3262,15 +3754,42 @@ test("frozen archive and external evidence verification reject substitutions wit
       frozenOutputRoot: frozenWorkspace,
       sourceProvenance: build
     });
-    const archive = deterministicOutputArchive(output, { repositoryRoot: root, externalInputs: sealed.deploymentInputManifest.externalInputs });
+    const archive = deterministicOutputArchive(output, {
+      repositoryRoot: root,
+      externalInputs: sealed.deploymentInputManifest.externalInputs,
+      expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+      expectedSourceProvenance: build
+    });
     assert.deepEqual(archive, readFileSync(path.join(evidence, FINAL_ARCHIVE_FILE)));
     assert.equal(verifyDeploymentInputEvidence({ outputRoot: output, repositoryRoot: root, evidenceDirectory: evidence, sourceProvenance: build }).archiveManifest.archiveSha256, sealed.archiveSha256);
 
     const rejectsWithoutDestination = (name, candidate, expected) => t.test(name, () => {
       const destination = path.join(canonicalRoot, `restore-${name.replaceAll(" ", "-")}`);
       assert.throws(() => restoreDeterministicOutputArchive(candidate, destination, {
-        expectedExternalInputs: sealed.deploymentInputManifest.externalInputs
+        expectedExternalInputs: sealed.deploymentInputManifest.externalInputs,
+        expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+        expectedSourceProvenance: build
       }), expected);
+      assert.equal(existsSync(destination), false);
+    });
+    const alternateHandlerArchive = withRewrittenTarFileContent(
+      archive,
+      `workspace/.vercel/output/${fixtureNodeConfigPath}`,
+      (content) => {
+        const configuration = JSON.parse(content);
+        configuration.handler = fixtureAlternateHandlerRelativePath;
+        return JSON.stringify(configuration);
+      }
+    );
+    await t.test("archived config cannot select an alternate handler while retaining an unused canonical launcher", () => {
+      const destination = path.join(canonicalRoot, "restore-archived-alternate-handler");
+      assert.throws(
+        () => restoreDeterministicOutputArchive(alternateHandlerArchive, destination, {
+          expectedRuntimeDeploymentKey: build.runtimeDeploymentKey,
+          expectedSourceProvenance: build
+        }),
+        /CLOVER_ARCHIVE_VC_CONFIG_LAUNCHER_BINDING_REJECTED/u
+      );
       assert.equal(existsSync(destination), false);
     });
     await rejectsWithoutDestination("checksum", (() => { const candidate = Buffer.from(archive); candidate[0] ^= 1; return candidate; })(), /CLOVER_ARCHIVE_CHECKSUM_REJECTED/u);
@@ -3464,8 +3983,13 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
   const root = mkdtempSync(path.join(tmpdir(), "clover-external-deployment-input-"));
   try {
     const checkoutRoot = execFileSync("pwd", ["-P"], { cwd: root, encoding: "utf8" }).trim();
+    const expectedRuntimeDeploymentKey = "clover-84ba0a60574959bf4eaf5524";
+    const expectedSourceProvenance = Object.freeze({
+      runtimeDeploymentKey: expectedRuntimeDeploymentKey,
+      sourceCommit: "84ba0a60574959bf4eaf552494b74cee580aacd1"
+    });
     const output = path.join(checkoutRoot, "output");
-    writeRawBuildOutput(output, checkoutRoot);
+    writeRawBuildOutput(output, checkoutRoot, { requiredServerFilesProfile: "expanded" });
     normalizeGeneratedOutput({ outputRoot: output, checkoutRoot });
     const configPath = path.join(output, "functions/index.func/.vc-config.json");
     const middlewareConfigPath = path.join(output, "functions/middleware.func/.vc-config.json");
@@ -3545,6 +4069,61 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
         assert.equal(compactNormalized.normalization.rootOccurrenceCount, 1);
         assert.equal(compactNormalized.sourceBytes - compactNormalized.bytes, checkoutRoot.length - "/var/task".length);
         assert.notEqual(compactNormalized.sourceSha256, compactNormalized.sha256);
+      } finally {
+        writeFileSync(requiredPath, original);
+      }
+    });
+
+    await t.test("Next 16.3.3 repository-root profile binds disabled runtime-server deployment IDs across Node 24 lanes", () => {
+      const requiredPath = path.join(checkoutRoot, "apps/clover-launch-studio/.next/required-server-files.json");
+      const original = readFileSync(requiredPath);
+      try {
+        for (const nodeVersion of ["v24.16.0", "v24.19.0"]) {
+          const successor = {
+            version: 1,
+            appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
+            config: {
+              deploymentId: expectedRuntimeDeploymentKey,
+              distDir: ".next",
+              distDirRoot: ".next",
+              outputFileTracingRoot: checkoutRoot,
+              repoRoot: checkoutRoot,
+              turbopack: { root: checkoutRoot },
+              experimental: { runtimeServerDeploymentId: false },
+              env: {
+                CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify({ ...expectedSourceProvenance, nodeVersion })
+              }
+            }
+          };
+          const laneSourceProvenance = { ...expectedSourceProvenance, nodeVersion };
+          writeFileSync(requiredPath, JSON.stringify(successor));
+          assert.throws(
+            () => buildExternalDeploymentInputManifest(output, checkoutRoot, { expectedRuntimeDeploymentKey }),
+            /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_PROFILE_DOWNGRADE_REJECTED/u
+          );
+          const manifest = buildExternalDeploymentInputManifest(output, checkoutRoot, {
+            expectedRuntimeDeploymentKey,
+            expectedSourceProvenance: laneSourceProvenance
+          });
+          const normalizedFile = manifest.files.find(({ path: entryPath }) => entryPath === "apps/clover-launch-studio/.next/required-server-files.json");
+          assert.equal(normalizedFile.normalization.profile, "next-repository-build-roots-runtime-server-disabled");
+          assert.deepEqual(normalizedFile.normalization.fields, [
+            "appDir", "config.outputFileTracingRoot", "config.repoRoot", "config.turbopack.root"
+          ]);
+          assert.equal(normalizedFile.normalization.rootOccurrenceCount, 4);
+          const archive = deterministicOutputArchive(output, {
+            repositoryRoot: checkoutRoot,
+            externalInputs: manifest,
+            expectedRuntimeDeploymentKey,
+            expectedSourceProvenance: laneSourceProvenance
+          });
+          const restoredWorkspace = path.join(checkoutRoot, `repository-root-${nodeVersion}-sealed-workspace`);
+          restoreDeterministicOutputArchive(archive, restoredWorkspace, {
+            expectedExternalInputs: manifest,
+            expectedRuntimeDeploymentKey,
+            expectedSourceProvenance: laneSourceProvenance
+          });
+        }
       } finally {
         writeFileSync(requiredPath, original);
       }
@@ -3633,6 +4212,18 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
         assert.equal(included.totalReferenceCount, baseline.totalReferenceCount + 1);
         assert.equal(included.regularFileCount, baseline.regularFileCount);
         assert.ok(included.configs.some(({ path: config }) => config === ".vc-config.json"));
+        writeFileSync(rootConfigPath, JSON.stringify({
+          handler: "functions/index.func/apps/clover-launch-studio/___next_launcher.cjs",
+          filePathMap: { [tracedPackagePath]: tracedPackagePath }
+        }));
+        assert.throws(
+          () => buildExternalDeploymentInputManifest(output, checkoutRoot),
+          /CLOVER_VC_CONFIG_FOREIGN_CONFIG_LAUNCHER_REJECTED/u
+        );
+        assert.throws(
+          () => deterministicOutputArchive(output, { repositoryRoot: checkoutRoot }),
+          /CLOVER_VC_CONFIG_FOREIGN_CONFIG_LAUNCHER_REJECTED/u
+        );
         unlinkSync(rootConfigPath);
         symlinkSync("functions/index.func/.vc-config.json", rootConfigPath);
         assert.throws(() => buildExternalDeploymentInputManifest(output, checkoutRoot), /CLOVER_VC_CONFIG_SYMLINK_REJECTED/u);
@@ -3689,11 +4280,27 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
         try { assert.throws(() => buildExternalDeploymentInputManifest(output, checkoutRoot), expected); }
         finally { writeFileSync(requiredPath, original); }
       });
+      const successorRejection = async (name, bytes, expected) => nested.test(name, () => {
+        writeFileSync(requiredPath, bytes);
+        try {
+          assert.throws(
+            () => buildExternalDeploymentInputManifest(output, checkoutRoot, {
+              expectedRuntimeDeploymentKey,
+              expectedSourceProvenance
+            }),
+            expected
+          );
+        }
+        finally { writeFileSync(requiredPath, original); }
+      });
       await rejection("malformed JSON", "{\"appDir\":", /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_REJECTED/u);
       await rejection("duplicate JSON key", `{"appDir":${JSON.stringify(path.join(checkoutRoot, "apps/clover-launch-studio"))},"appDir":${JSON.stringify(path.join(checkoutRoot, "apps/clover-launch-studio"))}}`, /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_REJECTED/u);
       const canonical = JSON.parse(original.toString("utf8"));
       await rejection("a fifth root occurrence", JSON.stringify({ ...canonical, unexpectedRoot: checkoutRoot }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
-      await rejection("a wrong approved field", JSON.stringify({ ...canonical, config: { ...canonical.config, repoRoot: checkoutRoot } }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await rejection("a wrong approved field", JSON.stringify({
+        ...canonical,
+        config: { ...canonical.config, repoRoot: path.join(checkoutRoot, "wrong-repository-root") }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
       await rejection("an unapproved field carrying the root", JSON.stringify({
         ...canonical,
         unexpectedRoot: checkoutRoot,
@@ -3702,6 +4309,93 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
       await rejection("a partial expanded profile", JSON.stringify({
         appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
         config: { outputFileTracingRoot: checkoutRoot, unrelated: "preserved" }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      const repositoryRootProfile = {
+        appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
+        config: {
+          deploymentId: expectedRuntimeDeploymentKey,
+          distDir: ".next",
+          distDirRoot: ".next",
+          outputFileTracingRoot: checkoutRoot,
+          repoRoot: checkoutRoot,
+          turbopack: { root: checkoutRoot },
+          experimental: { runtimeServerDeploymentId: false },
+          env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify(expectedSourceProvenance) }
+        }
+      };
+      await successorRejection("the successor profile cannot downgrade to compact while substituting its deployment ID", JSON.stringify({
+        appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
+        config: {
+          deploymentId: `dpl_${"A".repeat(32)}`,
+          experimental: { runtimeServerDeploymentId: true }
+        }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_PROFILE_DOWNGRADE_REJECTED/u);
+      await successorRejection("the successor profile cannot downgrade to the historical expanded app-root shape", JSON.stringify({
+        ...repositoryRootProfile,
+        config: {
+          ...repositoryRootProfile.config,
+          repoRoot: path.join(checkoutRoot, "apps/clover-launch-studio")
+        }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_PROFILE_DOWNGRADE_REJECTED/u);
+      await successorRejection("a repository-root profile missing an approved field", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, turbopack: {} }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_PROFILE_DOWNGRADE_REJECTED/u);
+      await successorRejection("a repository-root profile missing its source-bound deploymentId", JSON.stringify({
+        ...repositoryRootProfile,
+        config: Object.fromEntries(Object.entries(repositoryRootProfile.config).filter(([key]) => key !== "deploymentId"))
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with a different Clover deploymentId", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, deploymentId: "clover-0637de0baebdc9d7f9f86dbd" }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with a provider deploymentId substitution", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, deploymentId: `dpl_${"A".repeat(32)}` }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with a traversing distDir", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, distDir: "../../escape" }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with a substituted distDirRoot", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, distDirRoot: "../.next" }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with substituted embedded source provenance", JSON.stringify({
+        ...repositoryRootProfile,
+        config: {
+          ...repositoryRootProfile.config,
+          env: { CLOVER_BUILD_PROVENANCE_JSON: JSON.stringify({ bad: "source" }) }
+        }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_PROVENANCE_REJECTED/u);
+      await successorRejection("a repository-root profile with an additional embedded environment value", JSON.stringify({
+        ...repositoryRootProfile,
+        config: {
+          ...repositoryRootProfile.config,
+          env: {
+            ...repositoryRootProfile.config.env,
+            SUBSTITUTED: "value"
+          }
+        }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_PROVENANCE_REJECTED/u);
+      await successorRejection("a repository-root profile with runtimeServerDeploymentId true", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, experimental: { runtimeServerDeploymentId: true } }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile missing runtimeServerDeploymentId", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, experimental: {} }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with a substituted runtimeServerDeploymentId", JSON.stringify({
+        ...repositoryRootProfile,
+        config: { ...repositoryRootProfile.config, experimental: { runtimeServerDeploymentId: "false" } }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await successorRejection("a repository-root profile with another experimental root field", JSON.stringify({
+        ...repositoryRootProfile,
+        config: {
+          ...repositoryRootProfile.config,
+          experimental: { runtimeServerDeploymentId: false, substitutedRoot: checkoutRoot }
+        }
       }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
       await rejection("a compact profile with an unapproved root occurrence", JSON.stringify({
         appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
@@ -3728,7 +4422,11 @@ test("Vercel filePathMap external inputs are complete, normalized, closed and mu
       });
       const genericHostOffset = genericHostSource.lastIndexOf(syntheticGenericHostPath);
       assert.notEqual(genericHostOffset, -1);
-      await rejection("a compact profile with an escaped generic host path", `${genericHostSource.slice(0, genericHostOffset)}\\u002f${syntheticGenericHostPath.slice(1)}${genericHostSource.slice(genericHostOffset + syntheticGenericHostPath.length)}`, /CLOVER_PUBLIC_OUTPUT_REJECTED/u);
+      await rejection("a compact profile with an escaped generic host path", `${genericHostSource.slice(0, genericHostOffset)}\\u002f${syntheticGenericHostPath.slice(1)}${genericHostSource.slice(genericHostOffset + syntheticGenericHostPath.length)}`, /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
+      await rejection("a compact profile with an unknown absolute configuration path", JSON.stringify({
+        appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
+        config: { unrelated: "/srv/unreviewed-build-root" }
+      }), /CLOVER_EXTERNAL_REQUIRED_SERVER_FILES_SOURCE_REJECTED/u);
       await rejection("a compact profile with preexisting runtime root", JSON.stringify({
         appDir: path.join(checkoutRoot, "apps/clover-launch-studio"),
         config: { unrelated: "/var/task" }
