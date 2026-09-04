@@ -41,7 +41,9 @@ import {
   MAX_GITHUB_CHECK_RUN_PAGES,
   MAX_GITHUB_CHECK_RUNS,
   MAX_GITHUB_RESPONSE_BYTES,
+  MAX_GITHUB_WORKFLOW_RUN_PAGES,
   MAX_GITHUB_WORKFLOW_RUNS,
+  GITHUB_WORKFLOW_RUNS_PER_PAGE,
   NO_ATTESTATION_COMPARISON,
   REQUIRED_EXACT_HEAD_CHECKS,
   STACK_A_BRANCH,
@@ -100,6 +102,10 @@ const integratedPathListSha256 = "9217479f428109ec268f8e2579e6da55abb64908030696
 const defaultGithubSourceTime = new Date(Math.floor(Date.now() / 1_000) * 1_000).toISOString();
 const defaultGithubSourceDate = new Date(defaultGithubSourceTime).toUTCString();
 const masterWorkflowRunId = 900_001;
+const productionCandidateCommit = "2f8d3429a11ac603b70eba9ddb46a2e437cc10ea";
+const productionTreeWorkflowRunId = 33_817_228_993;
+const productionHistoricalTreeCheckId = 100_853_182_650;
+const productionCurrentTreeCheckId = 100_853_669_411;
 const workflowRunIds = new Map(EXPECTED_GITHUB_WORKFLOWS.map((workflow, index) => [workflow.id, masterWorkflowRunId - (EXPECTED_GITHUB_WORKFLOWS.length - 1 - index)]));
 const workflowForCheck = (name) => EXPECTED_GITHUB_WORKFLOWS.find(({ requiredChecks }) => requiredChecks.includes(name));
 
@@ -285,6 +291,11 @@ function githubPageEndpoint(page, commit = candidateCommit, canonicalRepository 
   return `${GITHUB_ORIGIN}/${repositoryPath}/commits/${commit}/check-runs?filter=all&per_page=100&page=${page}`;
 }
 
+function githubWorkflowPageEndpoint(workflowId, page, commit = candidateCommit, canonicalRepository = false) {
+  const repositoryPath = canonicalRepository ? `repositories/${GITHUB_REPOSITORY_ID}` : `repos/${GITHUB_REPOSITORY}`;
+  return `${GITHUB_ORIGIN}/${repositoryPath}/actions/workflows/${workflowId}/runs?head_sha=${commit}&event=pull_request&per_page=${GITHUB_WORKFLOW_RUNS_PER_PAGE}&page=${page}`;
+}
+
 function githubPaginationFetch({ pages, totalCount, linkForPage, responseForPage, sourceDate = defaultGithubSourceDate }) {
   const calls = [];
   const implementation = async (endpoint, options) => {
@@ -312,6 +323,153 @@ function githubPaginationFetch({ pages, totalCount, linkForPage, responseForPage
         ? `<${githubPageEndpoint(1, candidateCommit, true)}>; rel="first", <${githubPageEndpoint(page - 1, candidateCommit, true)}>; rel="prev"`
         : null;
     if (link) headers.set("link", link);
+    const response = new Response(body, { status: 200, headers });
+    Object.defineProperty(response, "url", { value: endpoint });
+    return response;
+  };
+  return { calls, implementation };
+}
+
+function githubWorkflowPaginationFetch({
+  workflow,
+  pages,
+  totalCount,
+  linkForPage,
+  responseForPage,
+  sourceDate = defaultGithubSourceDate,
+  mutate = (value) => value
+}) {
+  const calls = [];
+  const implementation = async (endpoint, options) => {
+    calls.push({ endpoint, options });
+    const candidate = new URL(endpoint);
+    const workflowPath = `/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow.id}/runs`;
+    const numericWorkflowPath = `/repositories/${GITHUB_REPOSITORY_ID}/actions/workflows/${workflow.id}/runs`;
+    const isTargetWorkflow = candidate.origin === GITHUB_ORIGIN && (candidate.pathname === workflowPath || candidate.pathname === numericWorkflowPath);
+    const page = isTargetWorkflow ? Number(candidate.searchParams.get("page")) : null;
+    if (isTargetWorkflow && responseForPage) {
+      const replacement = await responseForPage(page, endpoint, options);
+      if (replacement) return replacement;
+    }
+    const value = isTargetWorkflow
+      ? { total_count: typeof totalCount === "function" ? totalCount(page) : totalCount, workflow_runs: structuredClone(pages[page - 1] ?? []) }
+      : structuredClone(githubFixture(endpoint));
+    const body = JSON.stringify(mutate(value, endpoint));
+    const responseDate = typeof sourceDate === "function" ? sourceDate(endpoint) : sourceDate;
+    const headers = new Headers({ "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
+    if (responseDate) headers.set("date", responseDate);
+    if (isTargetWorkflow) {
+      const link = linkForPage ? linkForPage(page) : page < pages.length
+        ? `<${githubWorkflowPageEndpoint(workflow.id, page + 1, candidateCommit, true)}>; rel="next", <${githubWorkflowPageEndpoint(workflow.id, pages.length, candidateCommit, true)}>; rel="last"`
+        : page > 1
+          ? `<${githubWorkflowPageEndpoint(workflow.id, 1, candidateCommit, true)}>; rel="first", <${githubWorkflowPageEndpoint(workflow.id, page - 1, candidateCommit, true)}>; rel="prev"`
+          : null;
+      if (link) headers.set("link", link);
+    }
+    const response = new Response(body, { status: 200, headers });
+    Object.defineProperty(response, "url", { value: endpoint });
+    return response;
+  };
+  return { calls, implementation };
+}
+
+function productionTreeRun(overrides = {}) {
+  return workflowRunFixture(EXPECTED_GITHUB_WORKFLOWS[1], {
+    id: productionTreeWorkflowRunId,
+    headSha: productionCandidateCommit,
+    createdAt: "2026-09-03T23:21:16Z",
+    startedAt: "2026-09-03T23:27:41Z",
+    updatedAt: "2026-09-03T23:32:39Z",
+    runAttempt: 2,
+    ...overrides
+  });
+}
+
+function productionHistoricalTreeCheck(overrides = {}) {
+  return checkRun({
+    id: productionHistoricalTreeCheckId,
+    name: "Tree browser and accessibility",
+    headSha: productionCandidateCommit,
+    runId: productionTreeWorkflowRunId,
+    conclusion: "skipped",
+    startedAt: "2026-09-03T23:26:47Z",
+    completedAt: "2026-09-03T23:26:46Z",
+    ...overrides
+  });
+}
+
+function productionCurrentTreeCheck(overrides = {}) {
+  return checkRun({
+    id: productionCurrentTreeCheckId,
+    name: "Tree browser and accessibility",
+    headSha: productionCandidateCommit,
+    runId: productionTreeWorkflowRunId,
+    conclusion: "success",
+    startedAt: "2026-09-03T23:29:03Z",
+    completedAt: "2026-09-03T23:32:38Z",
+    ...overrides
+  });
+}
+
+function productionRequiredChecks({ historical = productionHistoricalTreeCheck(), current = productionCurrentTreeCheck() } = {}) {
+  const checks = [];
+  let id = 50_000;
+  for (const workflow of EXPECTED_GITHUB_WORKFLOWS) {
+    for (const name of workflow.requiredChecks) {
+      if (name === "Tree browser and accessibility") continue;
+      const treeCheck = workflow.id === EXPECTED_GITHUB_WORKFLOWS[1].id;
+      checks.push(checkRun({
+        id: id += 1,
+        name,
+        headSha: productionCandidateCommit,
+        runId: treeCheck ? productionTreeWorkflowRunId : workflowRunIds.get(workflow.id),
+        startedAt: treeCheck ? `2026-09-03T23:28:0${checks.length}Z` : "2026-08-29T16:32:00Z",
+        completedAt: treeCheck ? `2026-09-03T23:28:1${checks.length}Z` : "2026-08-29T16:33:00Z"
+      }));
+    }
+  }
+  if (historical) checks.push(historical);
+  if (current) checks.push(current);
+  while (checks.length < 14) {
+    id += 1;
+    checks.push(checkRun({
+      id,
+      headSha: productionCandidateCommit,
+      startedAt: "2026-08-29T16:34:00Z",
+      completedAt: "2026-08-29T16:35:00Z"
+    }));
+  }
+  return checks;
+}
+
+function productionGithubFetch({
+  checks = productionRequiredChecks(),
+  treeRun = productionTreeRun(),
+  mutate = (value) => value,
+  sourceDate = defaultGithubSourceDate
+} = {}) {
+  const calls = [];
+  const implementation = async (endpoint, options) => {
+    calls.push({ endpoint, options });
+    let value;
+    if (endpoint.includes(`/commits/${productionCandidateCommit}/check-runs`)) {
+      value = { total_count: checks.length, check_runs: structuredClone(checks) };
+    } else {
+      const workflow = EXPECTED_GITHUB_WORKFLOWS.find(({ id }) => endpoint.includes(`/actions/workflows/${id}/runs?`));
+      if (workflow) {
+        value = {
+          total_count: 1,
+          workflow_runs: [workflow.id === EXPECTED_GITHUB_WORKFLOWS[1].id
+            ? structuredClone(treeRun)
+            : workflowRunFixture(workflow, { headSha: productionCandidateCommit })]
+        };
+      } else {
+        value = structuredClone(githubFixture(endpoint));
+        if (endpoint.endsWith("/pulls/35")) value.head.sha = productionCandidateCommit;
+      }
+    }
+    const body = JSON.stringify(mutate(value, endpoint));
+    const headers = new Headers({ date: sourceDate, "content-type": "application/json", "content-length": String(Buffer.byteLength(body)) });
     const response = new Response(body, { status: 200, headers });
     Object.defineProperty(response, "url", { value: endpoint });
     return response;
@@ -399,7 +557,7 @@ test("public GitHub observer uses only fixed unauthenticated endpoints and sourc
   assert.equal(baselineUnauthenticatedRequestsPerHour, 40);
   assert.ok(baselineUnauthenticatedRequestsPerHour < 60);
   for (const { endpoint, options } of fixture.calls) {
-    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|rulesets/${EXPECTED_MAIN_RULESET_ID}|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1|actions/workflows/(?:${EXPECTED_GITHUB_WORKFLOWS.map(({ id }) => id).join("|")})/runs\\?head_sha=${candidateCommit}&event=pull_request&per_page=${MAX_GITHUB_WORKFLOW_RUNS}&page=1)$)`, "u"));
+    assert.match(endpoint, new RegExp(`^${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}(?:$|/(?:branches/main|pulls/(?:34|35)|rulesets/${EXPECTED_MAIN_RULESET_ID}|commits/${candidateCommit}/check-runs\\?filter=all&per_page=100&page=1|actions/workflows/(?:${EXPECTED_GITHUB_WORKFLOWS.map(({ id }) => id).join("|")})/runs\\?head_sha=${candidateCommit}&event=pull_request&per_page=${GITHUB_WORKFLOW_RUNS_PER_PAGE}&page=1)$)`, "u"));
     assert.equal(options.method, "GET");
     assert.equal(options.redirect, "error");
     assert.equal(options.credentials, "omit");
@@ -633,6 +791,123 @@ test("the generic validate check is bound to the exact Master workflow run", asy
   });
 });
 
+test("the production-shaped Tree rerun selects only strict current-attempt evidence", async (t) => {
+  const observe = async (overrides = {}) => {
+    const fixture = productionGithubFetch(overrides);
+    return observeGitHubTruth({ candidateCommit: productionCandidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+  };
+
+  await t.test("exact check 100853182650 is legacy-invalid while replacement 100853669411 supplies current success", async () => {
+    const historical = productionHistoricalTreeCheck();
+    assert.equal(historical.id, 100_853_182_650);
+    assert.equal(historical.status, "completed");
+    assert.equal(historical.conclusion, "skipped");
+    assert.equal(historical.started_at, "2026-09-03T23:26:47Z");
+    assert.equal(historical.completed_at, "2026-09-03T23:26:46Z");
+    assert.throws(() => {
+      if (historical.completed_at < historical.started_at) throw new Error("GITHUB_MALFORMED_CHECK_RUNS:completion");
+    }, /GITHUB_MALFORMED_CHECK_RUNS:completion/u);
+
+    const observation = await observe();
+    assert.equal(observation.status, "current");
+    assert.equal(observation.evidenceCompleteness, "complete");
+    assert.equal(observation.exactHeadCheckStatus, "success");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === EXPECTED_GITHUB_WORKFLOWS[1].id)?.id, 33_817_228_993);
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === EXPECTED_GITHUB_WORKFLOWS[1].id)?.runAttempt, 2);
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "Tree browser and accessibility")?.id, 100_853_669_411);
+    assert.equal(observation.exactHeadChecks?.checks.some(({ id }) => id === 100_853_182_650), false);
+    assert.equal(parseGitHubLiveObservation(structuredClone(observation)).exactHeadChecks?.state, "success");
+  });
+
+  await t.test("the reversed historical record cannot survive without its strict current replacement", async () => {
+    const observation = await observe({ checks: productionRequiredChecks({ current: null }) });
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /GITHUB_MALFORMED_CHECK_RUNS:completion/u);
+  });
+
+  await t.test("reversing the selected current check fails closed", async () => {
+    const current = productionCurrentTreeCheck({ completedAt: "2026-09-03T23:29:02Z" });
+    const observation = await observe({ checks: productionRequiredChecks({ current }) });
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /GITHUB_MALFORMED_CHECK_RUNS:completion/u);
+  });
+
+  await t.test("a reversed historical check moved into the current-attempt window fails closed", async () => {
+    const historical = productionHistoricalTreeCheck({
+      startedAt: "2026-09-03T23:29:02Z",
+      completedAt: "2026-09-03T23:29:01Z"
+    });
+    const observation = await observe({ checks: productionRequiredChecks({ historical }) });
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /GITHUB_MALFORMED_CHECK_RUNS:completion/u);
+  });
+
+  await t.test("attempt-one failure followed by attempt-two success selects attempt two", async () => {
+    const priorFailure = productionHistoricalTreeCheck({
+      conclusion: "failure",
+      startedAt: "2026-09-03T23:25:00Z",
+      completedAt: "2026-09-03T23:26:00Z"
+    });
+    const observation = await observe({ checks: productionRequiredChecks({ historical: priorFailure }) });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "Tree browser and accessibility")?.id, productionCurrentTreeCheckId);
+  });
+
+  await t.test("attempt-two failure remains failure despite attempt-one success", async () => {
+    const priorSuccess = productionHistoricalTreeCheck({
+      conclusion: "success",
+      startedAt: "2026-09-03T23:25:00Z",
+      completedAt: "2026-09-03T23:26:00Z"
+    });
+    const currentFailure = productionCurrentTreeCheck({ conclusion: "failure" });
+    const observation = await observe({ checks: productionRequiredChecks({ historical: priorSuccess, current: currentFailure }) });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "failure");
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "Tree browser and accessibility")?.id, productionCurrentTreeCheckId);
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "Tree browser and accessibility")?.conclusion, "failure");
+  });
+
+  await t.test("a current skipped check cannot be masked by historical success", async () => {
+    const priorSuccess = productionHistoricalTreeCheck({
+      conclusion: "success",
+      startedAt: "2026-09-03T23:25:00Z",
+      completedAt: "2026-09-03T23:26:00Z"
+    });
+    const currentSkipped = productionCurrentTreeCheck({ conclusion: "skipped" });
+    const observation = await observe({ checks: productionRequiredChecks({ historical: priorSuccess, current: currentSkipped }) });
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "failure");
+    assert.equal(observation.exactHeadChecks?.checks.find(({ name }) => name === "Tree browser and accessibility")?.conclusion, "skipped");
+  });
+
+  for (const [label, mutateApp] of [
+    ["app ID", (app) => { app.id = 1; }],
+    ["app slug", (app) => { app.slug = "substituted"; }]
+  ]) {
+    await t.test(`wrong GitHub Actions ${label} fails`, async () => {
+      const current = productionCurrentTreeCheck();
+      mutateApp(current.app);
+      const observation = await observe({ checks: productionRequiredChecks({ current }) });
+      assert.equal(observation.status, "contradictory");
+      assert.equal(observation.exactHeadChecks, null);
+      assert.match(observation.failures.join("\n"), /required-check-issuer/u);
+    });
+  }
+
+  await t.test("a wrong details workflow-run ID fails", async () => {
+    const current = productionCurrentTreeCheck({ runId: productionTreeWorkflowRunId + 1 });
+    const observation = await observe({ checks: productionRequiredChecks({ current }) });
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /required-check-run|GITHUB_MALFORMED_CHECK_RUNS:completion/u);
+  });
+});
+
 test("all eight required checks are bound to the selected exact workflow runs", async (t) => {
   const requiredMain = EXPECTED_GITHUB_WORKFLOWS[0];
   const tree = EXPECTED_GITHUB_WORKFLOWS[1];
@@ -824,12 +1099,29 @@ test("all eight required checks are bound to the selected exact workflow runs", 
     const observation = await runCheckMutation((value, endpoint) => {
       if (endpoint.includes("/check-runs")) {
         value.check_runs.push(checkRun({ id: 88_001, name, runId: selectedRunId(tree), conclusion: "failure", startedAt: "2026-08-29T19:00:00.000Z" }));
-        value.check_runs.push(checkRun({ id: 88_002, name, runId: selectedRunId(tree) + 1, conclusion: "success", startedAt: "2026-08-29T20:00:00.000Z" }));
+        value.check_runs.push(checkRun({ id: 88_002, name, runId: selectedRunId(tree) + 50_000, conclusion: "success", startedAt: "2026-08-29T20:00:00.000Z" }));
         value.total_count = value.check_runs.length;
       }
     });
     assert.equal(observation.exactHeadChecks?.state, "failure");
     assert.equal(observation.exactHeadChecks?.checks.find((check) => check.name === name)?.id, 88_001);
+  });
+
+  await t.test("a same-name check issued for another selected workflow fails substitution checks", async () => {
+    const name = tree.requiredChecks[0];
+    const observation = await runCheckMutation((value, endpoint) => {
+      if (!endpoint.includes("/check-runs")) return;
+      value.check_runs.push(checkRun({
+        id: 88_003,
+        name,
+        runId: selectedRunId(core),
+        startedAt: "2026-08-29T19:00:00.000Z"
+      }));
+      value.total_count = value.check_runs.length;
+    });
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /required-check-workflow/u);
   });
 
   for (const [label, mutate] of [
@@ -857,6 +1149,162 @@ test("all eight required checks are bound to the selected exact workflow runs", 
     });
     assert.equal(observation.status, "contradictory");
     assert.match(observation.failures.join("\n"), /workflow-check-chronology/u);
+  });
+});
+
+test("GitHub workflow-run pagination is complete, bounded and exact-workflow locked", async (t) => {
+  const workflow = EXPECTED_GITHUB_WORKFLOWS[1];
+  const selectedId = 9_900_001;
+  const selected = workflowRunFixture(workflow, {
+    id: selectedId,
+    runAttempt: 2,
+    createdAt: "2026-08-29T18:00:00Z",
+    startedAt: "2026-08-29T18:01:00Z",
+    updatedAt: "2026-08-29T19:00:00Z"
+  });
+  const olderRuns = Array.from({ length: 100 }, (_, index) => workflowRunFixture(workflow, {
+    id: 9_800_000 + index,
+    conclusion: index === 99 ? "failure" : "success",
+    createdAt: "2026-08-29T15:00:00Z",
+    startedAt: "2026-08-29T15:01:00Z",
+    updatedAt: "2026-08-29T16:00:00Z"
+  }));
+  const bindSelectedChecks = (value, endpoint) => {
+    if (!endpoint.includes("/check-runs")) return value;
+    for (const check of value.check_runs) {
+      if (!workflow.requiredChecks.includes(check.name)) continue;
+      check.details_url = `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${selectedId}/job/${check.id}`;
+      check.started_at = "2026-08-29T18:02:00Z";
+      check.completed_at = "2026-08-29T18:03:00Z";
+    }
+    return value;
+  };
+  const observe = async (fixture) => observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+
+  await t.test("page two supplies the deterministic exact selected run", async () => {
+    const fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [olderRuns, [selected]],
+      totalCount: 101,
+      mutate: bindSelectedChecks
+    });
+    const observation = await observe(fixture);
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    const run = observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === workflow.id);
+    assert.equal(run?.id, selectedId);
+    assert.equal(run?.runAttempt, 2);
+    assert.equal(parseGitHubLiveObservation(structuredClone(observation)).exactHeadChecks?.state, "success");
+    assert.deepEqual(
+      observation.endpoints.filter((endpoint) => endpoint.includes(`/actions/workflows/${workflow.id}/runs?`)),
+      [githubWorkflowPageEndpoint(workflow.id, 1), githubWorkflowPageEndpoint(workflow.id, 2, candidateCommit, true)]
+    );
+  });
+
+  await t.test("missing and malformed pagination fail closed before substitution", async () => {
+    let fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [olderRuns, [selected]],
+      totalCount: 101,
+      linkForPage: () => null,
+      mutate: bindSelectedChecks
+    });
+    let observation = await observe(fixture);
+    assert.notEqual(observation.status, "current");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /WORKFLOW_RUNS_PAGE_MISSING/u);
+
+    for (const [label, link] of [
+      ["foreign origin", `<https://attacker.example/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow.id}/runs?head_sha=${candidateCommit}&event=pull_request&per_page=100&page=2>; rel="next"`],
+      ["foreign repository", `<${GITHUB_ORIGIN}/repos/attacker/first/actions/workflows/${workflow.id}/runs?head_sha=${candidateCommit}&event=pull_request&per_page=100&page=2>; rel="next"`],
+      ["foreign workflow", `<${githubWorkflowPageEndpoint(EXPECTED_GITHUB_WORKFLOWS[0].id, 2)}>; rel="next"`],
+      ["head substitution", `<${githubWorkflowPageEndpoint(workflow.id, 2, hex40("f"))}>; rel="next"`],
+      ["query substitution", `<${githubWorkflowPageEndpoint(workflow.id, 2)}&branch=main>; rel="next"`],
+      ["missing angle brackets", `${githubWorkflowPageEndpoint(workflow.id, 2)}; rel="next"`],
+      ["duplicate next", `<${githubWorkflowPageEndpoint(workflow.id, 2)}>; rel="next", <${githubWorkflowPageEndpoint(workflow.id, 2)}>; rel="next"`]
+    ]) {
+      fixture = githubWorkflowPaginationFetch({
+        workflow,
+        pages: [olderRuns, [selected]],
+        totalCount: 101,
+        linkForPage: (page) => page === 1 ? link : null,
+        mutate: bindSelectedChecks
+      });
+      observation = await observe(fixture);
+      assert.equal(observation.status, "contradictory", label);
+      assert.equal(observation.exactHeadChecks, null, label);
+      assert.equal(fixture.calls.some(({ endpoint }) => endpoint === githubWorkflowPageEndpoint(workflow.id, 2)), false, label);
+    }
+  });
+
+  await t.test("stable totals and duplicate workflow-run identities are enforced across pages", async () => {
+    let fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [olderRuns, [selected]],
+      totalCount: (page) => page === 1 ? 101 : 102,
+      mutate: bindSelectedChecks
+    });
+    let observation = await observe(fixture);
+    assert.notEqual(observation.status, "current");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /WORKFLOW_RUNS_TOTAL_DISAGREEMENT/u);
+
+    const contradictory = structuredClone(olderRuns[0]);
+    contradictory.conclusion = "failure";
+    fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [olderRuns, [contradictory, selected]],
+      totalCount: 101,
+      mutate: bindSelectedChecks
+    });
+    observation = await observe(fixture);
+    assert.equal(observation.status, "contradictory");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /duplicate-workflow-run/u);
+  });
+
+  await t.test("unexpected next pages and page or result ceilings fail closed", async () => {
+    let fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [[selected]],
+      totalCount: 1,
+      linkForPage: () => `<${githubWorkflowPageEndpoint(workflow.id, 2, candidateCommit, true)}>; rel="next"`,
+      mutate: bindSelectedChecks
+    });
+    let observation = await observe(fixture);
+    assert.notEqual(observation.status, "current");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /WORKFLOW_RUNS_UNEXPECTED_NEXT_PAGE/u);
+
+    const ceilingPages = Array.from({ length: MAX_GITHUB_WORKFLOW_RUN_PAGES }, (_, index) => [workflowRunFixture(workflow, {
+      id: 9_700_000 + index,
+      createdAt: new Date(Date.parse("2026-08-29T15:00:00Z") + index * 60_000).toISOString(),
+      startedAt: new Date(Date.parse("2026-08-29T15:00:01Z") + index * 60_000).toISOString(),
+      updatedAt: new Date(Date.parse("2026-08-29T15:00:30Z") + index * 60_000).toISOString()
+    })]);
+    fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: ceilingPages,
+      totalCount: MAX_GITHUB_WORKFLOW_RUNS,
+      linkForPage: (page) => page < MAX_GITHUB_WORKFLOW_RUN_PAGES
+        ? `<${githubWorkflowPageEndpoint(workflow.id, page + 1, candidateCommit, true)}>; rel="next"`
+        : null,
+      mutate: bindSelectedChecks
+    });
+    observation = await observe(fixture);
+    assert.equal(observation.errorCode, "GITHUB_WORKFLOW_RUNS_CEILING_EXCEEDED");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.equal(observation.endpoints.filter((endpoint) => endpoint.includes(`/actions/workflows/${workflow.id}/runs?`)).length, MAX_GITHUB_WORKFLOW_RUN_PAGES);
+
+    fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [[selected]],
+      totalCount: MAX_GITHUB_WORKFLOW_RUNS + 1,
+      mutate: bindSelectedChecks
+    });
+    observation = await observe(fixture);
+    assert.equal(observation.errorCode, "GITHUB_WORKFLOW_RUNS_CEILING_EXCEEDED");
+    assert.equal(observation.exactHeadChecks, null);
   });
 });
 
@@ -908,7 +1356,7 @@ test("GitHub check-run pagination is complete, bounded, source-locked and rerun-
       id: 10,
       name: target,
       conclusion: "failure",
-      startedAt: "2026-08-29T16:00:00.000Z",
+      startedAt: "2026-08-29T16:40:00.000Z",
       completedAt: "2026-08-29T18:00:00.000Z"
     });
     const newerSuccess = checkRun({
