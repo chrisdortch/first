@@ -1,0 +1,40 @@
+{
+  "name": "clover-launch-studio-private-owner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "attest:source": "node scripts/clover-deployment-attestation.mjs source --repository-root ../..",
+    "attest:source-manifest": "node scripts/clover-deployment-attestation.mjs source-manifest --repository-root ../..",
+    "attest:project-settings": "node scripts/clover-deployment-attestation.mjs project-settings --repository-root ../..",
+    "attest:output": "node scripts/clover-deployment-attestation.mjs output --repository-root ../.. --output .vercel/output --evidence ../../.vercel/clover-attestation-evidence --frozen-output ../../.vercel/clover-frozen-deployment",
+    "attest:verify-output": "node scripts/clover-deployment-attestation.mjs verify --repository-root ../.. --output ../../.vercel/clover-frozen-deployment/.vercel/output --evidence ../../.vercel/clover-attestation-evidence",
+    "lint": "eslint . --max-warnings=0",
+    "start": "next start",
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run test && npm run typecheck && npm run lint && npm run build"
+  },
+  "dependencies": {
+    "@vercel/functions": "3.9.5",
+    "next": "16.3.3",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.3",
+    "typescript": "5.9.3"
+  }
+}
