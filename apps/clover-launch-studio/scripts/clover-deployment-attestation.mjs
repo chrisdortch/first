@@ -2434,6 +2434,58 @@ function canonicalProviderDeploymentInventory(value, label) {
   return value;
 }
 
+function exactSingleProviderDeploymentTransition({
+  beforeDeployments,
+  afterDeployments,
+  postRevocationDeployments,
+  deployment,
+  invocationStartedTime,
+  invocationCompletedTime
+}) {
+  const beforeCount = beforeDeployments.count;
+  const expectedAfterCount = beforeCount + 1;
+  const priorAfterEntries = afterDeployments.entries.filter(({ id }) => id !== deployment.id);
+  const addedEntries = afterDeployments.entries.filter(({ id }) => id === deployment.id);
+  const beforeProduction = beforeDeployments.entries.filter(({ target }) => target === "production");
+  const afterProduction = afterDeployments.entries.filter(({ target }) => target === "production");
+  const postRevocationProduction = postRevocationDeployments.entries.filter(({ target }) => target === "production");
+  const expectedNewEntry = {
+    createdAt: deployment.createdAt,
+    id: deployment.id,
+    state: deployment.state,
+    target: deployment.target
+  };
+  if (
+    !Number.isSafeInteger(beforeCount) || beforeCount < 0 || beforeCount >= beforeDeployments.boundedLimit ||
+    afterDeployments.count !== expectedAfterCount ||
+    beforeDeployments.entries.some(({ id }) => id === deployment.id) || addedEntries.length !== 1 ||
+    canonicalJson(addedEntries[0]) !== canonicalJson(expectedNewEntry) ||
+    deployment.createdAt < invocationStartedTime || deployment.createdAt > invocationCompletedTime
+  ) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
+  if (canonicalJson(beforeProduction) !== canonicalJson(afterProduction)) {
+    throw new Error("CLOVER_PROVIDER_EFFECT_PRODUCTION_REJECTED");
+  }
+  if (canonicalJson(priorAfterEntries) !== canonicalJson(beforeDeployments.entries)) {
+    throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
+  }
+  if (postRevocationDeployments.count !== expectedAfterCount) {
+    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_DEPLOYMENTS_CHANGED");
+  }
+  if (canonicalJson(postRevocationProduction) !== canonicalJson(afterProduction)) {
+    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_PRODUCTION_CHANGED");
+  }
+  if (canonicalJson(postRevocationDeployments) !== canonicalJson(afterDeployments)) {
+    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_DEPLOYMENTS_CHANGED");
+  }
+  return Object.freeze({
+    beforeCount,
+    afterCount: expectedAfterCount,
+    beforeProduction,
+    afterProduction,
+    postRevocationProduction
+  });
+}
+
 function canonicalProviderOpaqueInventory(value, projection, label, { boundedLimit, environmentVariables = false } = {}) {
   const keys = ["boundedLimit", "count", "entries", "inventorySha256", "paginationExhausted", "projection"];
   if (environmentVariables) keys.push("keyNamesPersisted", "valuesPersisted", "valuesRead");
@@ -2695,18 +2747,15 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   ) throw new Error("CLOVER_PROVIDER_EFFECT_CHRONOLOGY_REJECTED");
   const beforeDeployments = effectsBefore.deployments.response;
   const afterDeployments = effectsAfter.deployments.response;
-  const priorAfterEntries = afterDeployments.entries.filter(({ id }) => id !== raw.id);
-  const addedEntries = afterDeployments.entries.filter(({ id }) => id === raw.id);
-  const beforeProduction = beforeDeployments.entries.filter(({ target }) => target === "production");
-  const afterProduction = afterDeployments.entries.filter(({ target }) => target === "production");
-  if (
-    beforeDeployments.count !== 9 || afterDeployments.count !== 10 ||
-    beforeDeployments.entries.some(({ id }) => id === raw.id) || addedEntries.length !== 1 ||
-    addedEntries[0].state !== raw.state || addedEntries[0].target !== raw.target ||
-    addedEntries[0].createdAt !== raw.createdAt || raw.createdAt < invocationStartedTime || raw.createdAt > invocationCompletedTime
-  ) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
-  if (canonicalJson(beforeProduction) !== canonicalJson(afterProduction)) throw new Error("CLOVER_PROVIDER_EFFECT_PRODUCTION_REJECTED");
-  if (canonicalJson(priorAfterEntries) !== canonicalJson(beforeDeployments.entries)) throw new Error("CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED");
+  const deploymentTransition = exactSingleProviderDeploymentTransition({
+    beforeDeployments,
+    afterDeployments,
+    postRevocationDeployments: effectsPostRevocation.deployments.response,
+    deployment: raw,
+    invocationStartedTime,
+    invocationCompletedTime
+  });
+  const { beforeProduction, afterProduction, postRevocationProduction } = deploymentTransition;
   const stableProjectSnapshot = (value) => {
     const stable = { ...value };
     delete stable.providerProjectUpdatedAt;
@@ -2749,17 +2798,10 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   delete postRevocationProtection.projectSettingsSha256;
   delete postRevocationProtection.accessPolicySha256;
   const postRevocationOrdinary = canonicalProtectionSnapshot(postRevocationProtection, "CLOVER_PROVIDER_POST_REVOCATION_PROTECTION");
-  const postRevocationProduction = effectsPostRevocation.deployments.response.entries.filter(({ target }) => target === "production");
   if (
     effectsPostRevocation.project.response.providerProjectUpdatedAt < effectsAfter.project.response.providerProjectUpdatedAt ||
     canonicalJson(stableProjectSnapshot(effectsPostRevocation.project.response)) !== canonicalJson(stableProjectSnapshot(effectsAfter.project.response))
   ) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_PROJECT_CHANGED");
-  if (canonicalJson(postRevocationProduction) !== canonicalJson(afterProduction)) {
-    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_PRODUCTION_CHANGED");
-  }
-  if (canonicalJson(effectsPostRevocation.deployments.response) !== canonicalJson(effectsAfter.deployments.response)) {
-    throw new Error("CLOVER_PROVIDER_POST_REVOCATION_DEPLOYMENTS_CHANGED");
-  }
   for (const [key, error] of [
     ["domains", "CLOVER_PROVIDER_POST_REVOCATION_DOMAINS_CHANGED"],
     ["aliases", "CLOVER_PROVIDER_POST_REVOCATION_ALIASES_CHANGED"],

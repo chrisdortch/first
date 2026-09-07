@@ -1467,10 +1467,28 @@ jobs:
             'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs'
           ];
-          const exactFourteenthCiEvidenceCorrectionAuthorizedPathListSha256 = 'e6e5a72a586120beaf959262b9af9fe7e0af21d2c75071aa7060421d858772c2';
-          const exactFourteenthCiEvidenceCorrectionAuthorizedPaths = [
+          const exactFourteenthCiEvidenceCorrectionCommit = '04651b20a0a9cbd3283597cd224cad0c209cc2e6';
+          const exactFourteenthCiEvidenceCorrectionTree = '83952be671bdd900e716097feb18bb94ed06e04e';
+          const exactFourteenthCiEvidenceCorrectionParent = exactThirteenthCiEvidenceCorrectionCommit;
+          const exactFourteenthCiEvidenceCorrectionPathListSha256 = 'e6e5a72a586120beaf959262b9af9fe7e0af21d2c75071aa7060421d858772c2';
+          const exactFourteenthCiEvidenceCorrectionPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
             'apps/clover-launch-studio/src/lib/live-truth.ts',
+            'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
+          const exactFifteenthCiEvidenceCorrectionCommit = '3de38aead13639e14cbc331f7ae804a10a023a9e';
+          const exactFifteenthCiEvidenceCorrectionTree = '45faeaa5055b6b03fe1ad1f2a28e8e3e192345d8';
+          const exactFifteenthCiEvidenceCorrectionParent = exactFourteenthCiEvidenceCorrectionCommit;
+          const exactFifteenthCiEvidenceCorrectionPathListSha256 = '077a53f7d86cabe35d347103c5c71c3d9ae7ffa2ab17515ea2042899e0fb4969';
+          const exactFifteenthCiEvidenceCorrectionPaths = [
+            'apps/clover-launch-studio/src/lib/live-truth.ts',
+            'apps/clover-launch-studio/test/live-truth-attestation.test.mjs'
+          ];
+          const exactSixteenthCiEvidenceCorrectionAuthorizedPathListSha256 = 'bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b';
+          const exactSixteenthCiEvidenceCorrectionAuthorizedPaths = [
+            '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
@@ -1517,10 +1535,28 @@ jobs:
           const exactSafeGitPath = (value) => typeof value === 'string' && value.length > 0
             && value === value.normalize('NFC') && !path.isAbsolute(value) && !value.includes('\\')
             && !/[\0\r\n]/u.test(value) && !value.split('/').includes('..');
+          const exactTextBlob = (bytes, label) => {
+            let text;
+            try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+            catch { throw new Error(`${label} is not fatal UTF-8 text`); }
+            requireCondition(!text.includes('\0'), `${label} contains a prohibited NUL byte`);
+            return text;
+          };
+          requireCondition(exactTextBlob(Buffer.from('clover-text\n', 'utf8'), 'text-blob self-test') === 'clover-text\n',
+            'text-blob positive self-test failed');
+          for (const [label, bytes] of [
+            ['invalid-utf8', Buffer.from([0x63, 0x6c, 0xff, 0x76, 0x65, 0x72])],
+            ['embedded-nul', Buffer.from([0x63, 0x6c, 0x00, 0x76, 0x65, 0x72])]
+          ]) {
+            let rejected = false;
+            try { exactTextBlob(bytes, `binary mutation ${label}`); } catch { rejected = true; }
+            requireCondition(rejected, `source-chain text gate accepted binary mutation ${label}`);
+          }
           const gitFileEvidence = (commit, file, mode, blob) => {
             requireCondition(/^[0-9a-f]{40}$/u.test(commit) && /^[0-9a-f]{40}$/u.test(blob) && mode === '100644'
               && exactSafeGitPath(file), `invalid Git file evidence for ${file}`);
             const bytes = gitBytes(['show', `${commit}:${file}`]);
+            exactTextBlob(bytes, `authorized Git blob ${commit}:${file}`);
             const computedBlob = crypto.createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex');
             requireCondition(computedBlob === blob && gitText(['rev-parse', '--verify', `${commit}:${file}`]) === blob, `Git blob mismatch for ${file}`);
             return { mode, blob, byteCount: bytes.byteLength, sha256: sha256(bytes) };
@@ -1600,7 +1636,7 @@ jobs:
             const ancestryText = gitText(['rev-list', '--ancestry-path', '--reverse', `${exactSourceClosureCommit}..${head}`]);
             const ancestryCommitIds = ancestryText === '' ? [] : ancestryText.split('\n');
             requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds)
-              && commitIds.length >= 14 && commitIds.length <= 15,
+              && commitIds.length >= 16 && commitIds.length <= 17,
               'CI-evidence correction chain depth or first-parent topology mismatch');
             const initialAuthorizedPaths = exactSortedPaths(exactInitialCiEvidenceCorrectionPaths);
             const secondAuthorizedPaths = exactSortedPaths(exactSecondCiEvidenceCorrectionPaths);
@@ -1615,7 +1651,9 @@ jobs:
             const eleventhAuthorizedPaths = exactSortedPaths(exactEleventhCiEvidenceCorrectionPaths);
             const twelfthAuthorizedPaths = exactSortedPaths(exactTwelfthCiEvidenceCorrectionPaths);
             const thirteenthAuthorizedPaths = exactSortedPaths(exactThirteenthCiEvidenceCorrectionPaths);
-            const fourteenthAuthorizedPaths = exactSortedPaths(exactFourteenthCiEvidenceCorrectionAuthorizedPaths);
+            const fourteenthAuthorizedPaths = exactSortedPaths(exactFourteenthCiEvidenceCorrectionPaths);
+            const fifteenthAuthorizedPaths = exactSortedPaths(exactFifteenthCiEvidenceCorrectionPaths);
+            const sixteenthAuthorizedPaths = exactSortedPaths(exactSixteenthCiEvidenceCorrectionAuthorizedPaths);
             const cumulativeAuthorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
             requireCondition(pathListSha256(initialAuthorizedPaths) === exactInitialCiEvidenceCorrectionPathListSha256
               && pathListSha256(secondAuthorizedPaths) === exactSecondCiEvidenceCorrectionPathListSha256
@@ -1630,7 +1668,9 @@ jobs:
               && pathListSha256(eleventhAuthorizedPaths) === exactEleventhCiEvidenceCorrectionPathListSha256
               && pathListSha256(twelfthAuthorizedPaths) === exactTwelfthCiEvidenceCorrectionPathListSha256
               && pathListSha256(thirteenthAuthorizedPaths) === exactThirteenthCiEvidenceCorrectionPathListSha256
-              && pathListSha256(fourteenthAuthorizedPaths) === exactFourteenthCiEvidenceCorrectionAuthorizedPathListSha256
+              && pathListSha256(fourteenthAuthorizedPaths) === exactFourteenthCiEvidenceCorrectionPathListSha256
+              && pathListSha256(fifteenthAuthorizedPaths) === exactFifteenthCiEvidenceCorrectionPathListSha256
+              && pathListSha256(sixteenthAuthorizedPaths) === exactSixteenthCiEvidenceCorrectionAuthorizedPathListSha256
               && pathListSha256(cumulativeAuthorizedPaths) === exactCiEvidenceCorrectionPathListSha256,
             'CI-evidence correction boundary constants are inconsistent');
             const fixedPrefix = [
@@ -1711,6 +1751,18 @@ jobs:
                 tree: exactThirteenthCiEvidenceCorrectionTree,
                 parent: exactThirteenthCiEvidenceCorrectionParent,
                 paths: thirteenthAuthorizedPaths
+              },
+              {
+                commit: exactFourteenthCiEvidenceCorrectionCommit,
+                tree: exactFourteenthCiEvidenceCorrectionTree,
+                parent: exactFourteenthCiEvidenceCorrectionParent,
+                paths: fourteenthAuthorizedPaths
+              },
+              {
+                commit: exactFifteenthCiEvidenceCorrectionCommit,
+                tree: exactFifteenthCiEvidenceCorrectionTree,
+                parent: exactFifteenthCiEvidenceCorrectionParent,
+                paths: fifteenthAuthorizedPaths
               }
             ];
             let expectedParent = exactSourceClosureCommit;
@@ -1727,13 +1779,13 @@ jobs:
                   && canonicalJson(paths) === canonicalJson(fixed.paths),
                 `fixed CI-evidence correction ${index + 1} identity mismatch`);
               } else if (index === fixedPrefix.length) {
-                requireCondition(canonicalJson(paths) === canonicalJson(fourteenthAuthorizedPaths)
-                  && pathListSha256(paths) === exactFourteenthCiEvidenceCorrectionAuthorizedPathListSha256,
-                'primary GitHub-truth correction changed an unauthorized or incomplete path set');
+                requireCondition(canonicalJson(paths) === canonicalJson(sixteenthAuthorizedPaths)
+                  && pathListSha256(paths) === exactSixteenthCiEvidenceCorrectionAuthorizedPathListSha256,
+                'primary D16 acceptance-contract correction changed an unauthorized or incomplete path set');
               } else {
                 requireCondition(index === fixedPrefix.length + 1
-                  && paths.every((file) => fourteenthAuthorizedPaths.includes(file)),
-                'optional GitHub-truth correction changed an unauthorized path or exceeded depth 15');
+                  && paths.every((file) => sixteenthAuthorizedPaths.includes(file)),
+                'optional D17 review correction changed an unauthorized path or exceeded depth 17');
               }
               expectedParent = commit;
             }
@@ -2024,8 +2076,8 @@ jobs:
               && /^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
               && value.currentCandidate.cleanWorktree === true && value.currentCandidate.role === 'exact-pr-head'
               && Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-              && value.currentCandidate.correctionChainDepth >= 14
-              && value.currentCandidate.correctionChainDepth <= 15
+              && value.currentCandidate.correctionChainDepth >= 16
+              && value.currentCandidate.correctionChainDepth <= 17
               && value.currentCandidate.correctionCommitIds.length === value.currentCandidate.correctionChainDepth,
             `${label}.currentCandidate identity mismatch`);
             exactKeys(value.correctionChain,
@@ -4055,6 +4107,843 @@ jobs:
             };
           };
 
+          const exactAttestationComparisonFields = [
+            ['build-invocation', null, 'buildInvocationId'],
+            ['source-commit', 'commit', 'commit'],
+            ['source-tree', 'tree', 'tree'],
+            ['source-parent', 'parent', 'parent'],
+            ['stack-a-base', 'stackABase', 'stackABase'],
+            ['runtime-deployment-key', 'runtimeDeploymentKey', 'runtimeDeploymentKey'],
+            ['changed-path-count', 'changedPathCount', 'changedPathCount'],
+            ['path-list', 'pathListSha256', 'pathListSha256'],
+            ['source-manifest', 'sourceManifestSha256', 'sourceManifestSha256'],
+            ['package-lock', 'packageLockSha256', 'packageLockSha256'],
+            ['tree-program-index-id', 'treeProgramIndexId', 'treeProgramIndexId'],
+            ['tree-program-index-hash', 'treeProgramIndexHash', 'treeProgramIndexHash'],
+            ['node-version', 'nodeVersion', 'nodeVersion'],
+            ['next-version', 'nextVersion', 'nextVersion'],
+            ['build-mode', 'buildMode', 'buildMode']
+          ];
+          const buildProvenanceSourceKeys = [
+            'commit', 'tree', 'parent', 'stackABase', 'runtimeDeploymentKey', 'cleanWorktree', 'changedPathCount',
+            'pathListSha256', 'sourceManifestSha256', 'packageLockSha256', 'treeProgramIndexId', 'treeProgramIndexHash',
+            'treeProgramIndexRawSha256', 'nodeVersion', 'nextVersion', 'buildMode', 'buildCommand', 'buildOutputCommand',
+            'buildOutputToolPackage', 'buildOutputToolVersion', 'buildOutputToolIntegrity', 'buildProjectSettingsSha256'
+          ];
+          const buildProvenanceKeys = [
+            'documentType', 'schemaVersion', ...buildProvenanceSourceKeys, 'buildInvocationId', 'publicSanitized',
+            'privateDataAccessed', 'consequentialAuthorityGranted'
+          ];
+          const deploymentAttestationKeys = [
+            'documentType', 'schemaVersion', 'buildInvocationId', 'source', 'output', 'normalization', 'publicSanitized',
+            'privateDataAccessed', 'secretsIncluded', 'consequentialAuthorityGranted', 'attestationHash'
+          ];
+          const deploymentAttestationSourceKeys = [
+            'commit', 'tree', 'parent', 'stackABase', 'runtimeDeploymentKey', 'changedPathCount', 'pathListSha256',
+            'sourceManifestSha256', 'packageLockSha256', 'treeProgramIndexId', 'treeProgramIndexHash', 'nodeVersion',
+            'nextVersion', 'buildMode'
+          ];
+          const deploymentAttestationOutputKeys = [
+            'manifestRootSha256', 'regularFileCount', 'symlinkCount', 'aggregateRegularFileBytes', 'attestationExcludedPath'
+          ];
+          const exactReadOnlyAuthority = {
+            publicMetadataObserved: true, sourceMutationAuthorized: false, mergeAuthorized: false,
+            productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false,
+            paymentAuthorized: false, purchaseAuthorized: false
+          };
+          const validateExactBuildProvenance = (build, label) => {
+            exactKeys(build, buildProvenanceKeys, label);
+            requireCondition(build.documentType === 'clover-tree-build-provenance' && build.schemaVersion === '0.3.0'
+              && ['commit', 'tree', 'parent', 'stackABase'].every((key) => typeof build[key] === 'string' && /^[0-9a-f]{40}$/u.test(build[key]))
+              && ['pathListSha256', 'sourceManifestSha256', 'packageLockSha256', 'treeProgramIndexHash', 'treeProgramIndexRawSha256', 'buildProjectSettingsSha256']
+                .every((key) => typeof build[key] === 'string' && /^[0-9a-f]{64}$/u.test(build[key]))
+              && typeof build.runtimeDeploymentKey === 'string' && /^clover-[0-9a-f]{24}$/u.test(build.runtimeDeploymentKey)
+              && build.runtimeDeploymentKey === `clover-${build.commit.slice(0, 24)}`
+              && build.cleanWorktree === true && Number.isSafeInteger(build.changedPathCount) && build.changedPathCount > 0
+              && typeof build.treeProgramIndexId === 'string' && build.treeProgramIndexId.length > 0
+              && typeof build.nextVersion === 'string' && build.nextVersion.length > 0
+              && typeof build.nodeVersion === 'string' && /^v(?:22|24)\./u.test(build.nodeVersion)
+              && build.buildMode === 'vercel-prebuilt-preview' && build.buildCommand === 'npm run build'
+              && build.buildOutputCommand === 'npx --yes vercel@59.6.2 build --yes'
+              && build.buildOutputToolPackage === 'vercel' && build.buildOutputToolVersion === '59.6.2'
+              && build.buildOutputToolIntegrity === 'sha512-lChRklfQeumAGYSMiur5DUbUNFMxvuaoaAffOeO/BcDEgp1hOzq3wo6fejsOWcMcCewibl4OsfP9LM27xb3PzQ=='
+              && build.publicSanitized === true && build.privateDataAccessed === false
+              && build.consequentialAuthorityGranted === false,
+            `${label} structure/identity mismatch`);
+            const sourceDomain = Object.fromEntries(buildProvenanceSourceKeys.map((key) => [key, build[key]]));
+            requireCondition(build.buildInvocationId === `clover-build:${sha256(`${canonicalJson(sourceDomain)}\n`)}`,
+              `${label} build invocation derivation mismatch`);
+            requireCondition(build.commit === 'a'.repeat(40) && build.tree === 'b'.repeat(40) && build.parent === 'c'.repeat(40)
+              && build.stackABase === 'be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb'
+              && build.runtimeDeploymentKey === `clover-${'a'.repeat(24)}` && build.changedPathCount === 72
+              && build.pathListSha256 === '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8'
+              && build.sourceManifestSha256 === '2'.repeat(64) && build.packageLockSha256 === '3'.repeat(64)
+              && build.treeProgramIndexId === 'tree-program:index:0001'
+              && build.treeProgramIndexHash === '897b7967069f9ec699fcef76175dcdee8a91513b43b3cbf046f840760c7d34d0'
+              && build.treeProgramIndexRawSha256 === '5'.repeat(64)
+              && build.nodeVersion === 'v24.16.0' && build.nextVersion === '16.3.3',
+            `${label} final expected source mismatch`);
+            return build;
+          };
+          const validateExactDeploymentAttestation = (candidate, label) => {
+            exactKeys(candidate, deploymentAttestationKeys, label);
+            requireCondition(candidate.documentType === 'clover-tree-deployment-attestation' && candidate.schemaVersion === '0.3.0',
+              `${label} document identity mismatch`);
+            exactKeys(candidate.source, deploymentAttestationSourceKeys, `${label} source`);
+            exactKeys(candidate.output, deploymentAttestationOutputKeys, `${label} output`);
+            requireCondition(typeof candidate.buildInvocationId === 'string' && /^clover-build:[0-9a-f]{64}$/u.test(candidate.buildInvocationId)
+              && typeof candidate.attestationHash === 'string' && /^[0-9a-f]{64}$/u.test(candidate.attestationHash)
+              && ['commit', 'tree', 'parent', 'stackABase'].every((key) => typeof candidate.source[key] === 'string' && /^[0-9a-f]{40}$/u.test(candidate.source[key]))
+              && ['pathListSha256', 'sourceManifestSha256', 'packageLockSha256', 'treeProgramIndexHash']
+                .every((key) => typeof candidate.source[key] === 'string' && /^[0-9a-f]{64}$/u.test(candidate.source[key]))
+              && typeof candidate.source.runtimeDeploymentKey === 'string' && /^clover-[0-9a-f]{24}$/u.test(candidate.source.runtimeDeploymentKey)
+              && candidate.source.runtimeDeploymentKey === `clover-${candidate.source.commit.slice(0, 24)}`
+              && Number.isSafeInteger(candidate.source.changedPathCount) && candidate.source.changedPathCount >= 0
+              && ['treeProgramIndexId', 'nodeVersion', 'nextVersion', 'buildMode']
+                .every((key) => typeof candidate.source[key] === 'string' && candidate.source[key].length > 0)
+              && typeof candidate.output.manifestRootSha256 === 'string' && /^[0-9a-f]{64}$/u.test(candidate.output.manifestRootSha256)
+              && ['regularFileCount', 'symlinkCount', 'aggregateRegularFileBytes']
+                .every((key) => Number.isSafeInteger(candidate.output[key]) && candidate.output[key] >= 0)
+              && candidate.output.attestationExcludedPath === 'static/__clover/deployment-attestation.json'
+              && Array.isArray(candidate.normalization) && candidate.publicSanitized === true
+              && candidate.privateDataAccessed === false && candidate.secretsIncluded === false
+              && candidate.consequentialAuthorityGranted === false,
+            `${label} structure/field mismatch`);
+            let previousPath = null;
+            for (const item of candidate.normalization) {
+              exactKeys(item, ['afterSha256', 'beforeSha256', 'classification', 'path'], `${label} normalization item`);
+              requireCondition(typeof item.path === 'string' && item.path.length > 0 && item.path === item.path.normalize('NFC')
+                && !item.path.startsWith('/') && !item.path.includes('\\') && !/[\0\r\n]/u.test(item.path)
+                && item.path.split('/').every((segment) => segment.length > 0 && segment !== '.' && segment !== '..')
+                && (previousPath === null || previousPath < item.path), `${label} normalization path mismatch`);
+              const expectedClassification = item.path === 'builds.json' || item.path === 'diagnostics/cli_traces.json'
+                ? 'vercel-cli-metadata-root'
+                : /^functions\/.+\/apps\/clover-launch-studio\/___next_launcher\.cjs$/u.test(item.path)
+                  ? 'next-launcher-runtime-root' : null;
+              requireCondition(item.classification === expectedClassification
+                && typeof item.beforeSha256 === 'string' && /^[0-9a-f]{64}$/u.test(item.beforeSha256)
+                && typeof item.afterSha256 === 'string' && /^[0-9a-f]{64}$/u.test(item.afterSha256)
+                && item.beforeSha256 !== item.afterSha256, `${label} normalization item mismatch`);
+              previousPath = item.path;
+            }
+            return candidate;
+          };
+          const reproduceAttestationComparison = (build, candidate) => {
+            const source = candidate?.source;
+            requireCondition(build && typeof build === 'object' && !Array.isArray(build)
+              && candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+              && source && typeof source === 'object' && !Array.isArray(source)
+              && exactAttestationComparisonFields.every(([, attestationKey, buildKey]) =>
+                Object.prototype.hasOwnProperty.call(build, buildKey)
+                && Object.prototype.hasOwnProperty.call(attestationKey === null ? candidate : source,
+                  attestationKey === null ? 'buildInvocationId' : attestationKey)),
+            'staged attestation comparison field inventory mismatch');
+            const differences = exactAttestationComparisonFields
+              .filter(([, attestationKey, buildKey]) =>
+                (attestationKey === null ? candidate.buildInvocationId : source[attestationKey]) !== build[buildKey])
+              .map(([label]) => label);
+            return {
+              status: differences.length === 0 ? 'verified' : 'inconsistent',
+              consistent: differences.length === 0,
+              differences
+            };
+          };
+          const validateAndDeriveCanonicalTree = (tree, label) => {
+            exactKeys(tree, ['authority', 'baseline', 'observations', 'reconciled', 'requestObservedAt', 'schemaVersion'], label);
+            requireCondition(tree.schemaVersion === 'clover-tree-live-readback-v0.2'
+              && typeof tree.requestObservedAt === 'string'
+              && new Date(tree.requestObservedAt).toISOString() === tree.requestObservedAt,
+            `${label} identity/time mismatch`);
+            exactKeys(tree.baseline, ['baselineObservedAt', 'classification', 'immutableRecords', 'indexHash', 'indexId'], `${label} baseline`);
+            exactKeys(tree.baseline.immutableRecords, ['branches', 'index', 'relationships'], `${label} immutable baseline records`);
+            requireCondition(tree.baseline.baselineObservedAt === '2026-08-26T19:55:59.000Z'
+              && tree.baseline.indexId === 'tree-program:index:0001'
+              && tree.baseline.indexHash === '897b7967069f9ec699fcef76175dcdee8a91513b43b3cbf046f840760c7d34d0'
+              && tree.baseline.classification === 'historical-source-bound-baseline',
+            `${label} baseline substitution`);
+            exactJson(tree.baseline.immutableRecords.index, {
+              indexId: 'tree-program:index:0001',
+              indexHash: '897b7967069f9ec699fcef76175dcdee8a91513b43b3cbf046f840760c7d34d0',
+              publicSanitized: true,
+              privateDataAccessed: false
+            }, `${label} immutable index`);
+            requireCondition(Array.isArray(tree.baseline.immutableRecords.branches)
+              && tree.baseline.immutableRecords.branches.length === 22
+              && tree.baseline.immutableRecords.branches.every((record, index) =>
+                canonicalJson(record) === canonicalJson({ recordId: `branch:${index + 1}` }))
+              && Array.isArray(tree.baseline.immutableRecords.relationships)
+              && tree.baseline.immutableRecords.relationships.length === 21
+              && tree.baseline.immutableRecords.relationships.every((record, index) =>
+                canonicalJson(record) === canonicalJson({ recordId: `relationship:${index + 1}` })),
+            `${label} immutable record inventory substitution`);
+            exactKeys(tree.observations, ['clover', 'deploymentSelf', 'github'], `${label} observations`);
+            exactKeys(tree.observations.clover, ['errorCode', 'evidenceClass', 'freshness', 'observedAt', 'sourceId', 'sourceIdentity', 'statement', 'status', 'webRuntimeConnectorInvoked'], `${label} Clover observation`);
+            exactJson(tree.observations.clover, {
+              sourceId: 'clover-context-gateway',
+              sourceIdentity: 'external-owner-console',
+              evidenceClass: 'external-owner-console-required',
+              status: 'external-owner-console-required',
+              freshness: 'unknown',
+              observedAt: null,
+              errorCode: null,
+              webRuntimeConnectorInvoked: false,
+              statement: 'no Clover connector was invoked by the web runtime'
+            }, `${label} Clover observation identity`);
+            const github = tree.observations.github;
+            exactKeys(github, [
+              'candidateSha', 'checkPagesObserved', 'endpoints', 'errorCode', 'evidenceClass', 'evidenceCompleteness',
+              'exactHeadCheckStatus', 'exactHeadChecks', 'failures', 'freshness', 'main', 'missingEvidence', 'observedAt',
+              'pull34', 'pull35', 'repository', 'retriesMaximum', 'revalidateSeconds', 'ruleset', 'sourceId',
+              'sourceIdentity', 'status', 'unauthenticated'
+            ], `${label} GitHub observation`);
+            requireCondition(github.sourceId === 'github-public-api' && github.sourceIdentity === 'github:chrisdortch/first'
+              && github.evidenceClass === 'public-unauthenticated-github-api' && github.status === 'current'
+              && github.candidateSha === 'a'.repeat(40) && github.evidenceCompleteness === 'complete'
+              && github.exactHeadCheckStatus === 'success' && github.checkPagesObserved === 1
+              && Array.isArray(github.missingEvidence) && github.missingEvidence.length === 0
+              && github.freshness === 'current' && typeof github.observedAt === 'string'
+              && new Date(github.observedAt).toISOString() === github.observedAt && github.errorCode === null
+              && Array.isArray(github.endpoints) && github.endpoints.length > 6
+              && github.endpoints.every((endpoint) => typeof endpoint === 'string' && new URL(endpoint).origin === 'https://api.github.com')
+              && github.unauthenticated === true && github.retriesMaximum === 1 && github.revalidateSeconds === 1200
+              && Array.isArray(github.failures) && github.failures.length === 0,
+            `${label} GitHub acceptance identity mismatch`);
+            exactJson(github.repository, { id: 1231415392, fullName: 'chrisdortch/first', defaultBranch: 'main' }, `${label} GitHub repository`);
+            exactJson(github.main, {
+              sha: 'be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb',
+              tree: 'd0ac615a9f038c62fa6c0b1296312920b0dceb4d', protected: true, defaultBranch: 'main'
+            }, `${label} protected main`);
+            requireCondition(github.pull35?.number === 35 && github.pull35.state === 'open' && github.pull35.draft === true
+              && github.pull35.merged === false && github.pull35.mergeable === true
+              && github.pull35.headSha === github.candidateSha && github.pull35.headRepository === 'chrisdortch/first'
+              && github.pull35.baseSha === github.main.sha && github.pull35.baseRef === 'main'
+              && github.pull35.baseRepository === 'chrisdortch/first'
+              && github.ruleset?.id === 21254086 && github.ruleset.enforcement === 'active'
+              && github.ruleset.requiredReviewThreadResolution === true && github.ruleset.requiredStatusChecksStrict === true
+              && github.exactHeadChecks?.sha === github.candidateSha && github.exactHeadChecks.state === 'success'
+              && Array.isArray(github.exactHeadChecks.requiredNames) && github.exactHeadChecks.requiredNames.length === 8
+              && Array.isArray(github.exactHeadChecks.workflowRuns) && github.exactHeadChecks.workflowRuns.length === 4
+              && Array.isArray(github.exactHeadChecks.checks) && github.exactHeadChecks.checks.length === 8,
+            `${label} GitHub protected acceptance evidence mismatch`);
+            const deployment = tree.observations.deploymentSelf;
+            exactKeys(deployment, [
+              'buildRuntimeDeploymentKey', 'environment', 'environmentKeysRead', 'errorCode', 'evidenceClass',
+              'externalProviderIdentity', 'failures', 'freshness', 'gitCommitSha', 'hostname', 'observationMethod',
+              'observedAt', 'projectId', 'providerDeploymentId', 'region', 'regionStatus', 'requestHostname',
+              'runtimeHostname', 'runtimeServerDeploymentId', 'skewProtectionState', 'sourceBindingMode', 'sourceId',
+              'sourceIdentity', 'status'
+            ], `${label} deployment-self observation`);
+            requireCondition(deployment.sourceId === 'vercel-deployment-self'
+              && deployment.sourceIdentity === 'vercel-functions-get-env'
+              && deployment.evidenceClass === 'deployment-self-observation' && deployment.status === 'current'
+              && deployment.freshness === 'current' && deployment.observedAt === null && deployment.errorCode === null
+              && deployment.environment === 'preview' && deployment.hostname === 'clover-tree-command-center-abc.vercel.app'
+              && deployment.runtimeHostname === deployment.hostname && deployment.requestHostname === deployment.hostname
+              && deployment.projectId === 'prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ'
+              && deployment.buildRuntimeDeploymentKey === `clover-${'a'.repeat(24)}`
+              && /^dpl_[A-Za-z0-9]{20,64}$/u.test(deployment.providerDeploymentId)
+              && deployment.runtimeServerDeploymentId === deployment.buildRuntimeDeploymentKey
+              && deployment.region === 'iad1' && deployment.regionStatus === 'current'
+              && deployment.skewProtectionState === 'enabled' && deployment.gitCommitSha === 'a'.repeat(40)
+              && deployment.sourceBindingMode === 'vercel-git-commit-sha-and-build-provenance'
+              && deployment.observationMethod === 'vercel-functions-get-env-and-request-host'
+              && Array.isArray(deployment.failures) && deployment.failures.length === 0,
+            `${label} deployment-self acceptance identity mismatch`);
+            exactJson(deployment.externalProviderIdentity, {
+              evidenceClass: 'external-provider-verification', verifiedByWebRuntime: false,
+              providerDeploymentId: null, providerUrl: null, target: null, aliases: null,
+              providerSourceSha: null, protectionState: null
+            }, `${label} external provider non-observation`);
+            exactJson(deployment.environmentKeysRead, [
+              'VERCEL_ENV', 'VERCEL_URL', 'VERCEL_PROJECT_ID', 'VERCEL_DEPLOYMENT_ID',
+              'VERCEL_REGION', 'VERCEL_GIT_COMMIT_SHA', 'VERCEL_SKEW_PROTECTION_ENABLED'
+            ], `${label} deployment environment allowlist`);
+            exactJson(tree.authority, exactReadOnlyAuthority, `${label} authority`);
+            exactKeys(tree.reconciled, ['contradictions', 'currentActionCard', 'readiness'], `${label} reconciliation`);
+            const contradictions = tree.reconciled.contradictions;
+            exactKeys(contradictions, ['baselineValue', 'confidence', 'observedAt', 'source', 'value'], `${label} contradictions`);
+            const pending = ['same-origin-attestation-browser-readback-required'];
+            exactJson(contradictions.value, pending, `${label} pending contradiction`);
+            exactJson(contradictions.baselineValue, [], `${label} contradiction baseline`);
+            requireCondition(contradictions.source === 'runtime-live-truth-reconciliation'
+              && contradictions.confidence === 'qualified' && contradictions.observedAt === github.observedAt,
+            `${label} contradiction provenance mismatch`);
+            const readiness = tree.reconciled.readiness;
+            exactKeys(readiness, [
+              'applicationSourceValidated', 'buildPayloadAttestationStatus', 'durablePrivateStorageConfigured',
+              'finalDeploymentInputVerificationStatus', 'liveGithubOverlayStatus', 'ownerConsoleGroundingRequired',
+              'privateOwnerAuthenticationConfigured', 'productionAuthorized', 'realParticipantRuntimeConfigured',
+              'realProviderExecutionConfigured', 'runtimeDeploymentIdentityStatus', 'treePreviewRuntimeObserved',
+              'treeProgramBaselineLoaded'
+            ], `${label} readiness`);
+            exactJson(readiness, {
+              applicationSourceValidated: true,
+              treeProgramBaselineLoaded: true,
+              treePreviewRuntimeObserved: true,
+              runtimeDeploymentIdentityStatus: 'verified',
+              liveGithubOverlayStatus: 'current',
+              buildPayloadAttestationStatus: 'unavailable',
+              finalDeploymentInputVerificationStatus: 'external-provider-receipt-required',
+              ownerConsoleGroundingRequired: true,
+              privateOwnerAuthenticationConfigured: false,
+              durablePrivateStorageConfigured: false,
+              realParticipantRuntimeConfigured: false,
+              realProviderExecutionConfigured: false,
+              productionAuthorized: false
+            }, `${label} exact readiness`);
+            const actionCard = tree.reconciled.currentActionCard;
+            exactKeys(actionCard, ['action', 'authority', 'bindings', 'observedAt', 'reason', 'requiredOwnerDecision', 'rollback', 'source', 'status'], `${label} Action Card`);
+            exactKeys(actionCard.bindings, ['contradictions', 'deployment', 'deploymentObservedAt', 'githubObservedAt', 'protectedMain', 'pull34', 'pull35', 'sourceFreshness'], `${label} Action Card bindings`);
+            requireCondition(actionCard.action === 'HOLD' && actionCard.status === 'hold'
+              && actionCard.reason === 'source-refresh-required' && actionCard.source === 'runtime-live-truth-reconciliation'
+              && actionCard.observedAt === github.observedAt && actionCard.requiredOwnerDecision === 'HOLD'
+              && actionCard.rollback === 'retain-unmerged-pr35-and-delete-target-null-preview-in-separate-authorized-gate'
+              && actionCard.bindings.sourceFreshness === github.freshness
+              && actionCard.bindings.githubObservedAt === github.observedAt
+              && actionCard.bindings.deploymentObservedAt === null,
+            `${label} Action Card identity mismatch`);
+            exactJson(actionCard.bindings.protectedMain, github.main, `${label} Action Card protected-main binding`);
+            exactJson(actionCard.bindings.pull34, github.pull34, `${label} Action Card PR34 binding`);
+            exactJson(actionCard.bindings.pull35, github.pull35, `${label} Action Card PR35 binding`);
+            exactJson(actionCard.bindings.deployment, deployment, `${label} Action Card deployment binding`);
+            exactJson(actionCard.bindings.contradictions, contradictions.value, `${label} Action Card contradiction binding`);
+            exactJson(actionCard.authority, {
+              mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false,
+              externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false
+            }, `${label} Action Card authority`);
+            const otherwiseReady = readiness.applicationSourceValidated === true
+              && readiness.treeProgramBaselineLoaded === true && readiness.treePreviewRuntimeObserved === true
+              && readiness.runtimeDeploymentIdentityStatus === 'verified' && readiness.liveGithubOverlayStatus === 'current'
+              && readiness.finalDeploymentInputVerificationStatus === 'external-provider-receipt-required'
+              && readiness.ownerConsoleGroundingRequired === true && readiness.privateOwnerAuthenticationConfigured === false
+              && readiness.durablePrivateStorageConfigured === false && readiness.realParticipantRuntimeConfigured === false
+              && readiness.realProviderExecutionConfigured === false && readiness.productionAuthorized === false;
+            return {
+              github: {
+                status: github.status, evidenceCompleteness: github.evidenceCompleteness,
+                exactHeadCheckStatus: github.exactHeadCheckStatus, candidateSha: github.candidateSha,
+                missingEvidence: github.missingEvidence, failures: github.failures
+              },
+              deploymentSelf: {
+                status: deployment.status, failures: deployment.failures, projectId: deployment.projectId,
+                hostname: deployment.hostname, environment: deployment.environment,
+                buildRuntimeDeploymentKey: deployment.buildRuntimeDeploymentKey,
+                providerDeploymentId: deployment.providerDeploymentId,
+                runtimeServerDeploymentId: deployment.runtimeServerDeploymentId,
+                source: deployment.gitCommitSha, region: deployment.region
+              },
+              authority: tree.authority,
+              rawTreeAction: actionCard.action,
+              rawTreeAttestationStatus: readiness.buildPayloadAttestationStatus,
+              rawTreeAttestationConsistent: false,
+              rawTreeAttestationDifferences: contradictions.value,
+              rawTreeContradictions: contradictions.value,
+              rawTreeOtherwiseReady: otherwiseReady
+            };
+          };
+
+          const validateStagedAcceptance = (document, project) => {
+            const staged = document.stagedAcceptance;
+            exactKeys(staged, ['browserPostAttestation', 'canonicalSha256', 'immutableOrigin', 'sameOriginAttestation', 'schemaVersion', 'serverPreAttestation', 'transition', 'transportMode'], `${project} staged acceptance`);
+            requireCondition(staged.schemaVersion === 'clover-tree-staged-acceptance-evidence-v1'
+              && staged.transportMode === 'same-origin-http-fixture'
+              && typeof staged.immutableOrigin === 'string' && /^http:\/\/127\.0\.0\.1:\d+$/u.test(staged.immutableOrigin)
+              && staged.transition === 'EXPECTED_PRE_ATTESTATION_HOLD_TO_SAME_ORIGIN_VERIFIED_TO_BROWSER_ACCEPT',
+            `${project} staged acceptance identity mismatch`);
+            const stagedBody = { ...staged };
+            delete stagedBody.canonicalSha256;
+            requireCondition(staged.canonicalSha256 === sha256(`${canonicalJson(stagedBody)}\n`), `${project} staged acceptance self-hash mismatch`);
+
+            const server = staged.serverPreAttestation;
+            exactKeys(server, ['authority', 'canonicalTree', 'canonicalTreeSha256', 'deploymentSelf', 'github', 'rawTreeAction', 'rawTreeAttestationConsistent', 'rawTreeAttestationDifferences', 'rawTreeAttestationStatus', 'rawTreeBytes', 'rawTreeContradictions', 'rawTreeOtherwiseReady', 'rawTreeSha256', 'rawTreeUtf8'], `${project} server pre-attestation`);
+            requireCondition(server.rawTreeAction === 'HOLD' && server.rawTreeAttestationStatus === 'unavailable'
+              && server.rawTreeAttestationConsistent === false && server.rawTreeOtherwiseReady === true
+              && Number.isSafeInteger(server.rawTreeBytes) && server.rawTreeBytes > 0
+              && /^[0-9a-f]{64}$/u.test(server.rawTreeSha256) && /^[0-9a-f]{64}$/u.test(server.canonicalTreeSha256),
+            `${project} server pre-attestation state mismatch`);
+            exactJson(server.rawTreeAttestationDifferences, ['same-origin-attestation-browser-readback-required'], `${project} raw attestation difference`);
+            exactJson(server.rawTreeContradictions, ['same-origin-attestation-browser-readback-required'], `${project} raw Tree contradictions`);
+            const rawTreeBytes = Buffer.from(server.rawTreeUtf8, 'utf8');
+            const parsedRawTree = fatalJson(rawTreeBytes, `${project} retained raw Tree`).value;
+            requireCondition(server.canonicalTreeSha256 === sha256(`${canonicalJson(server.canonicalTree)}\n`)
+              && server.rawTreeSha256 === sha256(rawTreeBytes)
+              && server.rawTreeBytes === rawTreeBytes.byteLength,
+            `${project} raw Tree document/hash binding mismatch`);
+            exactJson(parsedRawTree, server.canonicalTree, `${project} retained raw Tree semantic binding`);
+            const derivedServer = validateAndDeriveCanonicalTree(server.canonicalTree, `${project} canonical raw Tree`);
+            exactJson({
+              github: server.github,
+              deploymentSelf: server.deploymentSelf,
+              authority: server.authority,
+              rawTreeAction: server.rawTreeAction,
+              rawTreeAttestationStatus: server.rawTreeAttestationStatus,
+              rawTreeAttestationConsistent: server.rawTreeAttestationConsistent,
+              rawTreeAttestationDifferences: server.rawTreeAttestationDifferences,
+              rawTreeContradictions: server.rawTreeContradictions,
+              rawTreeOtherwiseReady: server.rawTreeOtherwiseReady
+            }, derivedServer, `${project} canonical Tree/staged server derivation`);
+            exactKeys(server.github, ['candidateSha', 'evidenceCompleteness', 'exactHeadCheckStatus', 'failures', 'missingEvidence', 'status'], `${project} server GitHub evidence`);
+            exactJson(server.github, {
+              status: 'current', evidenceCompleteness: 'complete', exactHeadCheckStatus: 'success',
+              candidateSha: 'a'.repeat(40), missingEvidence: [], failures: []
+            }, `${project} server GitHub evidence`);
+            exactKeys(server.deploymentSelf, ['buildRuntimeDeploymentKey', 'environment', 'failures', 'hostname', 'projectId', 'providerDeploymentId', 'region', 'runtimeServerDeploymentId', 'source', 'status'], `${project} server deployment-self evidence`);
+            requireCondition(server.deploymentSelf.status === 'current' && server.deploymentSelf.environment === 'preview'
+              && server.deploymentSelf.projectId === 'prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ'
+              && server.deploymentSelf.hostname === 'clover-tree-command-center-abc.vercel.app'
+              && server.deploymentSelf.buildRuntimeDeploymentKey === `clover-${'a'.repeat(24)}`
+              && /^dpl_[A-Za-z0-9]{20,64}$/u.test(server.deploymentSelf.providerDeploymentId)
+              && server.deploymentSelf.runtimeServerDeploymentId === server.deploymentSelf.buildRuntimeDeploymentKey
+              && server.deploymentSelf.source === 'a'.repeat(40) && server.deploymentSelf.region === 'iad1'
+              && Array.isArray(server.deploymentSelf.failures) && server.deploymentSelf.failures.length === 0,
+            `${project} server deployment-self binding mismatch`);
+            exactKeys(server.authority, ['externalMessagingAuthorized', 'mergeAuthorized', 'paymentAuthorized', 'privateDataAuthorized', 'productionAuthorized', 'publicMetadataObserved', 'purchaseAuthorized', 'sourceMutationAuthorized'], `${project} server authority`);
+            exactJson(server.authority, {
+              publicMetadataObserved: true, sourceMutationAuthorized: false, mergeAuthorized: false,
+              productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false,
+              paymentAuthorized: false, purchaseAuthorized: false
+            }, `${project} server authority`);
+
+            const attestation = staged.sameOriginAttestation;
+            exactKeys(attestation, ['attestationSelfHash', 'buildProvenanceReadback', 'canonicalAttestation', 'canonicalSha256', 'comparisonConsistent', 'comparisonStatus', 'differences', 'outputManifestRootSha256', 'rawSha256', 'rawUtf8', 'redirected', 'requestMethod', 'requestOrigin', 'requestPath', 'responseBytes', 'responseHttpStatus', 'responseOrigin', 'responsePath', 'sourceBinding'], `${project} same-origin attestation`);
+            requireCondition(attestation.requestOrigin === staged.immutableOrigin
+              && attestation.responseOrigin === staged.immutableOrigin
+              && attestation.requestPath === '/__clover/deployment-attestation.json'
+              && attestation.responsePath === '/__clover/deployment-attestation.json'
+              && attestation.requestMethod === 'GET' && attestation.responseHttpStatus === 200
+              && attestation.redirected === false && Number.isSafeInteger(attestation.responseBytes) && attestation.responseBytes > 0
+              && [attestation.rawSha256, attestation.canonicalSha256, attestation.attestationSelfHash, attestation.outputManifestRootSha256]
+                .every((value) => typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value))
+              && attestation.comparisonStatus === 'verified' && attestation.comparisonConsistent === true
+              && Array.isArray(attestation.differences) && attestation.differences.length === 0,
+            `${project} same-origin attestation verification mismatch`);
+            exactKeys(attestation.sourceBinding, ['buildInvocationId', 'commit', 'parent', 'runtimeDeploymentKey', 'tree'], `${project} attestation source binding`);
+            validateExactDeploymentAttestation(attestation.canonicalAttestation, `${project} canonical deployment attestation`);
+            exactJson(attestation.sourceBinding, {
+              commit: attestation.canonicalAttestation.source.commit,
+              tree: attestation.canonicalAttestation.source.tree,
+              parent: attestation.canonicalAttestation.source.parent,
+              runtimeDeploymentKey: attestation.canonicalAttestation.source.runtimeDeploymentKey,
+              buildInvocationId: attestation.canonicalAttestation.buildInvocationId
+            }, `${project} canonical attestation/source-summary binding`);
+            exactJson(attestation.sourceBinding, {
+              commit: 'a'.repeat(40), tree: 'b'.repeat(40), parent: 'c'.repeat(40),
+              runtimeDeploymentKey: `clover-${'a'.repeat(24)}`,
+              buildInvocationId: attestation.sourceBinding.buildInvocationId
+            }, `${project} final expected attestation source binding`);
+            requireCondition(/^clover-build:[0-9a-f]{64}$/u.test(attestation.sourceBinding.buildInvocationId), `${project} attestation build invocation mismatch`);
+            const canonicalAttestationBody = { ...attestation.canonicalAttestation };
+            delete canonicalAttestationBody.attestationHash;
+            const rawAttestationBytes = Buffer.from(attestation.rawUtf8, 'utf8');
+            const parsedRawAttestation = fatalJson(rawAttestationBytes, `${project} retained raw attestation`).value;
+            requireCondition(attestation.canonicalSha256 === sha256(`${canonicalJson(attestation.canonicalAttestation)}\n`)
+              && attestation.rawSha256 === sha256(rawAttestationBytes)
+              && attestation.responseBytes === rawAttestationBytes.byteLength
+              && attestation.attestationSelfHash === attestation.canonicalAttestation.attestationHash
+              && attestation.attestationSelfHash === sha256(`${canonicalJson(canonicalAttestationBody)}\n`)
+              && attestation.outputManifestRootSha256 === attestation.canonicalAttestation.output?.manifestRootSha256
+              && attestation.canonicalAttestation.buildInvocationId === attestation.sourceBinding.buildInvocationId,
+            `${project} attestation document/hash binding mismatch`);
+            exactJson(parsedRawAttestation, attestation.canonicalAttestation, `${project} retained raw attestation semantic binding`);
+            exactKeys(attestation.buildProvenanceReadback, ['authority', 'provenance', 'schemaVersion'], `${project} Build Provenance readback`);
+            requireCondition(attestation.buildProvenanceReadback.schemaVersion === 'clover-tree-provenance-readback-v0.2',
+              `${project} Build Provenance readback schema mismatch`);
+            exactJson(attestation.buildProvenanceReadback.authority, exactReadOnlyAuthority,
+              `${project} Build Provenance readback authority/privacy`);
+            const exactBuildProvenance = validateExactBuildProvenance(
+              attestation.buildProvenanceReadback.provenance,
+              `${project} exact Build Provenance`
+            );
+            requireCondition(exactBuildProvenance.buildInvocationId === attestation.sourceBinding.buildInvocationId,
+              `${project} Build Provenance/source-summary invocation mismatch`);
+            requireCondition(server.canonicalTree.baseline.indexId === exactBuildProvenance.treeProgramIndexId
+              && server.canonicalTree.baseline.indexHash === exactBuildProvenance.treeProgramIndexHash
+              && server.canonicalTree.baseline.immutableRecords.index.indexId === exactBuildProvenance.treeProgramIndexId
+              && server.canonicalTree.baseline.immutableRecords.index.indexHash === exactBuildProvenance.treeProgramIndexHash,
+            `${project} canonical Tree/Build Provenance baseline binding mismatch`);
+            const reproducedComparison = reproduceAttestationComparison(
+              exactBuildProvenance,
+              attestation.canonicalAttestation
+            );
+            exactJson({
+              status: attestation.comparisonStatus,
+              consistent: attestation.comparisonConsistent,
+              differences: attestation.differences
+            }, reproducedComparison, `${project} independently reproduced Build Provenance/attestation comparison`);
+
+            const browser = staged.browserPostAttestation;
+            exactKeys(browser, ['action', 'authority', 'browserEvidenceHashes', 'contradictions', 'exactDeployment', 'exactSource', 'finalOwnerDecision', 'readiness', 'viewStateCoverage'], `${project} browser post-attestation`);
+            requireCondition(browser.action === 'ACCEPT SOURCE-GROUNDED TREE PREVIEW'
+              && browser.readiness === 'acceptance-ready'
+              && Array.isArray(browser.contradictions) && browser.contradictions.length === 0
+              && browser.finalOwnerDecision === 'nonexecuting-and-nonauthorizing-until-separately-approved',
+            `${project} browser post-attestation state mismatch`);
+            exactKeys(browser.exactSource, ['buildInvocationId', 'commit', 'parent', 'runtimeDeploymentKey', 'tree'], `${project} browser exact source`);
+            exactJson(browser.exactSource, {
+              commit: 'a'.repeat(40), tree: 'b'.repeat(40), parent: 'c'.repeat(40),
+              runtimeDeploymentKey: `clover-${'a'.repeat(24)}`,
+              buildInvocationId: attestation.buildProvenanceReadback.provenance.buildInvocationId
+            }, `${project} browser exact source`);
+            exactKeys(browser.exactDeployment, ['hostname', 'providerDeploymentId', 'runtimeServerDeploymentId'], `${project} browser exact deployment`);
+            exactJson(browser.exactDeployment, {
+              providerDeploymentId: server.deploymentSelf.providerDeploymentId,
+              hostname: server.deploymentSelf.hostname,
+              runtimeServerDeploymentId: server.deploymentSelf.runtimeServerDeploymentId
+            }, `${project} browser exact deployment`);
+            exactKeys(browser.viewStateCoverage, ['canonicalSha256', 'count', 'exactStateKeys', 'exactViews', 'project'], `${project} browser view/state coverage`);
+            exactJson(browser.viewStateCoverage.exactViews, exactViews, `${project} staged exact views`);
+            exactJson(browser.viewStateCoverage.exactStateKeys, exactStateKeys, `${project} staged exact state keys`);
+            requireCondition(browser.viewStateCoverage.project === project && browser.viewStateCoverage.count === 30
+              && browser.viewStateCoverage.canonicalSha256 === sha256(`${canonicalJson(exactStateKeys)}\n`),
+            `${project} staged view/state coverage mismatch`);
+            exactKeys(browser.browserEvidenceHashes, ['exactReadbackBodies', 'finalGenerationSha256', 'gateAttemptProofsSha256', 'rawProvenanceBytes', 'rawProvenanceSha256', 'rawProvenanceUtf8', 'viewStateProofsSha256'], `${project} staged browser hashes`);
+            requireCondition(Number.isSafeInteger(browser.browserEvidenceHashes.rawProvenanceBytes)
+              && browser.browserEvidenceHashes.rawProvenanceBytes > 0
+              && typeof browser.browserEvidenceHashes.rawProvenanceUtf8 === 'string'
+              && browser.browserEvidenceHashes.rawProvenanceUtf8.length > 0
+              && ['finalGenerationSha256', 'gateAttemptProofsSha256', 'rawProvenanceSha256', 'viewStateProofsSha256']
+                .every((key) => typeof browser.browserEvidenceHashes[key] === 'string'
+                  && /^[0-9a-f]{64}$/u.test(browser.browserEvidenceHashes[key])),
+            `${project} staged browser hash syntax mismatch`);
+            const exactReadbackBodies = browser.browserEvidenceHashes.exactReadbackBodies;
+            requireCondition(Array.isArray(exactReadbackBodies) && exactReadbackBodies.length === exactReadbackPaths.length,
+              `${project} staged exact-readback body count mismatch`);
+            exactJson(exactReadbackBodies.map(({ path: pathname }) => pathname), exactReadbackPaths,
+              `${project} staged exact-readback body order`);
+            exactReadbackBodies.forEach((body, index) => {
+              exactKeys(body, ['clientBytes', 'clientSha256', 'exactEquality', 'path', 'playwrightBytes', 'playwrightSha256', 'transport'],
+                `${project} staged exact-readback body ${index}`);
+              requireCondition(body.path === exactReadbackPaths[index]
+                && body.transport === staged.transportMode
+                && Number.isSafeInteger(body.playwrightBytes) && body.playwrightBytes > 0
+                && Number.isSafeInteger(body.clientBytes) && body.clientBytes > 0
+                && typeof body.playwrightSha256 === 'string' && /^[0-9a-f]{64}$/u.test(body.playwrightSha256)
+                && typeof body.clientSha256 === 'string' && /^[0-9a-f]{64}$/u.test(body.clientSha256)
+                && body.playwrightBytes === body.clientBytes
+                && body.playwrightSha256 === body.clientSha256
+                && body.exactEquality === true,
+              `${project} staged exact-readback body equality mismatch ${index}`);
+            });
+            const rawProvenanceBytes = Buffer.from(browser.browserEvidenceHashes.rawProvenanceUtf8, 'utf8');
+            const parsedRawProvenance = fatalJson(rawProvenanceBytes, `${project} retained raw Build Provenance`).value;
+            requireCondition(browser.browserEvidenceHashes.rawProvenanceSha256 === sha256(rawProvenanceBytes)
+              && browser.browserEvidenceHashes.rawProvenanceBytes === rawProvenanceBytes.byteLength,
+            `${project} raw Build Provenance document/hash binding mismatch`);
+            exactJson(parsedRawProvenance, attestation.buildProvenanceReadback, `${project} retained raw Build Provenance semantic binding`);
+            exactKeys(browser.authority, ['consequentialAuthorityGranted', 'externalMessagingAuthorized', 'mergeAuthorized', 'paymentAuthorized', 'privateDataAccessed', 'privateDataAuthorized', 'productionAuthorized', 'purchaseAuthorized', 'secretsIncluded', 'sourceMutationAuthorized'], `${project} browser authority`);
+            requireCondition(Object.values(browser.authority).every((value) => value === false), `${project} browser authority widened`);
+
+            const viewStateBindings = document.scans.map(({ view, state, viewStateProof }) => ({ view, state, canonicalSha256: viewStateProof.canonicalSha256 }));
+            const gateAttemptBindings = document.scans.map(({ view, state, gateAttemptProof }) => ({
+              view, state, canonicalSha256: gateAttemptProof.canonicalSha256,
+              generationCanonicalSha256: gateAttemptProof.afterFence.generation.canonicalSha256
+            }));
+            requireCondition(browser.browserEvidenceHashes.viewStateProofsSha256 === sha256(`${canonicalJson(viewStateBindings)}\n`)
+              && browser.browserEvidenceHashes.gateAttemptProofsSha256 === sha256(`${canonicalJson(gateAttemptBindings)}\n`),
+            `${project} staged browser proof-set binding mismatch`);
+            const finalGeneration = document.scans.at(-1)?.gateAttemptProof?.afterFence?.generation;
+            requireCondition(finalGeneration && finalGeneration.canonicalSha256 === browser.browserEvidenceHashes.finalGenerationSha256
+              && Array.isArray(finalGeneration.requests) && finalGeneration.requests.length === 3,
+            `${project} staged final generation binding mismatch`);
+            exactJson(finalGeneration.requests.map(({ pathname }) => pathname), exactReadbackPaths,
+              `${project} staged final generation request order`);
+            finalGeneration.requests.forEach((proof, index) => {
+              const body = exactReadbackBodies[index];
+              requireCondition(proof.pathname === body.path && proof.request?.transport === body.transport
+                && proof.client?.url === `${staged.immutableOrigin}${body.path}`
+                && proof.delivery?.url === `${staged.immutableOrigin}${body.path}`
+                && proof.client?.clientByteCount === body.clientBytes
+                && proof.client?.clientSha256 === body.clientSha256
+                && proof.delivery?.byteCount === body.playwrightBytes
+                && proof.delivery?.bodySha256 === body.playwrightSha256,
+              `${project} staged exact-readback body/proof binding mismatch ${index}`);
+            });
+            const treeRequest = finalGeneration.requests.find(({ pathname }) => pathname === '/api/tree');
+            const provenanceRequest = finalGeneration.requests.find(({ pathname }) => pathname === '/api/provenance');
+            const attestationRequest = finalGeneration.requests.find(({ pathname }) => pathname === '/__clover/deployment-attestation.json');
+            requireCondition(treeRequest && provenanceRequest && attestationRequest
+              && treeRequest.client.url === `${attestation.requestOrigin}/api/tree`
+              && treeRequest.delivery.bodySha256 === server.rawTreeSha256
+              && treeRequest.delivery.byteCount === server.rawTreeBytes
+              && provenanceRequest.delivery.bodySha256 === browser.browserEvidenceHashes.rawProvenanceSha256
+              && provenanceRequest.delivery.byteCount === browser.browserEvidenceHashes.rawProvenanceBytes
+              && attestationRequest.client.url === `${attestation.requestOrigin}${attestation.requestPath}`
+              && attestationRequest.delivery.url === `${attestation.responseOrigin}${attestation.responsePath}`
+              && attestationRequest.delivery.bodySha256 === attestation.rawSha256
+              && attestationRequest.delivery.byteCount === attestation.responseBytes
+              && attestationRequest.client.clientSha256 === attestation.rawSha256
+              && attestationRequest.client.clientByteCount === attestation.responseBytes,
+            `${project} staged request/body cross-binding mismatch`);
+            requireCondition(attestation.sourceBinding.commit === browser.exactSource.commit
+              && attestation.sourceBinding.tree === browser.exactSource.tree
+              && attestation.sourceBinding.parent === browser.exactSource.parent
+              && attestation.sourceBinding.runtimeDeploymentKey === browser.exactSource.runtimeDeploymentKey
+              && attestation.sourceBinding.runtimeDeploymentKey === server.deploymentSelf.buildRuntimeDeploymentKey
+              && attestation.sourceBinding.buildInvocationId === browser.exactSource.buildInvocationId,
+            `${project} staged transition source binding mismatch`);
+            return staged;
+          };
+          const assertStagedAcceptanceMutationResistance = (document, project) => {
+            const reject = (label, mutate) => {
+              const candidate = structuredClone(document);
+              mutate(candidate.stagedAcceptance, candidate);
+              delete candidate.stagedAcceptance.canonicalSha256;
+              candidate.stagedAcceptance.canonicalSha256 = sha256(`${canonicalJson(candidate.stagedAcceptance)}\n`);
+              let rejected = false;
+              try { validateStagedAcceptance(candidate, project); } catch { rejected = true; }
+              requireCondition(rejected, `${project} staged acceptance accepted ${label}`);
+            };
+            const pending = 'same-origin-attestation-browser-readback-required';
+            const resealExactReadbackBody = (stage, pathname, byteCount, bodySha256) => {
+              const bodies = stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies;
+              const body = bodies.find(({ path: candidatePath }) => candidatePath === pathname);
+              requireCondition(body, `${project} staged mutation lacks exact-readback body ${pathname}`);
+              body.playwrightBytes = byteCount;
+              body.playwrightSha256 = bodySha256;
+              body.clientBytes = byteCount;
+              body.clientSha256 = bodySha256;
+              body.exactEquality = true;
+            };
+            const resealCanonicalTree = (stage, candidate) => {
+              const server = stage.serverPreAttestation;
+              const rawUtf8 = JSON.stringify(server.canonicalTree);
+              const rawBytes = Buffer.from(rawUtf8, 'utf8');
+              const rawSha256 = sha256(rawBytes);
+              server.rawTreeUtf8 = rawUtf8;
+              server.rawTreeBytes = rawBytes.byteLength;
+              server.rawTreeSha256 = rawSha256;
+              server.canonicalTreeSha256 = sha256(`${canonicalJson(server.canonicalTree)}\n`);
+              const generation = candidate.scans.at(-1)?.gateAttemptProof?.afterFence?.generation;
+              const request = generation?.requests?.find(({ pathname }) => pathname === '/api/tree');
+              requireCondition(request, `${project} staged Tree mutation lacks exact request`);
+              request.delivery.bodySha256 = rawSha256;
+              request.delivery.byteCount = rawBytes.byteLength;
+              request.client.clientSha256 = rawSha256;
+              request.client.clientByteCount = rawBytes.byteLength;
+              request.client.serverSha256 = rawSha256;
+              request.client.serverByteCount = rawBytes.byteLength;
+              if (request.request) request.request.fixtureBodySha256 = rawSha256;
+              resealExactReadbackBody(stage, '/api/tree', rawBytes.byteLength, rawSha256);
+            };
+            const resealCanonicalAttestation = (stage, candidate) => {
+              const attestation = stage.sameOriginAttestation;
+              const canonical = attestation.canonicalAttestation;
+              const body = { ...canonical };
+              delete body.attestationHash;
+              canonical.attestationHash = sha256(`${canonicalJson(body)}\n`);
+              const rawUtf8 = JSON.stringify(canonical);
+              const rawBytes = Buffer.from(rawUtf8, 'utf8');
+              const rawSha256 = sha256(rawBytes);
+              attestation.rawUtf8 = rawUtf8;
+              attestation.rawSha256 = rawSha256;
+              attestation.responseBytes = rawBytes.byteLength;
+              attestation.canonicalSha256 = sha256(`${canonicalJson(canonical)}\n`);
+              attestation.attestationSelfHash = canonical.attestationHash;
+              if (canonical.output?.manifestRootSha256 !== undefined) {
+                attestation.outputManifestRootSha256 = canonical.output.manifestRootSha256;
+              }
+              const generation = candidate.scans.at(-1)?.gateAttemptProof?.afterFence?.generation;
+              const request = generation?.requests?.find(({ pathname }) => pathname === '/__clover/deployment-attestation.json');
+              requireCondition(request, `${project} staged attestation mutation lacks exact request`);
+              request.delivery.bodySha256 = rawSha256;
+              request.delivery.byteCount = rawBytes.byteLength;
+              request.client.clientSha256 = rawSha256;
+              request.client.clientByteCount = rawBytes.byteLength;
+              resealExactReadbackBody(stage, '/__clover/deployment-attestation.json', rawBytes.byteLength, rawSha256);
+            };
+            const resealProvenanceReadback = (stage, candidate) => {
+              const readback = stage.sameOriginAttestation.buildProvenanceReadback;
+              const rawUtf8 = JSON.stringify(readback);
+              const rawBytes = Buffer.from(rawUtf8, 'utf8');
+              const rawSha256 = sha256(rawBytes);
+              stage.browserPostAttestation.browserEvidenceHashes.rawProvenanceUtf8 = rawUtf8;
+              stage.browserPostAttestation.browserEvidenceHashes.rawProvenanceBytes = rawBytes.byteLength;
+              stage.browserPostAttestation.browserEvidenceHashes.rawProvenanceSha256 = rawSha256;
+              const generation = candidate.scans.at(-1)?.gateAttemptProof?.afterFence?.generation;
+              const request = generation?.requests?.find(({ pathname }) => pathname === '/api/provenance');
+              requireCondition(request, `${project} staged provenance mutation lacks exact request`);
+              request.delivery.bodySha256 = rawSha256;
+              request.delivery.byteCount = rawBytes.byteLength;
+              request.client.clientSha256 = rawSha256;
+              request.client.clientByteCount = rawBytes.byteLength;
+              request.client.serverSha256 = rawSha256;
+              request.client.serverByteCount = rawBytes.byteLength;
+              if (request.request) request.request.fixtureBodySha256 = rawSha256;
+              resealExactReadbackBody(stage, '/api/provenance', rawBytes.byteLength, rawSha256);
+            };
+            const mutations = [
+              ['protected-live transport substitution in CI evidence', (stage) => { stage.transportMode = 'protected-live-browser'; }],
+              ['unknown staged transport', (stage) => { stage.transportMode = 'browser-network'; }],
+              ['immutable-origin substitution', (stage) => { stage.immutableOrigin = 'https://clover-tree-command-center-abc.vercel.app'; }],
+              ['summary-only localhost-origin substitution', (stage) => { stage.immutableOrigin = 'http://127.0.0.1:65535'; }],
+              ['self-consistent staged/attestation localhost-origin substitution', (stage) => {
+                stage.immutableOrigin = 'http://127.0.0.1:65535';
+                stage.sameOriginAttestation.requestOrigin = stage.immutableOrigin;
+                stage.sameOriginAttestation.responseOrigin = stage.immutableOrigin;
+              }],
+              ['wrapper-supplied raw ACCEPT', (stage) => { stage.serverPreAttestation.rawTreeAction = 'ACCEPT SOURCE-GROUNDED TREE PREVIEW'; }],
+              ['missing raw pending contradiction', (stage) => { stage.serverPreAttestation.rawTreeContradictions = []; }],
+              ['second raw contradiction', (stage) => { stage.serverPreAttestation.rawTreeContradictions = [pending, 'second-contradiction']; }],
+              ['wrong pending reason', (stage) => { stage.serverPreAttestation.rawTreeAttestationDifferences = ['attestation-unavailable']; }],
+              ['raw otherwise-ready false', (stage) => { stage.serverPreAttestation.rawTreeOtherwiseReady = false; }],
+              ['cross-origin attestation', (stage) => { stage.sameOriginAttestation.responseOrigin = 'https://example.invalid'; }],
+              ['wrong attestation path', (stage) => { stage.sameOriginAttestation.responsePath = '/wrong-attestation.json'; }],
+              ['redirected attestation', (stage) => { stage.sameOriginAttestation.redirected = true; }],
+              ['non-200 attestation', (stage) => { stage.sameOriginAttestation.responseHttpStatus = 302; }],
+              ['inconsistent attestation', (stage) => { stage.sameOriginAttestation.comparisonConsistent = false; }],
+              ['wrong attestation source', (stage) => { stage.sameOriginAttestation.sourceBinding.commit = 'f'.repeat(40); }],
+              ['wrong attestation tree', (stage) => { stage.sameOriginAttestation.sourceBinding.tree = 'f'.repeat(40); }],
+              ['wrong attestation parent', (stage) => { stage.sameOriginAttestation.sourceBinding.parent = 'f'.repeat(40); }],
+              ['wrong build invocation', (stage) => { stage.sameOriginAttestation.sourceBinding.buildInvocationId = `clover-build:${'f'.repeat(64)}`; }],
+              ['wrong runtime key', (stage) => { stage.sameOriginAttestation.sourceBinding.runtimeDeploymentKey = `clover-${'f'.repeat(24)}`; }],
+              ['wrong attestation raw hash', (stage) => { stage.sameOriginAttestation.rawSha256 = 'f'.repeat(64); }],
+              ['wrong attestation canonical hash', (stage) => { stage.sameOriginAttestation.canonicalSha256 = 'f'.repeat(64); }],
+              ['malformed minimal canonical attestation', (stage, candidate) => {
+                const canonical = stage.sameOriginAttestation.canonicalAttestation;
+                stage.sameOriginAttestation.canonicalAttestation = {
+                  documentType: canonical.documentType, schemaVersion: canonical.schemaVersion, attestationHash: canonical.attestationHash
+                };
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation missing top-level field', (stage, candidate) => {
+                delete stage.sameOriginAttestation.canonicalAttestation.normalization;
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation extra top-level field', (stage, candidate) => {
+                stage.sameOriginAttestation.canonicalAttestation.unexpected = false;
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation missing source field', (stage, candidate) => {
+                delete stage.sameOriginAttestation.canonicalAttestation.source.stackABase;
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation extra source field', (stage, candidate) => {
+                stage.sameOriginAttestation.canonicalAttestation.source.unexpected = false;
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation missing output field', (stage, candidate) => {
+                delete stage.sameOriginAttestation.canonicalAttestation.output.symlinkCount;
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation extra output field', (stage, candidate) => {
+                stage.sameOriginAttestation.canonicalAttestation.output.unexpected = false;
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['canonical attestation/source-summary mismatch', (stage, candidate) => {
+                stage.sameOriginAttestation.canonicalAttestation.source.tree = 'f'.repeat(40);
+                resealCanonicalAttestation(stage, candidate);
+              }],
+              ['Build Provenance missing field', (stage, candidate) => {
+                delete stage.sameOriginAttestation.buildProvenanceReadback.provenance.buildProjectSettingsSha256;
+                resealProvenanceReadback(stage, candidate);
+              }],
+              ['Build Provenance extra field', (stage, candidate) => {
+                stage.sameOriginAttestation.buildProvenanceReadback.provenance.unexpected = false;
+                resealProvenanceReadback(stage, candidate);
+              }],
+              ['Build Provenance private-data widening', (stage, candidate) => {
+                stage.sameOriginAttestation.buildProvenanceReadback.provenance.privateDataAccessed = true;
+                resealProvenanceReadback(stage, candidate);
+              }],
+              ['Build Provenance readback authority missing field', (stage, candidate) => {
+                delete stage.sameOriginAttestation.buildProvenanceReadback.authority.purchaseAuthorized;
+                resealProvenanceReadback(stage, candidate);
+              }],
+              ['Build Provenance readback authority widening', (stage, candidate) => {
+                stage.sameOriginAttestation.buildProvenanceReadback.authority.productionAuthorized = true;
+                resealProvenanceReadback(stage, candidate);
+              }],
+              ['canonical Tree/summary mismatch', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.candidateSha = 'f'.repeat(40);
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['coherently resealed canonical Tree baseline-index substitution', (stage, candidate) => {
+                const substitutedIndexHash = 'f'.repeat(64);
+                stage.serverPreAttestation.canonicalTree.baseline.indexHash = substitutedIndexHash;
+                stage.serverPreAttestation.canonicalTree.baseline.immutableRecords.index.indexHash = substitutedIndexHash;
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['coherently resealed canonical Tree immutable-record substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.baseline.immutableRecords.branches[0].recordId = 'branch:substituted';
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['self-consistent canonical Tree/GitHub wrapper substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.candidateSha = 'f'.repeat(40);
+                stage.serverPreAttestation.github.candidateSha = 'f'.repeat(40);
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['self-consistent canonical Tree/deployment wrapper substitution', (stage, candidate) => {
+                const substitutedSource = 'f'.repeat(40);
+                stage.serverPreAttestation.canonicalTree.observations.deploymentSelf.gitCommitSha = substitutedSource;
+                stage.serverPreAttestation.canonicalTree.reconciled.currentActionCard.bindings.deployment.gitCommitSha = substitutedSource;
+                stage.serverPreAttestation.deploymentSelf.source = substitutedSource;
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['self-consistent canonical Tree Action Card substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.reconciled.currentActionCard.action = 'ACCEPT SOURCE-GROUNDED TREE PREVIEW';
+                stage.serverPreAttestation.rawTreeAction = 'ACCEPT SOURCE-GROUNDED TREE PREVIEW';
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['self-consistent canonical Tree authority widening', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.authority.productionAuthorized = true;
+                stage.serverPreAttestation.authority.productionAuthorized = true;
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['wrong raw Tree canonical hash', (stage) => { stage.serverPreAttestation.canonicalTreeSha256 = 'f'.repeat(64); }],
+              ['wrong output manifest root', (stage) => { stage.sameOriginAttestation.outputManifestRootSha256 = 'f'.repeat(64); }],
+              ['browser HOLD substitution', (stage) => { stage.browserPostAttestation.action = 'HOLD'; }],
+              ['browser contradiction', (stage) => { stage.browserPostAttestation.contradictions = ['second-contradiction']; }],
+              ['browser readiness substitution', (stage) => { stage.browserPostAttestation.readiness = 'hold'; }],
+              ['browser evidence digest substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.finalGenerationSha256 = 'f'.repeat(64); }],
+              ['missing exact-readback body', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies.pop(); }],
+              ['reordered exact-readback bodies', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies.reverse(); }],
+              ['exact-readback body extra field', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].unexpected = false; }],
+              ['exact-readback path substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].path = '/api/provenance'; }],
+              ['exact-readback transport substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].transport = 'protected-live-browser'; }],
+              ['exact-readback Playwright hash substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].playwrightSha256 = 'f'.repeat(64); }],
+              ['exact-readback client hash substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].clientSha256 = 'f'.repeat(64); }],
+              ['exact-readback Playwright byte-count substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].playwrightBytes += 1; }],
+              ['exact-readback client byte-count substitution', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].clientBytes += 1; }],
+              ['exact-readback equality denial', (stage) => { stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].exactEquality = false; }],
+              ['self-consistent exact-readback hash substitution', (stage) => {
+                stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].playwrightSha256 = 'f'.repeat(64);
+                stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].clientSha256 = 'f'.repeat(64);
+              }],
+              ['self-consistent exact-readback byte-count substitution', (stage) => {
+                stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].playwrightBytes += 1;
+                stage.browserPostAttestation.browserEvidenceHashes.exactReadbackBodies[0].clientBytes += 1;
+              }],
+              ['authority widening', (stage) => { stage.browserPostAttestation.authority.productionAuthorized = true; }]
+            ];
+            for (const [label, mutate] of mutations) reject(label, mutate);
+            const missingComparisonBindings = [
+              ['stack-a-base', 'stackABase', '0'.repeat(40)],
+              ['changed-path-count', 'changedPathCount', 73],
+              ['path-list', 'pathListSha256', '0'.repeat(64)],
+              ['source-manifest', 'sourceManifestSha256', '0'.repeat(64)],
+              ['package-lock', 'packageLockSha256', '0'.repeat(64)],
+              ['tree-program-index-id', 'treeProgramIndexId', 'tree-program:index:substituted'],
+              ['tree-program-index-hash', 'treeProgramIndexHash', '0'.repeat(64)],
+              ['node-version', 'nodeVersion', 'v0.0.0'],
+              ['next-version', 'nextVersion', '0.0.0'],
+              ['build-mode', 'buildMode', 'vercel-prebuilt-production']
+            ];
+            for (const [label, buildKey, replacement] of missingComparisonBindings) {
+              reject(`coherently resealed ${label} comparison substitution`, (stage, candidate) => {
+                const attestation = stage.sameOriginAttestation;
+                attestation.buildProvenanceReadback.provenance[buildKey] = replacement;
+                resealProvenanceReadback(stage, candidate);
+                const reproduced = reproduceAttestationComparison(
+                  attestation.buildProvenanceReadback.provenance,
+                  attestation.canonicalAttestation
+                );
+                requireCondition(reproduced.status === 'inconsistent' && reproduced.consistent === false
+                  && canonicalJson(reproduced.differences) === canonicalJson([label]),
+                `${project} staged comparison mutation did not reproduce ${label}`);
+              });
+            }
+          };
+
           requireCondition(fs.existsSync(evidenceRoot) && fs.lstatSync(evidenceRoot).isDirectory()
             && !fs.lstatSync(evidenceRoot).isSymbolicLink() && (fs.lstatSync(evidenceRoot).mode & 0o777) === 0o755,
           'accessibility evidence directory missing or unsafe');
@@ -4075,8 +4964,8 @@ jobs:
             const { bytes, value: document } = readCanonicalJson(target, `${name} accessibility evidence`);
             const project = name.replace(/\.json$/u, '');
             const expected = exactProjects[project];
-            exactKeys(document, ['actualScanCount', 'adjudicationClasses', 'adjudications', 'axeVersion', 'canonicalSha256', 'exactStateKeys', 'exactViews', 'expectedScanCount', 'expectedScreenshots', 'exemptions', 'keyboard', 'meaningfulContrast', 'overflow', 'priorClosure', 'privacy', 'project', 'ratios', 'runtime', 'scanAttemptClosure', 'scans', 'schemaVersion', 'semantic', 'source', 'stateKeys', 'summary', 'unresolved', 'viewport'], `${project} accessibility evidence`);
-            requireCondition(document.schemaVersion === 'clover-tree-accessibility-evidence-v1', `${project} schema mismatch`);
+            exactKeys(document, ['actualScanCount', 'adjudicationClasses', 'adjudications', 'axeVersion', 'canonicalSha256', 'exactStateKeys', 'exactViews', 'expectedScanCount', 'expectedScreenshots', 'exemptions', 'keyboard', 'meaningfulContrast', 'overflow', 'priorClosure', 'privacy', 'project', 'ratios', 'runtime', 'scanAttemptClosure', 'scans', 'schemaVersion', 'semantic', 'source', 'stagedAcceptance', 'stateKeys', 'summary', 'unresolved', 'viewport'], `${project} accessibility evidence`);
+            requireCondition(document.schemaVersion === 'clover-tree-accessibility-evidence-v2', `${project} schema mismatch`);
             requireCondition(document.source?.repository === 'chrisdortch/first' && document.source?.head === process.env.CLOVER_TREE_HEAD, `${project} source mismatch`);
             requireCondition(document.project === project, `${project} project mismatch`);
             exactJson(document.viewport, { width: expected.width, height: expected.height }, `${project} viewport`);
@@ -4129,6 +5018,8 @@ jobs:
                 reconstructedAdjudications.push({ view: scan.view, state: scan.state, ...entry });
               });
             }
+            validateStagedAcceptance(document, project);
+            assertStagedAcceptanceMutationResistance(document, project);
             exactJson(document.adjudications, reconstructedAdjudications, `${project} aggregate adjudications`);
             const reconstructedClasses = Object.fromEntries([...new Set(reconstructedAdjudications.map(({ classification }) => classification))].sort().map((classification) => [classification, reconstructedAdjudications.filter((entry) => entry.classification === classification).length]));
             exactJson(document.adjudicationClasses, reconstructedClasses, `${project} adjudication classes`);
@@ -4293,7 +5184,7 @@ jobs:
               ['source-closure-baseline', (source) => { source.sourceClosureBaseline.parent = '0'.repeat(40); }],
               ['source-closure-commit', (source) => { source.sourceClosureCommit.commit = '0'.repeat(40); }],
               ['current-parent', (source) => { source.currentCandidate.immediateParent = '0'.repeat(40); }],
-              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 16; }],
+              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 18; }],
               ['correction-ids', (source) => { source.correctionChain.commitIds = ['0'.repeat(40)]; }],
               ['source-closure-cumulative', (source) => {
                 source.sourceClosureDelta.currentCumulative.headCommit = '0'.repeat(40);
@@ -4757,6 +5648,8 @@ jobs:
               project, canonicalSha256: document.canonicalSha256, scans: document.actualScanCount,
               violations: document.summary.accessibilityViolations, unresolved: document.summary.unresolved,
               minimumMeaningfulContrastRatio: document.summary.minimumMeaningfulContrastRatio,
+              stagedAcceptanceCanonicalSha256: document.stagedAcceptance.canonicalSha256,
+              stagedAcceptanceTransition: document.stagedAcceptance.transition,
               scanAttemptClosure: document.scanAttemptClosure,
               gate04MatchedOccurrences: document.priorClosure.matchedOccurrences,
               gate04Substitutions: document.priorClosure.substitutions,
@@ -4787,6 +5680,14 @@ jobs:
               selectorSha256: gate04.selectorSha256,
               status: 'exact-prior-occurrences-closed'
             },
+            stagedAcceptance: {
+              schemaVersion: 'clover-tree-staged-acceptance-evidence-set-v1',
+              count: documents.length,
+              transition: 'EXPECTED_PRE_ATTESTATION_HOLD_TO_SAME_ORIGIN_VERIFIED_TO_BROWSER_ACCEPT',
+              canonicalSha256: sha256(`${canonicalJson(documents.map(({ project, document }) => ({
+                project, canonicalSha256: document.stagedAcceptance.canonicalSha256
+              })))}\n`)
+            },
             localSourceClosure: localSourceClosureSummary,
             syntheticPrivacyFixtures: syntheticPrivacyFixtureProof.records,
             publicSanitized: true,
@@ -4802,7 +5703,11 @@ jobs:
           const manifestSources = [
             ...documents.map(({ project, target, document }) => ({
               artifactType: 'accessibility-evidence', label: safeRelative(target), target,
-              binding: { project, canonicalSha256: document.canonicalSha256 }
+              binding: {
+                project, canonicalSha256: document.canonicalSha256,
+                stagedAcceptanceCanonicalSha256: document.stagedAcceptance.canonicalSha256,
+                stagedAcceptanceTransition: document.stagedAcceptance.transition
+              }
             })),
             ...[...scanAttemptSidecars.entries()].map(([project, { target, sidecar }]) => ({
               artifactType: 'gate-scan-attempt-closure', label: safeRelative(target), target,
@@ -4822,7 +5727,10 @@ jobs:
                 sourceClosureStatus: 'LOCAL_SOURCE_VALIDATED_PROVIDER_ACCEPTANCE_PENDING'
               }
             })),
-            { artifactType: 'browser-evidence-summary', label: 'runner-temp/clover-tree-browser-evidence.json', target: summaryPath, binding: { localSourceClosureCanonicalSha256: summary.localSourceClosure.canonicalSha256 } },
+            { artifactType: 'browser-evidence-summary', label: 'runner-temp/clover-tree-browser-evidence.json', target: summaryPath, binding: {
+              localSourceClosureCanonicalSha256: summary.localSourceClosure.canonicalSha256,
+              stagedAcceptanceCanonicalSha256: summary.stagedAcceptance.canonicalSha256
+            } },
             { artifactType: 'browser-source-provenance', label: 'runner-temp/clover-tree-browser-source-provenance.json', target: provenancePath, binding: { head: process.env.CLOVER_TREE_HEAD } }
           ];
           const manifestEntries = manifestSources.sort((left, right) => left.label < right.label ? -1 : left.label > right.label ? 1 : 0).map(({ artifactType, label, target, binding }) => {
@@ -4836,6 +5744,7 @@ jobs:
             schemaVersion: 'clover-tree-browser-artifact-manifest-v2',
             head: process.env.CLOVER_TREE_HEAD,
             localSourceClosure: summary.localSourceClosure,
+            stagedAcceptance: summary.stagedAcceptance,
             providerAcceptance: { artifactType: 'provider-acceptance-receipt-set', status: 'not-present-predeployment', count: 0 },
             entries: manifestEntries
           };

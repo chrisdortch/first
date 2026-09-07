@@ -2242,16 +2242,50 @@ test("prebuilt runtime identity accepts only the exact source-bound preview cont
   });
 });
 
-test("current Action Card is HOLD until GitHub, deployment self and attestation all agree", async () => {
+test("current Action Card formalizes server HOLD then verified-attestation browser ACCEPT", async (t) => {
+  const pendingAttestationDifference = "same-origin-attestation-browser-readback-required";
   const fixture = githubFetch();
   const github = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
   const deployment = deploymentObservation();
+  assert.deepEqual(NO_ATTESTATION_COMPARISON, {
+    status: "unavailable",
+    consistent: false,
+    differences: [pendingAttestationDifference],
+    attestationHash: null,
+    outputManifestRootSha256: null
+  });
   const unavailable = computeTruthReadiness({ github, deployment, attestation: NO_ATTESTATION_COMPARISON }, build);
-  assert.equal(unavailable.buildPayloadAttestationStatus, "unavailable");
-  assert.equal(reconcileTreeTruth({ baseline, build, github, deployment, attestation: NO_ATTESTATION_COMPARISON }).currentActionCard.action, "HOLD");
+  assert.deepEqual(unavailable, {
+    applicationSourceValidated: true,
+    treeProgramBaselineLoaded: true,
+    treePreviewRuntimeObserved: true,
+    runtimeDeploymentIdentityStatus: "verified",
+    liveGithubOverlayStatus: "current",
+    buildPayloadAttestationStatus: "unavailable",
+    ownerConsoleGroundingRequired: true,
+    privateOwnerAuthenticationConfigured: false,
+    durablePrivateStorageConfigured: false,
+    realParticipantRuntimeConfigured: false,
+    realProviderExecutionConfigured: false,
+    productionAuthorized: false,
+    finalDeploymentInputVerificationStatus: "external-provider-receipt-required"
+  });
+  const serverPreAttestation = reconcileTreeTruth({ baseline, build, github, deployment, attestation: NO_ATTESTATION_COMPARISON });
+  assert.deepEqual(serverPreAttestation.contradictions.value, [pendingAttestationDifference]);
+  assert.equal(serverPreAttestation.currentActionCard.action, "HOLD");
+  assert.deepEqual(serverPreAttestation.currentActionCard.authority, {
+    mergeAuthorized: false,
+    productionAuthorized: false,
+    privateDataAuthorized: false,
+    externalMessagingAuthorized: false,
+    paymentAuthorized: false,
+    purchaseAuthorized: false
+  });
 
   const comparison = await compareDeploymentAttestation(build, sealedAttestation());
   assert.equal(comparison.status, "verified");
+  assert.equal(comparison.consistent, true);
+  assert.deepEqual(comparison.differences, []);
   const ready = computeTruthReadiness({ github, deployment, attestation: comparison }, build);
   assert.deepEqual(ready, {
     applicationSourceValidated: true,
@@ -2268,9 +2302,10 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
     productionAuthorized: false,
     finalDeploymentInputVerificationStatus: "external-provider-receipt-required"
   });
-  const action = reconcileTreeTruth({ baseline, build, github, deployment, attestation: comparison }).currentActionCard;
-  assert.equal(action.action, "ACCEPT SOURCE-GROUNDED TREE PREVIEW");
-  assert.deepEqual(action.authority, { mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false });
+  const browserPostAttestation = reconcileTreeTruth({ baseline, build, github, deployment, attestation: comparison });
+  assert.deepEqual(browserPostAttestation.contradictions.value, []);
+  assert.equal(browserPostAttestation.currentActionCard.action, "ACCEPT SOURCE-GROUNDED TREE PREVIEW");
+  assert.deepEqual(browserPostAttestation.currentActionCard.authority, { mergeAuthorized: false, productionAuthorized: false, privateDataAuthorized: false, externalMessagingAuthorized: false, paymentAuthorized: false, purchaseAuthorized: false });
   const providerRuntimeDeployment = deploymentObservation(previewEnvironment(), runtimeRequestUrl, providerDeploymentId);
   const providerRuntimeReady = computeTruthReadiness({ github, deployment: providerRuntimeDeployment, attestation: comparison }, build);
   assert.equal(providerRuntimeReady.runtimeDeploymentIdentityStatus, "verified");
@@ -2284,6 +2319,82 @@ test("current Action Card is HOLD until GitHub, deployment self and attestation 
   const rejected = await compareDeploymentAttestation(build, substituted);
   assert.equal(rejected.status, "inconsistent");
   assert.equal(rejected.differences.includes("build-invocation"), true);
+
+  await t.test("verified comparison removes only the pending attestation contradiction", () => {
+    const contradictoryDeployment = deploymentObservation(previewEnvironment({ VERCEL_PROJECT_ID: "prj_substituted" }));
+    const rawBlocked = reconcileTreeTruth({ baseline, build, github, deployment: contradictoryDeployment, attestation: NO_ATTESTATION_COMPARISON });
+    assert.equal(rawBlocked.contradictions.value.includes(pendingAttestationDifference), true);
+    assert.equal(rawBlocked.contradictions.value.includes("deployment-project-identity"), true);
+    assert.equal(rawBlocked.currentActionCard.action, "HOLD");
+    const verifiedBlocked = reconcileTreeTruth({ baseline, build, github, deployment: contradictoryDeployment, attestation: comparison });
+    assert.deepEqual(
+      verifiedBlocked.contradictions.value,
+      rawBlocked.contradictions.value.filter((difference) => difference !== pendingAttestationDifference)
+    );
+    assert.equal(verifiedBlocked.contradictions.value.includes("deployment-project-identity"), true);
+    assert.equal(verifiedBlocked.currentActionCard.action, "HOLD");
+  });
+
+  await t.test("missing malformed substituted and source-inconsistent attestations remain HOLD", async () => {
+    const exact = sealedAttestation();
+    const wrongSourceCommit = hex40("f");
+    const wrongHash = sealedAttestation();
+    wrongHash.attestationHash = hex64("f");
+    const cases = [
+      ["missing", null],
+      ["malformed", {}],
+      ["external action substitution", { ...exact, currentActionCard: { action: "ACCEPT SOURCE-GROUNDED TREE PREVIEW" } }],
+      ["wrong source", sealedAttestation({ source: { ...exact.source, commit: wrongSourceCommit, runtimeDeploymentKey: `clover-${wrongSourceCommit.slice(0, 24)}` } })],
+      ["wrong tree", sealedAttestation({ source: { ...exact.source, tree: hex40("e") } })],
+      ["wrong parent", sealedAttestation({ source: { ...exact.source, parent: hex40("d") } })],
+      ["wrong manifest", sealedAttestation({ source: { ...exact.source, sourceManifestSha256: hex64("c") } })],
+      ["wrong build invocation", sealedAttestation({ buildInvocationId: `clover-build:${hex64("b")}` })],
+      ["wrong runtime key", sealedAttestation({ source: { ...exact.source, runtimeDeploymentKey: `clover-${hex40("e").slice(0, 24)}` } })],
+      ["wrong attestation hash", wrongHash]
+    ];
+    for (const [label, candidate] of cases) {
+      const candidateComparison = await compareDeploymentAttestation(build, candidate);
+      assert.notEqual(candidateComparison.status, "verified", label);
+      assert.equal(candidateComparison.consistent, false, label);
+      const candidateResult = reconcileTreeTruth({ baseline, build, github, deployment, attestation: candidateComparison });
+      assert.equal(candidateResult.currentActionCard.action, "HOLD", label);
+      assert.notDeepEqual(candidateResult.contradictions.value, [], label);
+    }
+  });
+
+  await t.test("stale GitHub and deployment-self contradictions remain HOLD with valid attestation", async () => {
+    const staleFixture = githubFetch({
+      mutate: (value, endpoint) => endpoint.endsWith("/pulls/35")
+        ? { ...value, head: { ...value.head, sha: hex40("e") } }
+        : value
+    });
+    const staleGithub = await observeGitHubTruth({ candidateCommit, fetchImpl: staleFixture.implementation, retries: 0 });
+    const staleResult = reconcileTreeTruth({ baseline, build, github: staleGithub, deployment, attestation: comparison });
+    assert.equal(staleResult.contradictions.value.includes("stack-b-pull-request"), true);
+    assert.equal(staleResult.currentActionCard.action, "HOLD");
+    const contradictoryDeployment = deploymentObservation(previewEnvironment({ VERCEL_GIT_COMMIT_SHA: hex40("e") }));
+    const deploymentResult = reconcileTreeTruth({ baseline, build, github, deployment: contradictoryDeployment, attestation: comparison });
+    assert.equal(deploymentResult.contradictions.value.includes("deployment-source-identity"), true);
+    assert.equal(deploymentResult.currentActionCard.action, "HOLD");
+  });
+
+  await t.test("an external provider action cannot substitute for application reconciliation", () => {
+    const result = reconcileTreeTruth({
+      baseline,
+      build,
+      github,
+      deployment,
+      attestation: NO_ATTESTATION_COMPARISON,
+      providerAction: "ACCEPT SOURCE-GROUNDED TREE PREVIEW",
+      currentActionCard: { action: "ACCEPT SOURCE-GROUNDED TREE PREVIEW" }
+    });
+    assert.deepEqual(result.contradictions.value, [pendingAttestationDifference]);
+    assert.equal(result.currentActionCard.action, "HOLD");
+  });
+
+  assert.equal(build.privateDataAccessed, false);
+  assert.equal(build.consequentialAuthorityGranted, false);
+  assert.equal(sealedAttestation().secretsIncluded, false);
 });
 
 test("live reconciliation binds merged Stack A and integrated Stack B provenance", async () => {
@@ -2999,7 +3110,10 @@ function providerOpaqueInventory(projection, identities, { boundedLimit = 100, e
   };
 }
 
-function providerDeploymentFixture(outputRoot, sealed) {
+function providerDeploymentFixture(outputRoot, sealed, { beforeDeploymentCount = 9 } = {}) {
+  if (!Number.isSafeInteger(beforeDeploymentCount) || beforeDeploymentCount < 0 || beforeDeploymentCount > 100) {
+    throw new Error("provider deployment fixture count rejected");
+  }
   const deploymentId = "dpl_ExactPreview123";
   const deploymentResponse = {
     id: deploymentId,
@@ -3115,17 +3229,12 @@ function providerDeploymentFixture(outputRoot, sealed) {
     ...effectProjectAfterResponse,
     providerProjectUpdatedAt: effectProjectAfterResponse.providerProjectUpdatedAt + 1
   };
-  const beforeDeployments = providerDeploymentInventory([
-    { createdAt: 1_787_944_100_001, id: "dpl_BaselinePreview001", state: "READY", target: null },
-    { createdAt: 1_787_944_100_002, id: "dpl_BaselinePreview002", state: "READY", target: null },
-    { createdAt: 1_787_944_100_003, id: "dpl_BaselinePreview003", state: "READY", target: null },
-    { createdAt: 1_787_944_100_004, id: "dpl_BaselinePreview004", state: "READY", target: null },
-    { createdAt: 1_787_944_100_005, id: "dpl_BaselinePreview005", state: "READY", target: null },
-    { createdAt: 1_787_944_100_006, id: "dpl_BaselinePreview006", state: "READY", target: null },
-    { createdAt: 1_787_944_100_007, id: "dpl_BaselinePreview007", state: "READY", target: null },
-    { createdAt: 1_787_944_100_008, id: "dpl_BaselinePreview008", state: "READY", target: null },
-    { createdAt: 1_787_944_100_009, id: "dpl_ProductionBaseline009", state: "READY", target: "production" }
-  ]);
+  const beforeDeployments = providerDeploymentInventory(Array.from({ length: beforeDeploymentCount }, (_, index) => ({
+    createdAt: 1_787_944_100_001 + index,
+    id: `dpl_Baseline${String(index + 1).padStart(3, "0")}`,
+    state: "READY",
+    target: index === beforeDeploymentCount - 1 ? "production" : null
+  })));
   const afterDeployments = providerDeploymentInventory([
     ...beforeDeployments.entries,
     { createdAt: deploymentResponse.createdAt, id: deploymentId, state: "READY", target: null }
@@ -4054,6 +4163,29 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     assert.equal(receipt.secretsIncluded, false);
     assert.equal(receipt.consequentialAuthorityGranted, false);
     assert.match(receipt.receiptSelfHash, /^[0-9a-f]{64}$/u);
+    for (const [label, beforeDeploymentCount] of [
+      ["empty inventory 0 -> 1", 0],
+      ["another reusable inventory 3 -> 4", 3],
+      ["historical inventory 9 -> 10", 9],
+      ["current campaign inventory 11 -> 12", 11],
+      ["bounded maximum inventory 99 -> 100", 99]
+    ]) {
+      const transitionProvider = providerDeploymentFixture(output, verifiedEvidence, { beforeDeploymentCount });
+      const transitionReceipt = createProviderDeploymentReceipt({
+        providerDeployment: transitionProvider,
+        verifiedEvidence,
+        now: providerReceiptNow
+      });
+      assert.equal(transitionReceipt.deploymentCountBefore, beforeDeploymentCount, label);
+      assert.equal(transitionReceipt.deploymentCountAfter, beforeDeploymentCount + 1, label);
+      assert.equal(transitionReceipt.deploymentCountPostRevocation, beforeDeploymentCount + 1, label);
+      assert.equal(transitionReceipt.newDeploymentCount, 1, label);
+    }
+    assert.throws(() => createProviderDeploymentReceipt({
+      providerDeployment: providerDeploymentFixture(output, verifiedEvidence, { beforeDeploymentCount: 100 }),
+      verifiedEvidence,
+      now: providerReceiptNow
+    }), /CLOVER_PROVIDER_EFFECT_AFTER_DEPLOYMENTS_RESPONSE_REJECTED/u, "a full bounded inventory cannot add an unobserved 101st entry");
     const syntheticBypassSecret = ["synthetic", "provider", "bypass", "value"].join("-");
     assert.equal(canonicalJson(receipt).includes(syntheticBypassSecret), false);
     assert.equal(canonicalJson(receipt).includes(sha256(syntheticBypassSecret)), false);
@@ -4064,11 +4196,12 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     exposedRetryCount.protection.create.request.transport.actualWireAttemptCount = 3;
     assert.equal(createProviderDeploymentReceipt({ providerDeployment: exposedRetryCount, verifiedEvidence, now: providerReceiptNow }).createActualWireAttemptCount, 3);
 
-    const reject = (mutate, expected, message) => {
-      const candidate = structuredClone(provider);
+    const rejectFrom = (source, mutate, expected, message) => {
+      const candidate = structuredClone(source);
       mutate(candidate);
       assert.throws(() => createProviderDeploymentReceipt({ providerDeployment: candidate, verifiedEvidence, now: providerReceiptNow }), expected, message);
     };
+    const reject = (mutate, expected, message) => rejectFrom(provider, mutate, expected, message);
     const providerOutput = (candidate) => candidate.fileTree.response[0].children.find(({ name }) => name === ".vercel").children.find(({ name }) => name === "output");
     const findProviderNode = (candidate, outputPath) => outputPath.split("/").reduce((directory, segment) => directory.children.find(({ name }) => name === segment), providerOutput(candidate));
     const findProviderWorkspaceNode = (candidate, workspacePath) => workspacePath.split("/").reduce(
@@ -4119,6 +4252,111 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
         { requestStartedAt: observation.request.requestStartedAt }
       );
     };
+    const replaceDeploymentInventory = (candidate, phase, entries) => {
+      candidate.providerEffects[phase].deployments.response = providerDeploymentInventory(entries);
+      rebindProviderEffect(candidate, phase, "deployments");
+    };
+    const replaceAfterAndPostRevocationInventories = (candidate, entries) => {
+      replaceDeploymentInventory(candidate, "afterDeployment", entries);
+      replaceDeploymentInventory(candidate, "postRevocation", entries);
+    };
+    const currentProvider = providerDeploymentFixture(output, verifiedEvidence, { beforeDeploymentCount: 11 });
+    const addedEntry = (candidate) => candidate.providerEffects.afterDeployment.deployments.response.entries.find(
+      ({ id }) => id === candidate.deployment.response.id
+    );
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = candidate.providerEffects.beforeDeployment.deployments.response.entries;
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "11 -> 11 is not a deployment transition");
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = [
+        ...candidate.providerEffects.afterDeployment.deployments.response.entries,
+        { createdAt: 1_787_944_799_001, id: "dpl_AddedExtra001", state: "READY", target: null }
+      ];
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "11 -> 13 is not a single deployment transition");
+    rejectFrom(currentProvider, (candidate) => {
+      const beforeEntries = candidate.providerEffects.beforeDeployment.deployments.response.entries;
+      const entries = [
+        ...beforeEntries.slice(1),
+        addedEntry(candidate),
+        { createdAt: 1_787_944_799_002, id: "dpl_AddedExtra002", state: "READY", target: null }
+      ];
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "11 -> 12 with two added IDs is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      const beforeEntries = candidate.providerEffects.beforeDeployment.deployments.response.entries;
+      const entries = [
+        ...beforeEntries.filter(({ target }) => target !== "production"),
+        addedEntry(candidate),
+        { createdAt: 1_787_944_799_003, id: "dpl_AddedExtra003", state: "READY", target: null }
+      ];
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_PRODUCTION_REJECTED/u, "one deletion plus two additions is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      const exactNewEntry = addedEntry(candidate);
+      const beforeEntries = candidate.providerEffects.beforeDeployment.deployments.response.entries;
+      const substitutedBefore = [exactNewEntry, ...beforeEntries.slice(1)];
+      replaceDeploymentInventory(candidate, "beforeDeployment", substitutedBefore);
+      replaceAfterAndPostRevocationInventories(candidate, [
+        ...substitutedBefore,
+        { createdAt: 1_787_944_799_004, id: "dpl_AddedExtra004", state: "READY", target: null }
+      ]);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "the new deployment ID cannot preexist");
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = candidate.providerEffects.afterDeployment.deployments.response.entries;
+      replaceAfterAndPostRevocationInventories(candidate, [...entries, structuredClone(entries[0])]);
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_DEPLOYMENTS_RESPONSE_REJECTED/u, "duplicate deployment IDs fail canonical inventory validation");
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = candidate.providerEffects.afterDeployment.deployments.response.entries.map((entry, index) =>
+        index === 0 ? { ...entry, state: "ERROR" } : entry
+      );
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "a preexisting deployment cannot be modified");
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = candidate.providerEffects.afterDeployment.deployments.response.entries.map((entry) =>
+        entry.id === candidate.deployment.response.id ? { ...entry, state: "ERROR" } : entry
+      );
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "the new deployment state must match its exact readback");
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = candidate.providerEffects.afterDeployment.deployments.response.entries.map((entry) =>
+        entry.id === candidate.deployment.response.id ? { ...entry, target: "production" } : entry
+      );
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_DEPLOYMENTS_REJECTED/u, "a production-target new entry is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      const entries = candidate.providerEffects.afterDeployment.deployments.response.entries.map((entry) =>
+        entry.target === "production" ? { ...entry, state: "ERROR" } : entry
+      );
+      replaceAfterAndPostRevocationInventories(candidate, entries);
+    }, /CLOVER_PROVIDER_EFFECT_PRODUCTION_REJECTED/u, "the production subset must remain byte-identical");
+    rejectFrom(currentProvider, (candidate) => {
+      const postEntries = [
+        ...candidate.providerEffects.postRevocation.deployments.response.entries,
+        { createdAt: 1_787_944_803_300, id: "dpl_PostRevocationDrift", state: "READY", target: null }
+      ];
+      replaceDeploymentInventory(candidate, "postRevocation", postEntries);
+    }, /CLOVER_PROVIDER_POST_REVOCATION_DEPLOYMENTS_CHANGED/u, "post-revocation inventory drift is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      delete candidate.providerEffects.afterDeployment.deployments.response.paginationExhausted;
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_DEPLOYMENTS_RESPONSE_REJECTED/u, "missing pagination closure is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      candidate.providerEffects.afterDeployment.deployments.response.paginationExhausted = false;
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_DEPLOYMENTS_RESPONSE_REJECTED/u, "unexhausted pagination is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      candidate.providerEffects.afterDeployment.deployments.response.count -= 1;
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_DEPLOYMENTS_RESPONSE_REJECTED/u, "inventory count disagreement is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      candidate.providerEffects.afterDeployment.deployments.response.inventorySha256 = hex64("f");
+      rebindProviderEffect(candidate, "afterDeployment", "deployments");
+    }, /CLOVER_PROVIDER_EFFECT_AFTER_DEPLOYMENTS_RESPONSE_REJECTED/u, "inventory hash disagreement is rejected");
+    rejectFrom(currentProvider, (candidate) => {
+      candidate.deploymentInvocation.returnedDeploymentId = "dpl_Substituted";
+    }, /CLOVER_PROVIDER_DEPLOYMENT_INVOCATION_REJECTED/u, "the invocation-returned deployment ID must match");
     const rebindBypassReadback = (readback) => {
       readback.request = rebindRequestEvidence(readback.request, readback.response);
     };
