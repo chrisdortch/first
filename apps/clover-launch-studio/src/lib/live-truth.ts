@@ -46,6 +46,7 @@ export const EXPECTED_VERCEL_PROJECT_ID = "prj_1lfjYV2FehNxEyW9hGqNwAe7a8xZ";
 export const STACK_A_BRANCH = "feature/clover-evidence-scope-firewall-launch-pin-v0.1-20260826";
 export const STACK_B_BRANCH = "feature/clover-tree-command-center-launch-studio-v0.1-20260826";
 export const MAX_GITHUB_RESPONSE_BYTES = 256 * 1024;
+export const MAX_GITHUB_WORKFLOW_RESPONSE_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_GITHUB_TIMEOUT_MS = 4_000;
 export const DEFAULT_GITHUB_RETRIES = 1;
 export const GITHUB_REVALIDATE_SECONDS = 20 * 60;
@@ -1269,7 +1270,7 @@ function isExactGithubJsonContentType(value: string | null): boolean {
   return parts.length === 1 || parts.length === 2 && parts[1] === "charset=utf-8";
 }
 
-async function readBoundedGithubResponse(response: Response, signal: AbortSignal): Promise<Uint8Array> {
+async function readBoundedGithubResponse(response: Response, signal: AbortSignal, maxResponseBytes: number): Promise<Uint8Array> {
   const body = response.body;
   if (body === null) return new Uint8Array();
   const reader = body.getReader();
@@ -1290,7 +1291,7 @@ async function readBoundedGithubResponse(response: Response, signal: AbortSignal
       if (signal.aborted) throw new Error("GITHUB_REQUEST_ABORTED");
       if (done) break;
       byteLength += value.byteLength;
-      if (byteLength > MAX_GITHUB_RESPONSE_BYTES) {
+      if (byteLength > maxResponseBytes) {
         cancel();
         throw new Error("GITHUB_RESPONSE_TOO_LARGE");
       }
@@ -1326,12 +1327,14 @@ async function readFixedGithubJson(endpoint: string, {
   fetchImpl,
   timeoutMs,
   retries,
-  boundary
+  boundary,
+  maxResponseBytes = MAX_GITHUB_RESPONSE_BYTES
 }: {
   fetchImpl: FixedFetch;
   timeoutMs: number;
   retries: number;
   boundary: GithubRequestBoundary;
+  maxResponseBytes?: number;
 }): Promise<{ value: unknown; observedAt: string | null; link: string | null }> {
   parseGithubEndpoint(endpoint);
   let lastFailure = "GITHUB_UNAVAILABLE";
@@ -1368,9 +1371,9 @@ async function readFixedGithubJson(endpoint: string, {
       const declaredLength = response.headers.get("content-length");
       if (declaredLength !== null) {
         const contentLength = Number(declaredLength);
-        if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > MAX_GITHUB_RESPONSE_BYTES) rejectGithubResponse(response, "GITHUB_RESPONSE_TOO_LARGE");
+        if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > maxResponseBytes) rejectGithubResponse(response, "GITHUB_RESPONSE_TOO_LARGE");
       }
-      const bytes = await readBoundedGithubResponse(response, controller.signal);
+      const bytes = await readBoundedGithubResponse(response, controller.signal, maxResponseBytes);
       let text: string;
       try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw new Error("GITHUB_MALFORMED_UTF8"); }
       let value: unknown;
@@ -1417,7 +1420,13 @@ async function readPaginatedWorkflowRuns({
   for (let page = 1; page <= MAX_GITHUB_WORKFLOW_RUN_PAGES; page += 1) {
     if (parseWorkflowRunsPageNumber(endpoint, candidateCommit, workflow.id) !== page) throw new Error("GITHUB_SOURCE_SUBSTITUTION:workflow-runs-page");
     endpoints.push(endpoint);
-    const result = await readFixedGithubJson(endpoint, { fetchImpl, timeoutMs, retries, boundary });
+    const result = await readFixedGithubJson(endpoint, {
+      fetchImpl,
+      timeoutMs,
+      retries,
+      boundary,
+      maxResponseBytes: MAX_GITHUB_WORKFLOW_RESPONSE_BYTES
+    });
     if (!result.observedAt) throw new Error("GITHUB_SOURCE_TIME_UNAVAILABLE");
     observedTimes.push(result.observedAt);
     const parsed = parseWorkflowRunsPage(result.value, candidateCommit, workflow);

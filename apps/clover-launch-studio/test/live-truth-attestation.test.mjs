@@ -41,6 +41,7 @@ import {
   MAX_GITHUB_CHECK_RUN_PAGES,
   MAX_GITHUB_CHECK_RUNS,
   MAX_GITHUB_RESPONSE_BYTES,
+  MAX_GITHUB_WORKFLOW_RESPONSE_BYTES,
   MAX_GITHUB_WORKFLOW_RUN_PAGES,
   MAX_GITHUB_WORKFLOW_RUNS,
   GITHUB_WORKFLOW_RUNS_PER_PAGE,
@@ -148,6 +149,135 @@ function workflowRunFixture(expectedWorkflow, {
     workflow_url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/actions/workflows/${workflowId}`,
     repository: { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY },
     head_repository: { id: GITHUB_REPOSITORY_ID, full_name: GITHUB_REPOSITORY }
+  };
+}
+
+function providerActorFixture() {
+  const login = "sanitized-owner";
+  const api = `${GITHUB_ORIGIN}/users/${login}`;
+  return {
+    login,
+    id: 1,
+    node_id: "U_sanitized",
+    avatar_url: "https://avatars.githubusercontent.com/u/1?v=4",
+    gravatar_id: "",
+    url: api,
+    html_url: `https://github.com/${login}`,
+    followers_url: `${api}/followers`,
+    following_url: `${api}/following{/other_user}`,
+    gists_url: `${api}/gists{/gist_id}`,
+    starred_url: `${api}/starred{/owner}{/repo}`,
+    subscriptions_url: `${api}/subscriptions`,
+    organizations_url: `${api}/orgs`,
+    repos_url: `${api}/repos`,
+    events_url: `${api}/events{/privacy}`,
+    received_events_url: `${api}/received_events`,
+    type: "User",
+    user_view_type: "public",
+    site_admin: false
+  };
+}
+
+function providerRepositoryFixture() {
+  const api = `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}`;
+  return {
+    id: GITHUB_REPOSITORY_ID,
+    node_id: "R_sanitized",
+    name: "first",
+    full_name: GITHUB_REPOSITORY,
+    private: false,
+    owner: providerActorFixture(),
+    html_url: `https://github.com/${GITHUB_REPOSITORY}`,
+    description: null,
+    fork: false,
+    url: api,
+    forks_url: `${api}/forks`,
+    keys_url: `${api}/keys{/key_id}`,
+    collaborators_url: `${api}/collaborators{/collaborator}`,
+    teams_url: `${api}/teams`,
+    hooks_url: `${api}/hooks`,
+    issue_events_url: `${api}/issues/events{/number}`,
+    events_url: `${api}/events`,
+    assignees_url: `${api}/assignees{/user}`,
+    branches_url: `${api}/branches{/branch}`,
+    tags_url: `${api}/tags`,
+    blobs_url: `${api}/git/blobs{/sha}`,
+    git_tags_url: `${api}/git/tags{/sha}`,
+    git_refs_url: `${api}/git/refs{/sha}`,
+    trees_url: `${api}/git/trees{/sha}`,
+    statuses_url: `${api}/statuses/{sha}`,
+    languages_url: `${api}/languages`,
+    stargazers_url: `${api}/stargazers`,
+    contributors_url: `${api}/contributors`,
+    subscribers_url: `${api}/subscribers`,
+    subscription_url: `${api}/subscription`,
+    commits_url: `${api}/commits{/sha}`,
+    git_commits_url: `${api}/git/commits{/sha}`,
+    comments_url: `${api}/comments{/number}`,
+    issue_comment_url: `${api}/issues/comments{/number}`,
+    contents_url: `${api}/contents/{+path}`,
+    compare_url: `${api}/compare/{base}...{head}`,
+    merges_url: `${api}/merges`,
+    archive_url: `${api}/{archive_format}{/ref}`,
+    downloads_url: `${api}/downloads`,
+    issues_url: `${api}/issues{/number}`,
+    pulls_url: `${api}/pulls{/number}`,
+    milestones_url: `${api}/milestones{/number}`,
+    notifications_url: `${api}/notifications{?since,all,participating}`,
+    labels_url: `${api}/labels{/name}`,
+    releases_url: `${api}/releases{/id}`,
+    deployments_url: `${api}/deployments`
+  };
+}
+
+function providerShapedWorkflowRunFixture(expectedWorkflow, overrides = {}) {
+  const run = workflowRunFixture(expectedWorkflow, overrides);
+  const id = run.id;
+  const checkSuiteId = 100_000_000_000 + id;
+  const repository = providerRepositoryFixture();
+  return {
+    id,
+    name: run.name,
+    node_id: `WFR_sanitized_${id}`,
+    head_branch: run.head_branch,
+    head_sha: run.head_sha,
+    path: run.path,
+    display_title: "Sanitized exact-head workflow run",
+    run_number: id,
+    event: run.event,
+    status: run.status,
+    conclusion: run.conclusion,
+    workflow_id: run.workflow_id,
+    check_suite_id: checkSuiteId,
+    check_suite_node_id: `CS_sanitized_${id}`,
+    url: run.url,
+    html_url: run.html_url,
+    pull_requests: [{ ...run.pull_requests[0], id: 35 }],
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+    actor: providerActorFixture(),
+    run_attempt: run.run_attempt,
+    referenced_workflows: [],
+    run_started_at: run.run_started_at,
+    triggering_actor: providerActorFixture(),
+    jobs_url: `${run.url}/jobs`,
+    logs_url: `${run.url}/logs`,
+    check_suite_url: `${GITHUB_ORIGIN}/repos/${GITHUB_REPOSITORY}/check-suites/${checkSuiteId}`,
+    artifacts_url: `${run.url}/artifacts`,
+    cancel_url: `${run.url}/cancel`,
+    rerun_url: `${run.url}/rerun`,
+    previous_attempt_url: null,
+    workflow_url: run.workflow_url,
+    head_commit: {
+      id: run.head_sha,
+      tree_id: candidateTree,
+      message: "Sanitized exact-head workflow commit",
+      timestamp: run.created_at,
+      author: { name: "Sanitized Author", email: "sanitized-author@example.invalid" },
+      committer: { name: "Sanitized Committer", email: "sanitized-committer@example.invalid" }
+    },
+    repository,
+    head_repository: structuredClone(repository)
   };
 }
 
@@ -1181,6 +1311,65 @@ test("GitHub workflow-run pagination is complete, bounded and exact-workflow loc
   };
   const observe = async (fixture) => observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
 
+  await t.test("a full sanitized provider-shaped 100-record page fits only the dedicated workflow bound", async () => {
+    const providerRuns = Array.from({ length: GITHUB_WORKFLOW_RUNS_PER_PAGE }, (_, index) => providerShapedWorkflowRunFixture(workflow, {
+      id: selectedId - (GITHUB_WORKFLOW_RUNS_PER_PAGE - 1) + index,
+      createdAt: "2026-08-29T18:00:00Z",
+      startedAt: "2026-08-29T18:01:00Z",
+      updatedAt: "2026-08-29T19:00:00Z"
+    }));
+    const page = { total_count: GITHUB_WORKFLOW_RUNS_PER_PAGE, workflow_runs: providerRuns };
+    const rawPage = JSON.stringify(page);
+    const rawBytes = Buffer.byteLength(rawPage);
+    assert.equal(providerRuns.length, 100);
+    assert.equal(Object.keys(providerRuns[0]).length, 35);
+    assert.equal(Object.keys(providerRuns[0].actor).length, 19);
+    assert.equal(Object.keys(providerRuns[0].repository).length, 46);
+    assert.equal(Object.keys(providerRuns[0].head_repository).length, 46);
+    assert.equal(Object.keys(providerRuns[0].pull_requests[0]).length, 5);
+    assert.equal(Object.keys(providerRuns[0].head_commit).length, 6);
+    assert.equal(rawBytes, 1_262_337);
+    assert.equal(sha256(rawPage), "0b918b47ecc8f4d20f8998fcb4cb39b48234d1f51a1202752ecff2ea1c86e48e");
+    assert.ok(rawBytes > MAX_GITHUB_RESPONSE_BYTES);
+    assert.ok(rawBytes <= MAX_GITHUB_WORKFLOW_RESPONSE_BYTES);
+
+    const fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [providerRuns],
+      totalCount: providerRuns.length,
+      mutate: bindSelectedChecks
+    });
+    const observation = await observe(fixture);
+    assert.equal(observation.status, "current");
+    assert.equal(observation.exactHeadChecks?.state, "success");
+    assert.equal(observation.exactHeadChecks?.workflowRuns.find(({ workflowId }) => workflowId === workflow.id)?.id, selectedId);
+  });
+
+  await t.test("the dedicated workflow response bound remains finite and fail closed", async () => {
+    const fixture = githubWorkflowPaginationFetch({
+      workflow,
+      pages: [[selected]],
+      totalCount: 1,
+      responseForPage: async (_page, endpoint) => {
+        const response = new Response("{}", {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "content-length": String(MAX_GITHUB_WORKFLOW_RESPONSE_BYTES + 1),
+            date: defaultGithubSourceDate
+          }
+        });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      },
+      mutate: bindSelectedChecks
+    });
+    const observation = await observe(fixture);
+    assert.notEqual(observation.status, "current");
+    assert.equal(observation.exactHeadChecks, null);
+    assert.match(observation.failures.join("\n"), /GITHUB_RESPONSE_TOO_LARGE/u);
+  });
+
   await t.test("page two supplies the deterministic exact selected run", async () => {
     const fixture = githubWorkflowPaginationFetch({
       workflow,
@@ -1622,9 +1811,59 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
       assert.equal(result.failures.some((failure) => /pull34:GITHUB_MALFORMED_PR34/u.test(failure)), true);
     }
   });
+  await t.test("non-workflow endpoints retain the 256 KiB declared and streamed bounds", async () => {
+    const validResponse = (endpoint) => {
+      const body = JSON.stringify(githubFixture(endpoint));
+      const response = new Response(body, {
+        status: 200,
+        headers: { "content-type": "application/json", "content-length": String(Buffer.byteLength(body)), date: defaultGithubSourceDate }
+      });
+      Object.defineProperty(response, "url", { value: endpoint });
+      return response;
+    };
+    let nonWorkflowCalls = 0;
+    let result = await observeGitHubTruth({
+      candidateCommit,
+      fetchImpl: async (endpoint) => {
+        if (endpoint.includes("/actions/workflows/")) return validResponse(endpoint);
+        nonWorkflowCalls += 1;
+        const response = new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json", "content-length": String(MAX_GITHUB_RESPONSE_BYTES + 1), date: defaultGithubSourceDate }
+        });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      },
+      retries: 0
+    });
+    assert.equal(nonWorkflowCalls, 6);
+    assert.equal(result.failures.length, nonWorkflowCalls);
+    assert.equal(result.failures.every((failure) => failure.endsWith("GITHUB_RESPONSE_TOO_LARGE")), true);
+
+    let cancellations = 0;
+    result = await observeGitHubTruth({
+      candidateCommit,
+      fetchImpl: async (endpoint) => {
+        if (!endpoint.includes("/check-runs")) return validResponse(endpoint);
+        const response = new Response(new ReadableStream({
+          start(controller) { controller.enqueue(Buffer.alloc(MAX_GITHUB_RESPONSE_BYTES + 1, 0x20)); },
+          cancel() {
+            cancellations += 1;
+            return new Promise(() => {});
+          }
+        }), { status: 200, headers: { "content-type": "application/json", date: defaultGithubSourceDate } });
+        Object.defineProperty(response, "url", { value: endpoint });
+        return response;
+      },
+      retries: 0
+    });
+    assert.equal(result.failures.length, 1);
+    assert.match(result.failures[0], /GITHUB_RESPONSE_TOO_LARGE$/u);
+    assert.equal(cancellations, 1);
+  });
   await t.test("oversize", async () => {
     const result = await observeGitHubTruth({ candidateCommit, fetchImpl: async (endpoint) => {
-      const response = new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-length": String(300_000) } });
+      const response = new Response("{}", { status: 200, headers: { "content-type": "application/json", "content-length": String(MAX_GITHUB_WORKFLOW_RESPONSE_BYTES + 1) } });
       Object.defineProperty(response, "url", { value: endpoint });
       return response;
     }, retries: 0 });
@@ -1636,7 +1875,7 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
       ["ordinary 4xx", { status: 404, headers: { "content-type": "application/json" } }],
       ["rate limit", { status: 403, headers: { "content-type": "application/json", "x-ratelimit-remaining": "0" } }],
       ["media type", { status: 200, headers: { "content-type": "text/plain" } }],
-      ["declared length", { status: 200, headers: { "content-type": "application/json", "content-length": String(MAX_GITHUB_RESPONSE_BYTES + 1) } }]
+      ["declared length", { status: 200, headers: { "content-type": "application/json", "content-length": String(MAX_GITHUB_WORKFLOW_RESPONSE_BYTES + 1) } }]
     ];
     for (const [label, configuration] of cases) {
       let cancellations = 0;
@@ -1661,7 +1900,7 @@ test("GitHub rate limits, substitution, malformed payload, oversize and timeout 
     let cancellations = 0;
     const oversized = async (endpoint) => {
       const response = new Response(new ReadableStream({
-        start(controller) { controller.enqueue(Buffer.alloc(MAX_GITHUB_RESPONSE_BYTES + 1, 0x20)); },
+        start(controller) { controller.enqueue(Buffer.alloc(MAX_GITHUB_WORKFLOW_RESPONSE_BYTES + 1, 0x20)); },
         cancel() {
           cancellations += 1;
           return new Promise(() => {});
