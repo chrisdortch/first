@@ -417,7 +417,7 @@ function projectedTimestamp(value: unknown, context: string, nullable = false): 
 
 function projectedStringArray(value: unknown, context: string): string[] {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) throw new Error(`LIVE_READBACK_MALFORMED_${context}:array`);
-  return value as string[];
+  return [...value] as string[];
 }
 
 function parseProjectedMain(value: unknown): PublicGitHubMain {

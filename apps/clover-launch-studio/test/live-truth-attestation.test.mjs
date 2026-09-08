@@ -89,6 +89,13 @@ import { compareDeploymentAttestation, parseBuildProvenance } from "../src/lib/p
 
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const sha1 = (value) => createHash("sha1").update(value).digest("hex");
+const deepFreeze = (value) => {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value;
+};
 const hex40 = (character) => character.repeat(40);
 const hex64 = (character) => character.repeat(64);
 const candidateCommit = hex40("a");
@@ -760,6 +767,97 @@ test("GitHub freshness uses the oldest relevant upstream Date and rejects expire
   assert.equal(observation.status, "contradictory");
   assert.equal(observation.freshness, "unavailable");
   assert.equal(observation.errorCode, "GITHUB_SOURCE_CONTRADICTION:FUTURE");
+});
+
+test("projected GitHub and deployment parsing is pure, detached and ruleset-exact", async () => {
+  const fixture = githubFetch();
+  const observed = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
+  const supplied = structuredClone(observed);
+  assert.ok(supplied.ruleset);
+  assert.ok(supplied.exactHeadChecks);
+  supplied.ruleset.allowedMergeMethods = ["merge", "squash", "rebase"];
+
+  const inputArray = supplied.ruleset.allowedMergeMethods;
+  const beforeUtf8 = Buffer.from(JSON.stringify(supplied), "utf8");
+  const beforeCanonical = canonicalJson(supplied);
+  const beforeSemanticSha256 = sha256(beforeUtf8);
+  const projected = parseGitHubLiveObservation(supplied);
+
+  assert.deepEqual(supplied.ruleset.allowedMergeMethods, ["merge", "squash", "rebase"]);
+  assert.deepEqual(projected.ruleset?.allowedMergeMethods, ["merge", "rebase", "squash"]);
+  assert.notStrictEqual(projected.ruleset?.allowedMergeMethods, inputArray);
+  assert.equal(Buffer.compare(beforeUtf8, Buffer.from(JSON.stringify(supplied), "utf8")), 0);
+  assert.equal(canonicalJson(supplied), beforeCanonical);
+  assert.equal(sha256(Buffer.from(JSON.stringify(supplied), "utf8")), beforeSemanticSha256);
+
+  for (const [parsedArray, suppliedArray, label] of [
+    [projected.endpoints, supplied.endpoints, "GitHub endpoints"],
+    [projected.failures, supplied.failures, "GitHub failures"],
+    [projected.missingEvidence, supplied.missingEvidence, "GitHub missing evidence"],
+    [projected.ruleset?.include, supplied.ruleset.include, "ruleset include"],
+    [projected.ruleset?.exclude, supplied.ruleset.exclude, "ruleset exclude"],
+    [projected.ruleset?.allowedMergeMethods, supplied.ruleset.allowedMergeMethods, "ruleset merge methods"],
+    [projected.exactHeadChecks?.requiredNames, supplied.exactHeadChecks.requiredNames, "required check names"]
+  ]) {
+    assert.notStrictEqual(parsedArray, suppliedArray, `${label} must not reuse caller array identity`);
+  }
+
+  const secondProjection = parseGitHubLiveObservation(supplied);
+  const repeatedProjection = parseGitHubLiveObservation(structuredClone(projected));
+  assert.equal(canonicalJson(secondProjection), canonicalJson(projected));
+  assert.equal(canonicalJson(repeatedProjection), canonicalJson(projected));
+  assert.equal(
+    Buffer.compare(Buffer.from(canonicalJson(secondProjection), "utf8"), Buffer.from(canonicalJson(projected), "utf8")),
+    0
+  );
+
+  const deeplyFrozenObservation = deepFreeze(structuredClone(supplied));
+  const frozenProjection = parseGitHubLiveObservation(deeplyFrozenObservation);
+  assert.deepEqual(frozenProjection.ruleset?.allowedMergeMethods, ["merge", "rebase", "squash"]);
+  assert.deepEqual(deeplyFrozenObservation.ruleset.allowedMergeMethods, ["merge", "squash", "rebase"]);
+
+  const frozenRulesetObservation = structuredClone(supplied);
+  deepFreeze(frozenRulesetObservation.ruleset);
+  assert.equal(Object.isFrozen(frozenRulesetObservation.ruleset), true);
+  assert.equal(Object.isFrozen(frozenRulesetObservation.ruleset.allowedMergeMethods), true);
+  assert.deepEqual(
+    parseGitHubLiveObservation(frozenRulesetObservation).ruleset?.allowedMergeMethods,
+    ["merge", "rebase", "squash"]
+  );
+
+  const suppliedDeployment = deploymentObservation();
+  const projectedDeployment = parseDeploymentSelfObservation(suppliedDeployment);
+  assert.notStrictEqual(projectedDeployment.failures, suppliedDeployment.failures);
+  assert.notStrictEqual(projectedDeployment.environmentKeysRead, suppliedDeployment.environmentKeysRead);
+
+  for (const [label, allowedMergeMethods, expectedError] of [
+    ["malformed array", "merge", /LIVE_READBACK_MALFORMED_RULESET_ALLOWED_MERGE_METHODS:array/u],
+    ["nonstring method", ["merge", 1, "rebase"], /LIVE_READBACK_MALFORMED_RULESET_ALLOWED_MERGE_METHODS:array/u]
+  ]) {
+    const candidate = structuredClone(supplied);
+    candidate.ruleset.allowedMergeMethods = allowedMergeMethods;
+    assert.throws(() => parseGitHubLiveObservation(candidate), expectedError, label);
+  }
+
+  const attestation = await compareDeploymentAttestation(build, sealedAttestation());
+  for (const [label, allowedMergeMethods] of [
+    ["missing method", ["merge", "rebase"]],
+    ["duplicate method", ["merge", "rebase", "rebase"]],
+    ["unsupported method", ["merge", "octopus", "rebase"]]
+  ]) {
+    const candidate = structuredClone(supplied);
+    candidate.ruleset.allowedMergeMethods = allowedMergeMethods;
+    const parsedCandidate = parseGitHubLiveObservation(candidate);
+    const reconciled = reconcileTreeTruth({
+      baseline,
+      build,
+      github: parsedCandidate,
+      deployment: deploymentObservation(),
+      attestation
+    });
+    assert.equal(reconciled.currentActionCard.action, "HOLD", label);
+    assert.equal(reconciled.contradictions.value.includes("protected-main-ruleset"), true, label);
+  }
 });
 
 test("strict public DTO parsing rejects endpoint, issuer and deployment substitutions", async () => {

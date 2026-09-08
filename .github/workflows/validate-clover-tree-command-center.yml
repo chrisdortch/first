@@ -1485,10 +1485,27 @@ jobs:
             'apps/clover-launch-studio/src/lib/live-truth.ts',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs'
           ];
+          const exactSixteenthCiEvidenceCorrectionCommit = '9de38c0911af80008df79fe02412d6efee548e83';
+          const exactSixteenthCiEvidenceCorrectionTree = 'cc094d3b781cc4a18e89e8ec7625e2c84a782f24';
+          const exactSixteenthCiEvidenceCorrectionParent = exactFifteenthCiEvidenceCorrectionCommit;
           const exactSixteenthCiEvidenceCorrectionAuthorizedPathListSha256 = 'bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b';
           const exactSixteenthCiEvidenceCorrectionAuthorizedPaths = [
             '.github/workflows/validate-clover-tree-command-center.yml',
             'apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs',
+            'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
+          const exactSeventeenthCiEvidenceCorrectionCommit = '485271eb2793a60edb6ff0476468502d664914fa';
+          const exactSeventeenthCiEvidenceCorrectionTree = '9a7eeeff2ef425ae8a1fe65a74d00c9dfef00778';
+          const exactSeventeenthCiEvidenceCorrectionParent = exactSixteenthCiEvidenceCorrectionCommit;
+          const exactSeventeenthCiEvidenceCorrectionPathListSha256 = '0e87b01a49c88be9c11f3682fe4f0588515d2d1668af2a365bb0f3f72dd93e58';
+          const exactSeventeenthCiEvidenceCorrectionPaths = [
+            'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
+          ];
+          const exactEighteenthCiEvidenceCorrectionAuthorizedPathListSha256 = 'e6e5a72a586120beaf959262b9af9fe7e0af21d2c75071aa7060421d858772c2';
+          const exactEighteenthCiEvidenceCorrectionAuthorizedPaths = [
+            '.github/workflows/validate-clover-tree-command-center.yml',
+            'apps/clover-launch-studio/src/lib/live-truth.ts',
             'apps/clover-launch-studio/test/live-truth-attestation.test.mjs',
             'apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts'
           ];
@@ -1636,7 +1653,7 @@ jobs:
             const ancestryText = gitText(['rev-list', '--ancestry-path', '--reverse', `${exactSourceClosureCommit}..${head}`]);
             const ancestryCommitIds = ancestryText === '' ? [] : ancestryText.split('\n');
             requireCondition(canonicalJson(ancestryCommitIds) === canonicalJson(commitIds)
-              && commitIds.length >= 16 && commitIds.length <= 17,
+              && commitIds.length >= 18 && commitIds.length <= 20,
               'CI-evidence correction chain depth or first-parent topology mismatch');
             const initialAuthorizedPaths = exactSortedPaths(exactInitialCiEvidenceCorrectionPaths);
             const secondAuthorizedPaths = exactSortedPaths(exactSecondCiEvidenceCorrectionPaths);
@@ -1654,6 +1671,8 @@ jobs:
             const fourteenthAuthorizedPaths = exactSortedPaths(exactFourteenthCiEvidenceCorrectionPaths);
             const fifteenthAuthorizedPaths = exactSortedPaths(exactFifteenthCiEvidenceCorrectionPaths);
             const sixteenthAuthorizedPaths = exactSortedPaths(exactSixteenthCiEvidenceCorrectionAuthorizedPaths);
+            const seventeenthAuthorizedPaths = exactSortedPaths(exactSeventeenthCiEvidenceCorrectionPaths);
+            const eighteenthAuthorizedPaths = exactSortedPaths(exactEighteenthCiEvidenceCorrectionAuthorizedPaths);
             const cumulativeAuthorizedPaths = exactSortedPaths(exactCiEvidenceCorrectionPaths);
             requireCondition(pathListSha256(initialAuthorizedPaths) === exactInitialCiEvidenceCorrectionPathListSha256
               && pathListSha256(secondAuthorizedPaths) === exactSecondCiEvidenceCorrectionPathListSha256
@@ -1671,6 +1690,8 @@ jobs:
               && pathListSha256(fourteenthAuthorizedPaths) === exactFourteenthCiEvidenceCorrectionPathListSha256
               && pathListSha256(fifteenthAuthorizedPaths) === exactFifteenthCiEvidenceCorrectionPathListSha256
               && pathListSha256(sixteenthAuthorizedPaths) === exactSixteenthCiEvidenceCorrectionAuthorizedPathListSha256
+              && pathListSha256(seventeenthAuthorizedPaths) === exactSeventeenthCiEvidenceCorrectionPathListSha256
+              && pathListSha256(eighteenthAuthorizedPaths) === exactEighteenthCiEvidenceCorrectionAuthorizedPathListSha256
               && pathListSha256(cumulativeAuthorizedPaths) === exactCiEvidenceCorrectionPathListSha256,
             'CI-evidence correction boundary constants are inconsistent');
             const fixedPrefix = [
@@ -1763,6 +1784,18 @@ jobs:
                 tree: exactFifteenthCiEvidenceCorrectionTree,
                 parent: exactFifteenthCiEvidenceCorrectionParent,
                 paths: fifteenthAuthorizedPaths
+              },
+              {
+                commit: exactSixteenthCiEvidenceCorrectionCommit,
+                tree: exactSixteenthCiEvidenceCorrectionTree,
+                parent: exactSixteenthCiEvidenceCorrectionParent,
+                paths: sixteenthAuthorizedPaths
+              },
+              {
+                commit: exactSeventeenthCiEvidenceCorrectionCommit,
+                tree: exactSeventeenthCiEvidenceCorrectionTree,
+                parent: exactSeventeenthCiEvidenceCorrectionParent,
+                paths: seventeenthAuthorizedPaths
               }
             ];
             let expectedParent = exactSourceClosureCommit;
@@ -1779,13 +1812,13 @@ jobs:
                   && canonicalJson(paths) === canonicalJson(fixed.paths),
                 `fixed CI-evidence correction ${index + 1} identity mismatch`);
               } else if (index === fixedPrefix.length) {
-                requireCondition(canonicalJson(paths) === canonicalJson(sixteenthAuthorizedPaths)
-                  && pathListSha256(paths) === exactSixteenthCiEvidenceCorrectionAuthorizedPathListSha256,
-                'primary D16 acceptance-contract correction changed an unauthorized or incomplete path set');
+                requireCondition(canonicalJson(paths) === canonicalJson(eighteenthAuthorizedPaths)
+                  && pathListSha256(paths) === exactEighteenthCiEvidenceCorrectionAuthorizedPathListSha256,
+                'primary D18 parser-purity correction changed an unauthorized or incomplete path set');
               } else {
-                requireCondition(index === fixedPrefix.length + 1
-                  && paths.every((file) => sixteenthAuthorizedPaths.includes(file)),
-                'optional D17 review correction changed an unauthorized path or exceeded depth 17');
+                requireCondition((index === fixedPrefix.length + 1 || index === fixedPrefix.length + 2)
+                  && paths.every((file) => eighteenthAuthorizedPaths.includes(file)),
+                'optional D19/D20 parser-purity correction changed an unauthorized path or exceeded depth 20');
               }
               expectedParent = commit;
             }
@@ -2076,8 +2109,8 @@ jobs:
               && /^[0-9a-f]{40}$/u.test(value.currentCandidate.immediateParent)
               && value.currentCandidate.cleanWorktree === true && value.currentCandidate.role === 'exact-pr-head'
               && Number.isSafeInteger(value.currentCandidate.correctionChainDepth)
-              && value.currentCandidate.correctionChainDepth >= 16
-              && value.currentCandidate.correctionChainDepth <= 17
+              && value.currentCandidate.correctionChainDepth >= 18
+              && value.currentCandidate.correctionChainDepth <= 20
               && value.currentCandidate.correctionCommitIds.length === value.currentCandidate.correctionChainDepth,
             `${label}.currentCandidate identity mismatch`);
             exactKeys(value.correctionChain,
@@ -4704,15 +4737,13 @@ jobs:
               body.clientSha256 = bodySha256;
               body.exactEquality = true;
             };
-            const resealCanonicalTree = (stage, candidate) => {
+            const bindRawTreeTransport = (stage, candidate, rawUtf8) => {
               const server = stage.serverPreAttestation;
-              const rawUtf8 = JSON.stringify(server.canonicalTree);
               const rawBytes = Buffer.from(rawUtf8, 'utf8');
               const rawSha256 = sha256(rawBytes);
               server.rawTreeUtf8 = rawUtf8;
               server.rawTreeBytes = rawBytes.byteLength;
               server.rawTreeSha256 = rawSha256;
-              server.canonicalTreeSha256 = sha256(`${canonicalJson(server.canonicalTree)}\n`);
               const generation = candidate.scans.at(-1)?.gateAttemptProof?.afterFence?.generation;
               const request = generation?.requests?.find(({ pathname }) => pathname === '/api/tree');
               requireCondition(request, `${project} staged Tree mutation lacks exact request`);
@@ -4724,6 +4755,18 @@ jobs:
               request.client.serverByteCount = rawBytes.byteLength;
               if (request.request) request.request.fixtureBodySha256 = rawSha256;
               resealExactReadbackBody(stage, '/api/tree', rawBytes.byteLength, rawSha256);
+            };
+            const resealRetainedRawTree = (stage, candidate, rawTree) => {
+              bindRawTreeTransport(stage, candidate, JSON.stringify(rawTree));
+            };
+            const resealCanonicalTree = (stage, candidate) => {
+              const server = stage.serverPreAttestation;
+              resealRetainedRawTree(stage, candidate, server.canonicalTree);
+              server.canonicalTreeSha256 = sha256(`${canonicalJson(server.canonicalTree)}\n`);
+            };
+            const resealCanonicalTreeOnly = (stage) => {
+              const server = stage.serverPreAttestation;
+              server.canonicalTreeSha256 = sha256(`${canonicalJson(server.canonicalTree)}\n`);
             };
             const resealCanonicalAttestation = (stage, candidate) => {
               const attestation = stage.sameOriginAttestation;
@@ -4786,6 +4829,28 @@ jobs:
               ['second raw contradiction', (stage) => { stage.serverPreAttestation.rawTreeContradictions = [pending, 'second-contradiction']; }],
               ['wrong pending reason', (stage) => { stage.serverPreAttestation.rawTreeAttestationDifferences = ['attestation-unavailable']; }],
               ['raw otherwise-ready false', (stage) => { stage.serverPreAttestation.rawTreeOtherwiseReady = false; }],
+              ['retained raw merge-method order substitution', (stage, candidate) => {
+                const rawTree = fatalJson(Buffer.from(stage.serverPreAttestation.rawTreeUtf8, 'utf8'), `${project} mutable raw Tree`).value;
+                rawTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'squash'];
+                resealRetainedRawTree(stage, candidate, rawTree);
+              }],
+              ['retained raw merge-method membership substitution', (stage, candidate) => {
+                const rawTree = fatalJson(Buffer.from(stage.serverPreAttestation.rawTreeUtf8, 'utf8'), `${project} mutable raw Tree`).value;
+                rawTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'squash'];
+                resealRetainedRawTree(stage, candidate, rawTree);
+              }],
+              ['retained raw duplicate merge-method substitution', (stage, candidate) => {
+                const rawTree = fatalJson(Buffer.from(stage.serverPreAttestation.rawTreeUtf8, 'utf8'), `${project} mutable raw Tree`).value;
+                rawTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'squash', 'squash'];
+                resealRetainedRawTree(stage, candidate, rawTree);
+              }],
+              ['retained raw source-byte substitution', (stage) => {
+                stage.serverPreAttestation.rawTreeUtf8 += '\n';
+              }],
+              ['attached canonical merge-method substitution', (stage) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'squash'];
+                resealCanonicalTreeOnly(stage);
+              }],
               ['cross-origin attestation', (stage) => { stage.sameOriginAttestation.responseOrigin = 'https://example.invalid'; }],
               ['wrong attestation path', (stage) => { stage.sameOriginAttestation.responsePath = '/wrong-attestation.json'; }],
               ['redirected attestation', (stage) => { stage.sameOriginAttestation.redirected = true; }],
@@ -5184,7 +5249,7 @@ jobs:
               ['source-closure-baseline', (source) => { source.sourceClosureBaseline.parent = '0'.repeat(40); }],
               ['source-closure-commit', (source) => { source.sourceClosureCommit.commit = '0'.repeat(40); }],
               ['current-parent', (source) => { source.currentCandidate.immediateParent = '0'.repeat(40); }],
-              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 18; }],
+              ['correction-depth', (source) => { source.currentCandidate.correctionChainDepth = 21; }],
               ['correction-ids', (source) => { source.correctionChain.commitIds = ['0'.repeat(40)]; }],
               ['source-closure-cumulative', (source) => {
                 source.sourceClosureDelta.currentCumulative.headCommit = '0'.repeat(40);
