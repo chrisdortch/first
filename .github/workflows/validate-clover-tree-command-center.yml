@@ -4346,6 +4346,39 @@ jobs:
               sha: 'be45c4991a63e7e4ac6ca55a1e612f8bbe4fe5cb',
               tree: 'd0ac615a9f038c62fa6c0b1296312920b0dceb4d', protected: true, defaultBranch: 'main'
             }, `${label} protected main`);
+            const ruleset = github.ruleset;
+            exactKeys(ruleset, [
+              'allowedMergeMethods', 'bypassActorCount', 'bypassActorsStatus', 'deletionProtected',
+              'dismissStaleReviewsOnPush', 'enforcement', 'exclude', 'id', 'include', 'name',
+              'nonFastForwardProtected', 'requireCodeOwnerReview', 'requireExtraApprovalForUnattributedChanges',
+              'requireLastPushApproval', 'requiredApprovingReviewCount', 'requiredReviewThreadResolution',
+              'requiredReviewerCount', 'requiredStatusChecks', 'requiredStatusChecksOnCreate',
+              'requiredStatusChecksStrict', 'source', 'sourceType', 'target'
+            ], `${label} protected ruleset`);
+            requireCondition(ruleset.id === 21254086 && ruleset.name === 'Clover Required Main Protection'
+              && ruleset.target === 'branch' && ruleset.sourceType === 'Repository'
+              && ruleset.source === 'chrisdortch/first' && ruleset.enforcement === 'active'
+              && ruleset.bypassActorCount === null && ruleset.bypassActorsStatus === 'external-verification-required'
+              && ruleset.deletionProtected === true && ruleset.nonFastForwardProtected === true
+              && ruleset.requiredApprovingReviewCount === 0 && ruleset.dismissStaleReviewsOnPush === true
+              && ruleset.requiredReviewerCount === 0 && ruleset.requireCodeOwnerReview === false
+              && ruleset.requireLastPushApproval === false && ruleset.requiredReviewThreadResolution === true
+              && ruleset.requireExtraApprovalForUnattributedChanges === false
+              && ruleset.requiredStatusChecksStrict === true && ruleset.requiredStatusChecksOnCreate === true,
+            `${label} protected ruleset identity mismatch`);
+            exactJson(ruleset.include, ['refs/heads/main'], `${label} protected ruleset include`);
+            exactJson(ruleset.exclude, [], `${label} protected ruleset exclude`);
+            requireCondition(Array.isArray(ruleset.allowedMergeMethods)
+              && ruleset.allowedMergeMethods.length === 3
+              && new Set(ruleset.allowedMergeMethods).size === 3
+              && canonicalJson([...ruleset.allowedMergeMethods].sort()) === canonicalJson(['merge', 'rebase', 'squash']),
+            `${label} protected ruleset merge-method inventory mismatch`);
+            exactJson(ruleset.allowedMergeMethods, ['merge', 'squash', 'rebase'],
+              `${label} protected ruleset retained merge-method order`);
+            exactJson(ruleset.requiredStatusChecks, [
+              { context: 'Clover required main gate (Node 22)', integrationId: 15368 },
+              { context: 'Clover required main gate (Node 24)', integrationId: 15368 }
+            ], `${label} protected ruleset status checks`);
             requireCondition(github.pull35?.number === 35 && github.pull35.state === 'open' && github.pull35.draft === true
               && github.pull35.merged === false && github.pull35.mergeable === true
               && github.pull35.headSha === github.candidateSha && github.pull35.headRepository === 'chrisdortch/first'
@@ -4850,6 +4883,22 @@ jobs:
               ['attached canonical merge-method substitution', (stage) => {
                 stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'squash'];
                 resealCanonicalTreeOnly(stage);
+              }],
+              ['coherently resealed merge-method order substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'squash'];
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['coherently resealed merge-method membership substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'squash'];
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['coherently resealed duplicate merge-method substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'squash', 'rebase'];
+                resealCanonicalTree(stage, candidate);
+              }],
+              ['coherently resealed unsupported merge-method substitution', (stage, candidate) => {
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'octopus', 'rebase', 'squash'];
+                resealCanonicalTree(stage, candidate);
               }],
               ['cross-origin attestation', (stage) => { stage.sameOriginAttestation.responseOrigin = 'https://example.invalid'; }],
               ['wrong attestation path', (stage) => { stage.sameOriginAttestation.responsePath = '/wrong-attestation.json'; }],

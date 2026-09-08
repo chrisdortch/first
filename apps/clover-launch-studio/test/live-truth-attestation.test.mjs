@@ -769,7 +769,7 @@ test("GitHub freshness uses the oldest relevant upstream Date and rejects expire
   assert.equal(observation.errorCode, "GITHUB_SOURCE_CONTRADICTION:FUTURE");
 });
 
-test("projected GitHub and deployment parsing is pure, detached and ruleset-exact", async () => {
+test("projected string-array parsing is pure, detached and ruleset-exact", async () => {
   const fixture = githubFetch();
   const observed = await observeGitHubTruth({ candidateCommit, fetchImpl: fixture.implementation, retries: 0 });
   const supplied = structuredClone(observed);
@@ -825,10 +825,11 @@ test("projected GitHub and deployment parsing is pure, detached and ruleset-exac
     ["merge", "rebase", "squash"]
   );
 
-  const suppliedDeployment = deploymentObservation();
+  const suppliedDeployment = deepFreeze(structuredClone(deploymentObservation()));
   const projectedDeployment = parseDeploymentSelfObservation(suppliedDeployment);
   assert.notStrictEqual(projectedDeployment.failures, suppliedDeployment.failures);
   assert.notStrictEqual(projectedDeployment.environmentKeysRead, suppliedDeployment.environmentKeysRead);
+  assert.deepEqual(projectedDeployment, suppliedDeployment);
 
   for (const [label, allowedMergeMethods, expectedError] of [
     ["malformed array", "merge", /LIVE_READBACK_MALFORMED_RULESET_ALLOWED_MERGE_METHODS:array/u],
@@ -842,8 +843,8 @@ test("projected GitHub and deployment parsing is pure, detached and ruleset-exac
   const attestation = await compareDeploymentAttestation(build, sealedAttestation());
   for (const [label, allowedMergeMethods] of [
     ["missing method", ["merge", "rebase"]],
-    ["duplicate method", ["merge", "rebase", "rebase"]],
-    ["unsupported method", ["merge", "octopus", "rebase"]]
+    ["duplicate method", ["merge", "rebase", "squash", "rebase"]],
+    ["unsupported method", ["merge", "octopus", "rebase", "squash"]]
   ]) {
     const candidate = structuredClone(supplied);
     candidate.ruleset.allowedMergeMethods = allowedMergeMethods;
