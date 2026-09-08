@@ -843,8 +843,8 @@ test("projected string-array parsing is pure, detached and ruleset-exact", async
   const attestation = await compareDeploymentAttestation(build, sealedAttestation());
   for (const [label, allowedMergeMethods] of [
     ["missing method", ["merge", "rebase"]],
-    ["duplicate method", ["merge", "rebase", "squash", "rebase"]],
-    ["unsupported method", ["merge", "octopus", "rebase", "squash"]]
+    ["duplicate method", ["merge", "rebase", "rebase"]],
+    ["unsupported method", ["merge", "octopus", "squash"]]
   ]) {
     const candidate = structuredClone(supplied);
     candidate.ruleset.allowedMergeMethods = allowedMergeMethods;

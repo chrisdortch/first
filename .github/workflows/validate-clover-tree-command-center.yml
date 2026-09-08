@@ -4893,11 +4893,11 @@ jobs:
                 resealCanonicalTree(stage, candidate);
               }],
               ['coherently resealed duplicate merge-method substitution', (stage, candidate) => {
-                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'squash', 'rebase'];
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'rebase', 'rebase'];
                 resealCanonicalTree(stage, candidate);
               }],
               ['coherently resealed unsupported merge-method substitution', (stage, candidate) => {
-                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'octopus', 'rebase', 'squash'];
+                stage.serverPreAttestation.canonicalTree.observations.github.ruleset.allowedMergeMethods = ['merge', 'octopus', 'squash'];
                 resealCanonicalTree(stage, candidate);
               }],
               ['cross-origin attestation', (stage) => { stage.sameOriginAttestation.responseOrigin = 'https://example.invalid'; }],
