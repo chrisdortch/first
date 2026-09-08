@@ -7657,7 +7657,9 @@ async function collectStagedAcceptanceEvidence(scans: AxeScanEvidence[], project
   expect(parsedGithub.pull35?.headSha).toBe(expectedSource.head);
   expect(parsedGithub.exactHeadChecks?.sha).toBe(expectedSource.head);
   expect(parsedGithub.exactHeadChecks?.state).toBe("success");
-  expect(parsedDeployment.hostname).toBe(new URL(expectedBrowserOrigin).hostname);
+  expect(parsedDeployment.hostname).toBe(protectedPreviewEvidence
+    ? new URL(expectedBrowserOrigin).hostname
+    : expectedDeployment.hostname);
   expect(provenance).toMatchObject({
     commit: expectedSource.head, tree: expectedSource.tree, parent: expectedSource.parent,
     runtimeDeploymentKey: expectedDeployment.runtimeKey, cleanWorktree: true,
