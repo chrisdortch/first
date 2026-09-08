@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cloverapps.ai/schemas/tree-program/0.1.0/tree-program.schema.json",
+  "title": "Clover Tree Program 0.1",
+  "type": "object",
+  "required": ["documentType", "schemaVersion"],
+  "properties": {
+    "documentType": { "type": "string" },
+    "schemaVersion": { "const": "0.1.0" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/genericRecordSet" },
+    { "$ref": "#/$defs/branchRecordSet" },
+    { "$ref": "#/$defs/relationshipRecordSet" },
+    { "$ref": "#/$defs/index" }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9:._-]{2,159}$" },
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+    "repositoryPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "status": {
+      "enum": ["live", "current", "candidate", "historical", "blocked", "provider-degraded", "unknown", "proposed", "complete", "hold"]
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "identity", "observedAt", "freshness", "required"],
+      "properties": {
+        "sourceId": { "$ref": "#/$defs/id" },
+        "identity": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "freshness": { "enum": ["current", "stale", "unavailable", "unknown"] },
+        "required": { "type": "boolean" }
+      }
+    },
+    "detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "value"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]{1,79}$" },
+        "value": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      }
+    },
+    "genericRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recordId", "title", "summary", "status", "sourceRefs", "details"],
+      "properties": {
+        "recordId": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1200 },
+        "status": { "$ref": "#/$defs/status" },
+        "sourceRefs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sourceRef" } },
+        "details": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/detail" } }
+      }
+    },
+    "genericRecordSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentType", "schemaVersion", "recordSetId", "observedAt", "sourceScope", "records", "selfHash"],
+      "properties": {
+        "documentType": {
+          "enum": [
+            "clover-tree-master-plan",
+            "clover-tree-program-milestones",
+            "clover-tree-source-coverage",
+            "clover-tree-program-status-snapshot",
+            "clover-tree-program-progress-events",
+            "clover-tree-captains-log-owner-event-references",
+            "clover-tree-fruit-forecasts",
+            "clover-tree-fruit-observations",
+            "clover-tree-understanding-delta-references",
+            "clover-tree-model-launch-packets",
+            "clover-tree-owner-action-cards",
+            "clover-tree-provider-degraded-status"
+          ]
+        },
+        "schemaVersion": { "const": "0.1.0" },
+        "recordSetId": { "$ref": "#/$defs/id" },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "sourceScope": { "const": "public-sanitized" },
+        "records": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/genericRecord" } },
+        "selfHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "branchRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branchId", "title", "family", "canonicalHome", "owner", "authorizedRoles", "purpose", "sources",
+        "liveIdentity", "candidateIdentity", "deployment", "rollback", "backupRestore", "dataClassification",
+        "allowedCoreProjection", "connectorScope", "currentHealth", "sourceFreshness", "trajectory", "dependencies",
+        "collaborators", "nextGate", "predictedFruit", "observedFruit", "unknowns"
+      ],
+      "properties": {
+        "branchId": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "family": { "enum": ["root", "trunk", "bark", "ring", "branch", "canopy", "fruit", "pod", "collaboration"] },
+        "canonicalHome": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "owner": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "authorizedRoles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 80 } },
+        "purpose": { "type": "string", "minLength": 1, "maxLength": 700 },
+        "sources": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/sourceRef" } },
+        "liveIdentity": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "candidateIdentity": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "deployment": { "type": "string", "minLength": 1, "maxLength": 240 },
+        "rollback": { "type": "string", "minLength": 1, "maxLength": 360 },
+        "backupRestore": { "type": "string", "minLength": 1, "maxLength": 360 },
+        "dataClassification": { "enum": ["public-sanitized", "synthetic-only", "private-excluded", "unknown"] },
+        "allowedCoreProjection": { "type": "string", "minLength": 1, "maxLength": 360 },
+        "connectorScope": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" } },
+        "currentHealth": { "$ref": "#/$defs/status" },
+        "sourceFreshness": { "enum": ["current", "stale", "unavailable", "unknown"] },
+        "trajectory": { "enum": ["advancing", "steady", "held", "declining", "unknown"] },
+        "dependencies": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "collaborators": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 120 } },
+        "nextGate": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "predictedFruit": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "observedFruit": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "unknowns": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 300 } }
+      }
+    },
+    "branchRecordSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentType", "schemaVersion", "recordSetId", "observedAt", "sourceScope", "records", "selfHash"],
+      "properties": {
+        "documentType": { "const": "clover-tree-branch-records" },
+        "schemaVersion": { "const": "0.1.0" },
+        "recordSetId": { "$ref": "#/$defs/id" },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "sourceScope": { "const": "public-sanitized" },
+        "records": { "type": "array", "minItems": 20, "items": { "$ref": "#/$defs/branchRecord" } },
+        "selfHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relationshipId", "fromBranchId", "toBranchId", "relationshipType", "direction", "summary", "status"],
+      "properties": {
+        "relationshipId": { "$ref": "#/$defs/id" },
+        "fromBranchId": { "$ref": "#/$defs/id" },
+        "toBranchId": { "$ref": "#/$defs/id" },
+        "relationshipType": { "enum": ["feeds", "governs", "protects", "records", "builds", "collaborates-with", "observes", "projects-to", "depends-on"] },
+        "direction": { "const": "directed" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "relationshipRecordSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documentType", "schemaVersion", "recordSetId", "observedAt", "sourceScope", "records", "selfHash"],
+      "properties": {
+        "documentType": { "const": "clover-tree-branch-relationships" },
+        "schemaVersion": { "const": "0.1.0" },
+        "recordSetId": { "$ref": "#/$defs/id" },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "sourceScope": { "const": "public-sanitized" },
+        "records": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/relationship" } },
+        "selfHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["recordSetId", "path", "sha256"],
+      "properties": {
+        "recordSetId": { "$ref": "#/$defs/id" },
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "dependencyBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/repositoryPath" },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "index": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "documentType", "schemaVersion", "indexId", "createdAt", "previousIndexPath", "previousIndexHash",
+        "recordFiles", "dependencies", "publicSanitized", "privateDataAccessed", "consequentialAuthorityGranted", "indexHash"
+      ],
+      "properties": {
+        "documentType": { "const": "clover-tree-program-index" },
+        "schemaVersion": { "const": "0.1.0" },
+        "indexId": { "$ref": "#/$defs/id" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "previousIndexPath": { "type": "null" },
+        "previousIndexHash": { "type": "null" },
+        "recordFiles": { "type": "array", "minItems": 14, "maxItems": 14, "items": { "$ref": "#/$defs/fileBinding" } },
+        "dependencies": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/dependencyBinding" } },
+        "publicSanitized": { "const": true },
+        "privateDataAccessed": { "const": false },
+        "consequentialAuthorityGranted": { "const": false },
+        "indexHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}
