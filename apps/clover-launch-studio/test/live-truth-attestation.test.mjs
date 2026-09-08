@@ -16,6 +16,7 @@ import {
   rmSync,
   symlinkSync,
   unlinkSync,
+  truncateSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -59,6 +60,16 @@ import {
 } from "../src/lib/live-truth.ts";
 import {
   ATTESTATION_OUTPUT_PATH,
+  ATTESTATION_REPAIR_BASE,
+  ATTESTATION_REPAIR_BRANCH,
+  ATTESTATION_REPAIR_CONTEXT,
+  ATTESTATION_REPAIR_CI_CONTEXT,
+  ATTESTATION_REPAIR_PATHS,
+  NATIVE_FILE_TREE_PROFILE,
+  deriveAttestationRepairSource,
+  parseProviderFileTree,
+  verifyNativeProviderContent,
+  loadNativeProviderContentBodies,
   DEPLOYMENT_INPUT_MANIFEST_FILE,
   FINAL_ARCHIVE_FILE,
   STACK_A_BASE,
@@ -4153,6 +4164,228 @@ test("output sealing rejects malformed normalization inputs and restores the exa
   }
 });
 
+// Constructed fixtures express observed shapes; they are not retained provider observations.
+const nativeDirectory = (name, children = []) => ({ name, type: "directory", mode: 0o40555, children });
+const nativeLambda = (name) => ({ name, type: "lambda", mode: 0o140666, uid: `${VERCEL_TEAM_ID}-${"a".repeat(34)}` });
+const nativeTreeFixture = () => [
+  nativeDirectory("src", [nativeDirectory(".vercel", [nativeDirectory("output", [
+    { name: "z.txt", type: "file", mode: 0o100664, uid: sha1("z") },
+    { name: "a.txt", type: "file", mode: 0o100644, uid: sha1("a") }
+  ])])]),
+  nativeDirectory("out", [nativeLambda("sessions"), nativeDirectory("sessions", [
+    nativeLambda("[sessionId]"), nativeDirectory("[sessionId]", [nativeLambda("events")])
+  ])])
+];
+const parseNativeFixture = (response, rawBytes = Buffer.from(JSON.stringify(response))) => parseProviderFileTree({
+  response, rawBytes, profile: NATIVE_FILE_TREE_PROFILE, expectsExternalInputs: false
+});
+
+test("native peer-root adapter preserves raw order, typed collisions and frozen callers without granting authority", () => {
+  const fixture = nativeTreeFixture();
+  const bytes = Buffer.from(JSON.stringify(fixture, null, 2));
+  const before = JSON.stringify(fixture);
+  deepFreeze(fixture);
+  const result = parseNativeFixture(fixture, bytes);
+  assert.equal(JSON.stringify(fixture), before);
+  assert.equal(result.rawBodySha256, sha256(bytes));
+  assert.notEqual(result.rawBodySha256, result.canonicalObservationSha256);
+  assert.equal(result.runtimeOccurrences.length, 6);
+  assert.deepEqual(result.runtimeOccurrences.filter(({ path: entryPath }) => entryPath === "out/sessions").map(({ type, ordinal }) => ({ type, ordinal })), [
+    { type: "lambda", ordinal: [1, 0] }, { type: "directory", ordinal: [1, 1] }
+  ]);
+  assert.deepEqual(result.rawEntries.map(({ path: entryPath }) => entryPath), [".vercel/output/a.txt", ".vercel/output/z.txt"]);
+  assert.equal(result.consequentialAuthorityGranted, false);
+  const reversed = nativeTreeFixture().reverse();
+  const reversedBefore = JSON.stringify(reversed);
+  assert.equal(parseNativeFixture(reversed).runtimeOccurrences[0].ordinal[0], 0);
+  assert.equal(JSON.stringify(reversed), reversedBefore);
+  const nonBmp = nativeTreeFixture(); nonBmp[1].children[0].name = String.fromCodePoint(0x1f340);
+  assert.doesNotThrow(() => parseNativeFixture(nonBmp));
+  assert.throws(() => parseProviderFileTree({ response: fixture, expectsExternalInputs: false }), /FILE_TREE_REJECTED/u, "D20 legacy root predicate still rejects native peers");
+});
+
+test("native metadata fails closed on namespace, type, UID, mode, collision, path and bounded-input substitutions", () => {
+  const mutations = [
+    (tree) => tree.push(nativeDirectory("unknown")),
+    (tree) => { tree[0].name = "out"; },
+    (tree) => { tree[1] = nativeLambda("out"); },
+    (tree) => tree[0].children[0].children[0].children.push({ ...tree[0].children[0].children[0].children[0] }),
+    (tree) => tree[0].children[0].children[0].children.push(nativeLambda("source-lambda")),
+    (tree) => tree[1].children.push(nativeLambda("sessions")),
+    (tree) => tree[1].children.push(nativeDirectory("sessions")),
+    (tree) => tree[1].children.push({ name: "sessions", type: "file", mode: 0o100644, uid: "a".repeat(40) }),
+    (tree) => { tree[1].children[0].uid = "a".repeat(40); },
+    (tree) => { tree[1].children[0].uid = `team_other-${"a".repeat(34)}`; },
+    (tree) => { tree[1].children[0].uid = `${VERCEL_TEAM_ID}-${"A".repeat(34)}`; },
+    (tree) => { tree[1].children[0].mode = 0o100644; },
+    (tree) => { tree[1].children[0].type = "unknown"; },
+    (tree) => { tree[1].children[0].extra = true; },
+    (tree) => { tree[0].children[0].children[0].children[0].uid = "a".repeat(64); },
+    (tree) => { tree[0].children[0].children[0].children[0].mode = 0o100777; },
+    ...["..", ".", "a/b", "a\\b", "bad\u0001", "e\u0301", "", String.fromCharCode(0xd800), String.fromCharCode(0xdc00)].map((name) => (tree) => { tree[1].children[0].name = name; })
+  ];
+  mutations.forEach((mutate, index) => {
+    const fixture = nativeTreeFixture(); mutate(fixture);
+    const before = JSON.stringify(fixture);
+    assert.throws(() => parseNativeFixture(fixture), /CLOVER_|unsafe source/u, `mutation ${index}`);
+    assert.equal(JSON.stringify(fixture), before);
+  });
+  const fixture = nativeTreeFixture();
+  assert.throws(() => parseNativeFixture(fixture, Buffer.from('[{"name":"src","name":"src"}]')), /REJECTED/u);
+  assert.throws(() => parseNativeFixture(fixture, Buffer.from(JSON.stringify(fixture).slice(0, -1))), /REJECTED/u);
+  assert.throws(() => parseNativeFixture(fixture, Buffer.alloc(32 * 1024 * 1024 + 1, 32)), /RAW_BODY_REJECTED/u);
+  assert.throws(() => parseNativeFixture(fixture, Buffer.from("[".repeat(200) + "]".repeat(200))), /REJECTED/u);
+  assert.throws(() => parseNativeFixture(fixture, Buffer.from('["\\ud800"]')), /REJECTED|MISMATCH/u);
+  const deep = nativeTreeFixture();
+  let directory = deep[1];
+  for (let index = 0; index < 66; index += 1) { const child = nativeDirectory(`d${index}`); directory.children = [child]; directory = child; }
+  assert.throws(() => parseNativeFixture(deep), /LIMIT_REJECTED/u);
+  const many = nativeTreeFixture(); many[1].children = Array.from({ length: 50_001 }, (_, index) => nativeLambda(`l${index}`));
+  assert.throws(() => parseNativeFixture(many), /LIMIT_REJECTED/u);
+  const wideSource = nativeTreeFixture();
+  wideSource[0].children[0].children[0].children = Array.from({ length: 50_001 }, (_, index) => ({ name: `f${index}`, type: "file", mode: 0o100644, uid: "a".repeat(40) }));
+  assert.throws(() => parseNativeFixture(wideSource), /LIMIT_REJECTED/u);
+});
+
+test("native v8 content limits utf8 alias to exact UID-only endpoint and binds raw/base64/source identity", () => {
+  const entry = parseNativeFixture(nativeTreeFixture()).rawEntries[0];
+  const response = { data: Buffer.from("a").toString("base64") };
+  const url = `https://api.vercel.com/v8/deployments/dpl_ExactPreview123/files/${entry.uid}?teamId=${VERCEL_TEAM_ID}`;
+  const request = providerRequest("GET", url, response);
+  request.responseCharset = "utf8";
+  const inputs = { entry, response, request, rawBytes: Buffer.from(JSON.stringify(response)), deploymentId: "dpl_ExactPreview123", now: providerReceiptNow };
+  assert.equal(verifyNativeProviderContent(inputs).decodedSha256, sha256("a"));
+  assert.equal(verifyNativeProviderContent(inputs).providerAcceptance, false);
+  assert.throws(() => verifyNativeProviderContent({ ...inputs, now: new Date("invalid") }), /TIME_REJECTED/u);
+  for (const charset of ["utf-8", null]) assert.doesNotThrow(() => verifyNativeProviderContent({ ...inputs, request: { ...request, responseCharset: charset } }));
+  for (const charset of ["UTF8", "latin1", "utf8,utf-8", "utf-16", ""]) assert.throws(() => verifyNativeProviderContent({ ...inputs, request: { ...request, responseCharset: charset } }), /REJECTED/u);
+  for (const mutate of [
+    (value) => { value.request.url += "&path=src/.vercel/output/a.txt"; },
+    (value) => { value.request.url = value.request.url.replace("v8", "v6"); },
+    (value) => { value.deploymentId = "dpl_Other"; },
+    (value) => { value.request.responseMediaTypeEssence = "text/plain"; },
+    (value) => { value.request.responseOtherMediaTypeParameters = [["charset", "utf-8"]]; },
+    (value) => { value.request.responseObservedAt = "2020-01-01T00:00:00.000Z"; },
+    (value) => { value.entry.uid = "b".repeat(40); },
+    (value) => { value.entry.path = "out/a.txt"; },
+    (value) => { value.entry.path = `.vercel/output/${String.fromCharCode(0xd800)}`; },
+    (value) => { value.rawBytes = Buffer.from('{"data":"YQ==","data":"YQ=="}'); },
+    (value) => { value.rawBytes = Buffer.from('{"data":"Yg=="}'); }
+  ]) {
+    const value = { ...inputs, entry: { ...entry }, request: structuredClone(request) }; mutate(value);
+    assert.throws(() => verifyNativeProviderContent(value), /REJECTED|MISMATCH|unsafe source/u);
+  }
+});
+
+test("native CLI content index validates all mappings and bounded files before reading body bytes", () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-native-index-test-")));
+  const bodyFile = path.join(root, "body.json");
+  const indexPath = path.join(root, "index.json");
+  const sourcePath = "src/.vercel/output/static/a.txt";
+  const expectedPaths = [sourcePath];
+  const writeIndex = (entries) => writeFileSync(indexPath, `${canonicalJson(entries)}\n`, { mode: 0o600 });
+  try {
+    writeFileSync(bodyFile, '{"data":"YQ=="}', { mode: 0o600 });
+    writeIndex([{ path: sourcePath, bodyFile }]);
+    assert.equal(loadNativeProviderContentBodies({ indexPath, expectedPaths })[0].rawBytes.toString(), '{"data":"YQ=="}');
+    for (const entries of [
+      [{ path: sourcePath, bodyFile: path.join(root, "missing-body") }, { path: sourcePath, bodyFile }],
+      [{ path: "out/substitute", bodyFile: path.join(root, "missing-body") }],
+      [{ path: sourcePath, bodyFile: "relative-body" }],
+      [{ path: sourcePath, bodyFile, extra: true }], []
+    ]) {
+      writeIndex(entries); assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths }), /INDEX/u);
+    }
+    writeFileSync(indexPath, '[{"path":"a","path":"b"}]');
+    assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths }), /INDEX/u);
+    const link = path.join(root, "body-link"); symlinkSync(bodyFile, link);
+    writeIndex([{ path: sourcePath, bodyFile: link }]); assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths }), /BODY_FILE_REJECTED/u);
+    const hard = path.join(root, "body-hard"); linkSync(bodyFile, hard);
+    writeIndex([{ path: sourcePath, bodyFile }]); assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths }), /BODY_FILE_REJECTED/u);
+    unlinkSync(hard); unlinkSync(link);
+    const alias = path.join(root, "ancestor-alias"); symlinkSync(root, alias);
+    writeIndex([{ path: sourcePath, bodyFile: path.join(alias, "body.json") }]);
+    assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths }), /PARENT_REJECTED/u);
+    assert.throws(() => loadNativeProviderContentBodies({ indexPath: path.join(alias, "index.json"), expectedPaths }), /PARENT_REJECTED/u);
+    unlinkSync(alias);
+    const fifo = path.join(root, "fifo"); execFileSync("mkfifo", [fifo]);
+    assert.throws(() => loadNativeProviderContentBodies({ indexPath: fifo, expectedPaths }), /BODY_FILE_REJECTED/u);
+    unlinkSync(fifo);
+
+    const paths = Array.from({ length: 5 }, (_, index) => `src/.vercel/output/static/f${index}.txt`);
+    const entries = paths.map((entryPath, index) => {
+      const candidate = path.join(root, `sparse-${index}.json`); writeFileSync(candidate, ""); truncateSync(candidate, 32 * 1024 * 1024);
+      return { path: entryPath, bodyFile: candidate };
+    });
+    writeIndex(entries);
+    assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths: paths }), /BODY_BUDGET_REJECTED/u);
+    truncateSync(indexPath, 32 * 1024 * 1024 + 1);
+    assert.throws(() => loadNativeProviderContentBodies({ indexPath, expectedPaths }), /BODY_FILE_REJECTED/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("local repair source contract accepts only one to three scoped linear descendants and never PR authority", () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-repair-source-test-")));
+  const fixture = path.join(temporary, "repository");
+  const run = (args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    execFileSync("git", ["clone", "--quiet", "--no-hardlinks", "--no-checkout", repositoryRoot, fixture]);
+    run(["switch", "--quiet", "-C", ATTESTATION_REPAIR_BRANCH, ATTESTATION_REPAIR_BASE]);
+    run(["config", "user.name", "Synthetic local repair fixture"]); run(["config", "user.email", "synthetic@example.invalid"]);
+    const environment = { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CONTEXT };
+    const proof = () => deriveAttestationRepairSource({ repositoryRoot: fixture, environment });
+    assert.throws(proof, /DEPTH_REJECTED/u);
+    const target = path.join(fixture, ATTESTATION_REPAIR_PATHS[1]);
+    for (let count = 1; count <= 4; count += 1) {
+      writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic scoped repair fixture ${count}.\n`);
+      run(["add", "--", ATTESTATION_REPAIR_PATHS[1]]); run(["commit", "--quiet", "-m", `Synthetic scoped repair ${count}`]);
+      if (count <= 3) {
+        const result = proof(); assert.equal(result.localCommitCount, count); assert.equal(result.exactPrHeadAcceptance, false);
+        assert.equal(result.providerAcceptance, false); assert.equal(result.deploymentAllowanceGranted, false);
+      } else assert.throws(proof, /DEPTH_REJECTED/u);
+    }
+    // Reset only this disposable test clone; never an owner checkout.
+    run(["reset", "--hard", "HEAD~3"]);
+    assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: { ...environment, GITHUB_ACTIONS: "true" } }), /CONTEXT_REJECTED/u);
+    assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: { ...environment, CLOVER_TREE_EXACT_PR_HEAD: run(["rev-parse", "HEAD"]).trim() } }), /CONTEXT_REJECTED/u);
+    assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: { ...environment, CLOVER_TREE_HEAD: "a".repeat(40) } }), /IDENTITY_REJECTED/u);
+    writeFileSync(path.join(fixture, "untracked-synthetic"), "fixture"); assert.throws(proof, /DIRTY_SOURCE_REJECTED/u); unlinkSync(path.join(fixture, "untracked-synthetic"));
+    for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_CONFIG_COUNT", "GIT_CONFIG_SYSTEM", "GIT_REPLACE_REF_BASE"]) {
+      assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: { ...environment, [key]: fixture } }), /GIT_ENVIRONMENT_REJECTED/u);
+    }
+    assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: path.join(fixture, "apps"), environment }), /GIT_ROOT_REJECTED/u);
+    const sentinel = path.join(temporary, "external-diff-invoked");
+    const driver = path.join(temporary, "synthetic-diff-driver.sh");
+    writeFileSync(driver, `#!/bin/sh\ntouch '${sentinel}'\nexit 99\n`, { mode: 0o755 });
+    run(["config", "diff.external", driver]);
+    assert.doesNotThrow(proof); assert.equal(existsSync(sentinel), false);
+    const clean = run(["rev-parse", "HEAD"]).trim();
+    const ciEnvironment = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_HEAD_REF: ATTESTATION_REPAIR_BRANCH, GITHUB_WORKSPACE: fixture,
+      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CI_CONTEXT, CLOVER_TREE_PR_NUMBER: "999999",
+      CLOVER_TREE_HEAD: clean, CLOVER_TREE_EXACT_PR_HEAD: clean };
+    const ciProof = deriveAttestationRepairSource({ repositoryRoot: fixture, environment: ciEnvironment });
+    assert.equal(ciProof.classification, "ci-repair-candidate"); assert.equal(ciProof.exactPrHeadAcceptance, false);
+    run(["switch", "--detach", "--quiet", clean]);
+    assert.equal(deriveAttestationRepairSource({ repositoryRoot: fixture, environment: ciEnvironment }).head, clean);
+    run(["switch", "--quiet", ATTESTATION_REPAIR_BRANCH]);
+    for (const change of [{ CLOVER_TREE_PR_NUMBER: "35" }, { CLOVER_TREE_PR_NUMBER: "999999999999999999999999" }, { GITHUB_EVENT_NAME: "push" }, { GITHUB_HEAD_REF: STACK_B_BRANCH },
+      { CLOVER_TREE_HEAD: "a".repeat(40) }, { CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CONTEXT }]) {
+      assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: { ...ciEnvironment, ...change } }), /CONTEXT_REJECTED|IDENTITY_REJECTED/u);
+    }
+
+    for (const mutation of [
+      () => writeFileSync(path.join(fixture, "new-synthetic-file"), "fixture"),
+      () => chmodSync(target, 0o755),
+      () => writeFileSync(target, Buffer.from([0, 1, 2]))
+    ]) {
+      mutation(); run(["add", "-A"]); run(["commit", "--quiet", "-m", "Synthetic prohibited delta"]);
+      assert.throws(proof, /PATH_REJECTED|BLOB_REJECTED/u); run(["reset", "--hard", clean]);
+    }
+    run(["branch", "-m", "synthetic-wrong-branch"]); assert.throws(proof, /IDENTITY_REJECTED/u);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
 test("provider receipt binds the exact immutable deployment, bytes and protection lifecycle", () => {
   const root = mkdtempSync(path.join(tmpdir(), "clover-provider-receipt-"));
   try {
@@ -4203,6 +4436,83 @@ test("provider receipt binds the exact immutable deployment, bytes and protectio
     assert.equal(receipt.ssoProtectionPreserved, true);
     assert.equal(receipt.publicSanitized, true);
     assert.equal(receipt.schemaVersion, "0.8.0");
+    assert.deepEqual(createProviderDeploymentReceipt({ providerDeployment: deepFreeze(structuredClone(provider)), verifiedEvidence, now: providerReceiptNow }), receipt);
+    const nativeProvider = structuredClone(provider);
+    const nativeSrc = nativeProvider.fileTree.response[0];
+    nativeSrc.children = nativeSrc.children.filter(({ name }) => name !== "out");
+    nativeProvider.fileTree.response = [nativeSrc, nativeTreeFixture()[1]];
+    nativeProvider.fileTree.request = providerRequest("GET", nativeProvider.fileTree.request.url, nativeProvider.fileTree.response);
+    for (const content of nativeProvider.contents) {
+      content.request = providerRequest("GET", content.request.url.replace(/\?path=[^&]*&/u, "?"), content.response);
+      content.request.responseCharset = "utf8";
+    }
+    const nativeArguments = {
+      providerDeployment: nativeProvider, verifiedEvidence, now: providerReceiptNow,
+      fileTreeProfile: NATIVE_FILE_TREE_PROFILE,
+      nativeFileTreeBytes: Buffer.from(JSON.stringify(nativeProvider.fileTree.response)),
+      nativeContentBodies: nativeProvider.contents.map(({ path: entryPath, response }) => ({ path: entryPath, rawBytes: Buffer.from(JSON.stringify(response)) }))
+    };
+    const nativeBefore = JSON.stringify(nativeProvider);
+    const nativeReceipt = createProviderDeploymentReceipt({ ...nativeArguments, providerDeployment: deepFreeze(nativeProvider) });
+    assert.equal(JSON.stringify(nativeProvider), nativeBefore);
+    assert.equal(nativeReceipt.schemaVersion, "0.9.0");
+    assert.equal(nativeReceipt.fileTreeAdapterProfile, NATIVE_FILE_TREE_PROFILE);
+    assert.equal(nativeReceipt.runtimeEntriesUsedAsSource, false);
+    assert.equal(nativeReceipt.runtimeOccurrences.length, 6);
+    assert.equal(nativeReceipt.deploymentInputRootSha256, receipt.deploymentInputRootSha256);
+    assert.equal(nativeReceipt.providerContentReadCount, receipt.providerContentReadCount);
+    assert.equal(nativeReceipt.consequentialAuthorityGranted, false);
+    const rejectNative = (mutate, pattern = /CLOVER_|unsafe source/u) => {
+      const candidate = structuredClone(nativeProvider); mutate(candidate);
+      candidate.fileTree.request = { ...providerRequest("GET", candidate.fileTree.request.url, candidate.fileTree.response), responseCharset: candidate.fileTree.request.responseCharset };
+      for (const content of candidate.contents) content.request = { ...providerRequest("GET", content.request.url, content.response), responseCharset: content.request.responseCharset };
+      assert.throws(() => createProviderDeploymentReceipt({ ...nativeArguments, providerDeployment: candidate,
+        nativeFileTreeBytes: Buffer.from(JSON.stringify(candidate.fileTree.response)),
+        nativeContentBodies: candidate.contents.map(({ path: entryPath, response }) => ({ path: entryPath, rawBytes: Buffer.from(JSON.stringify(response)) }))
+      }), pattern);
+    };
+    const nativeSourceLeaf = (candidate) => {
+      const pending = [candidate.fileTree.response.find(({ name }) => name === "src")];
+      while (pending.length) {
+        const node = pending.pop();
+        if (node.type === "directory") {
+          const leaf = node.children.find((entry) => entry.type === "file");
+          if (leaf) return { parent: node, leaf };
+          pending.push(...node.children);
+        }
+      }
+      throw new Error("constructed source fixture lacks file");
+    };
+    rejectNative((candidate) => { nativeSourceLeaf(candidate).leaf.mode = 0o100755; }, /DEPLOYMENT_INPUT_MISMATCH/u);
+    rejectNative((candidate) => {
+      const { parent, leaf } = nativeSourceLeaf(candidate);
+      parent.children = parent.children.filter((entry) => entry !== leaf);
+      candidate.contents = candidate.contents.filter(({ uid }) => uid !== leaf.uid);
+    }, /DEPLOYMENT_INPUT_MISMATCH/u);
+    rejectNative((candidate) => {
+      const { leaf } = nativeSourceLeaf(candidate);
+      const content = candidate.contents.find(({ uid }) => uid === leaf.uid);
+      const bytes = Buffer.from("synthetic substitution with a correctly rebound UID and response digest");
+      leaf.uid = sha1(bytes); content.uid = leaf.uid; content.response.data = bytes.toString("base64");
+      content.request.url = `https://api.vercel.com/v8/deployments/${candidate.deployment.response.id}/files/${leaf.uid}?teamId=${VERCEL_TEAM_ID}`;
+    }, /DEPLOYMENT_INPUT_MISMATCH/u);
+    rejectNative((candidate) => {
+      const { parent, leaf } = nativeSourceLeaf(candidate);
+      const content = structuredClone(candidate.contents.find(({ uid }) => uid === leaf.uid));
+      parent.children.push({ ...leaf, name: "extra.txt" });
+      content.path = `${content.path.slice(0, content.path.lastIndexOf("/"))}/extra.txt`; candidate.contents.push(content);
+    }, /DEPLOYMENT_INPUT_MISMATCH/u);
+    rejectNative((candidate) => { candidate.fileTree.request.responseCharset = "utf8"; }, /FILE_TREE_REQUEST_REJECTED/u);
+    rejectNative((candidate) => { candidate.contents.pop(); });
+    rejectNative((candidate) => { candidate.contents.push(structuredClone(candidate.contents[0])); });
+    rejectNative((candidate) => { candidate.contents[0].uid = "f".repeat(40); });
+    rejectNative((candidate) => { candidate.contents[0].response.data = Buffer.from("substituted").toString("base64"); });
+    rejectNative((candidate) => { candidate.contents[0].path = "out/substitute"; });
+    rejectNative((candidate) => { candidate.contents[0].request.responseCharset = "latin1"; });
+    rejectNative((candidate) => { candidate.deployment.request.responseCharset = "utf8"; });
+    assert.throws(() => createProviderDeploymentReceipt({ ...nativeArguments, nativeFileTreeBytes: Buffer.from("[]") }), /RAW_PROJECTION_MISMATCH/u);
+    assert.throws(() => createProviderDeploymentReceipt({ ...nativeArguments, nativeContentBodies: [] }), /NATIVE_CONTENT_INVENTORY_REJECTED/u);
+
     assert.equal(receipt.providerRequestEvidenceSchemaVersion, "clover-vercel-provider-request-evidence-v0.2");
     assert.equal(receipt.providerControlPlaneTransportKind, "vercel-api-cli");
     assert.equal(receipt.providerControlPlaneRedirectTelemetry, "not-exposed-by-vercel-api-cli");

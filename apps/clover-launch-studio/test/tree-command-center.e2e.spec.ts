@@ -1972,7 +1972,9 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   };
 }
 
-type ExactSourceRole = "exact-pr-head" | "non-authoritative-local-validation-container" | "disabled-non-pr";
+type ExactSourceRole = "exact-pr-head" | "non-authoritative-local-validation-container" | "disabled-non-pr" | "local-attestation-compatibility-repair" | "ci-attestation-compatibility-repair";
+
+const isRepairContext = (role: string) => role === "local-attestation-compatibility-repair" || role === "ci-attestation-compatibility-repair";
 
 function exactExecutionContext(environment: Readonly<Record<string, string | undefined>> = process.env) {
   if (environment.GITHUB_ACTIONS !== undefined
@@ -1991,6 +1993,9 @@ function exactExecutionContext(environment: Readonly<Record<string, string | und
     }
     role = "exact-pr-head";
   }
+  else if (!githubActions && requested === "local-attestation-compatibility-repair" && exactPrHead === null) role = requested;
+  else if (githubActions && requested === "ci-attestation-compatibility-repair"
+    && declaredHead !== null && declaredHead === exactPrHead) role = requested;
   else if (githubActions && requested === "disabled-non-pr") role = "disabled-non-pr";
   else if (!githubActions && requested === "non-authoritative-local-validation-container") {
     role = "non-authoritative-local-validation-container";
@@ -2001,7 +2006,7 @@ function exactExecutionContext(environment: Readonly<Record<string, string | und
     localSourceClosureContext: role,
     declaredHead,
     exactPrHead,
-    receiptIssuance: role === "disabled-non-pr" ? "disabled" as const : "enabled" as const
+    receiptIssuance: role === "disabled-non-pr" || isRepairContext(role) ? "disabled" as const : "enabled" as const
   };
 }
 
@@ -4364,7 +4369,7 @@ async function writeLocalSourceClosureReceipt(page: Page, testInfo: TestInfo) {
   const state = localClosureStates.get(page);
   if (!state?.eligible) return null;
   const receiptContext = exactExecutionContext();
-  if (receiptContext.role === "disabled-non-pr") return null;
+  if (receiptContext.role === "disabled-non-pr" || isRepairContext(receiptContext.role)) return null;
   if (testInfo.status !== "passed" || testInfo.expectedStatus !== "passed") return null;
   if (!state.closureCompleted || state.closureGeneration === null
     || state.expectedRequestObservedAt === null || state.expectedGithubObservedAt === null) {
@@ -8046,6 +8051,21 @@ async function writeAccessibilityEvidence(
 }
 
 test.beforeAll(async () => {
+  const context = process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT ?? "";
+  if (isRepairContext(context)) {
+    if (protectedPreviewEvidence) throw new Error("Local repair source evidence cannot authorize protected-preview execution");
+    const bytes = execFileSync(process.execPath, ["scripts/clover-deployment-attestation.mjs", "repair-source", "--repository-root", "../.."], {
+      cwd: process.cwd(), env: process.env, maxBuffer: 1024 * 1024
+    });
+    const directory = path.join(process.cwd(), "test-results", "clover-attestation-repair-source");
+    mkdirSync(directory, { recursive: true, mode: 0o755 });
+    const project = test.info().project.name;
+    if (!["desktop-chromium", "mobile-chromium"].includes(project)) throw new Error("Unreviewed repair browser project");
+    const target = path.join(directory, `${project}.json`);
+    if (existsSync(target)) {
+      if (!readFileSync(target).equals(bytes)) throw new Error("Repair source changed during browser verification");
+    } else writeFileSync(target, bytes, { flag: "wx", mode: 0o644 });
+  }
   if (protectedPreviewEvidence) {
     protectedPreviewLocalSource();
     expectedBrowserOrigin = protectedPreviewAcceptance.origin;

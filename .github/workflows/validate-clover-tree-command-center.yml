@@ -31,7 +31,8 @@ jobs:
     env:
       CLOVER_TREE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_TREE_EXACT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
+      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && github.head_ref == 'codex/clover-provider-attestation-compat-20260908' && github.event.number != 35 && 'ci-attestation-compatibility-repair' || github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
+      CLOVER_TREE_PR_NUMBER: ${{ github.event.number || '' }}
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -533,7 +534,8 @@ jobs:
     env:
       CLOVER_TREE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_TREE_EXACT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
+      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && github.head_ref == 'codex/clover-provider-attestation-compat-20260908' && github.event.number != 35 && 'ci-attestation-compatibility-repair' || github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
+      CLOVER_TREE_PR_NUMBER: ${{ github.event.number || '' }}
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -5236,6 +5238,24 @@ jobs:
 
           const localReceiptRoot = path.join(root, 'clover-tree-local-source-closure');
           const exactPrLocalClosure = process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'exact-pr-head';
+          const repairContext = ['local-attestation-compatibility-repair', 'ci-attestation-compatibility-repair'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);
+          const repairSourceRoot = path.join(root, 'clover-attestation-repair-source');
+          const repairSourceBindings = [];
+          if (repairContext) {
+            const expectedRepairBytes = execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'repair-source', '--repository-root', process.cwd()], { maxBuffer: 1024 * 1024 });
+            const expectedRepair = JSON.parse(expectedRepairBytes.toString('utf8'));
+            const rootStat = fs.lstatSync(repairSourceRoot);
+            requireCondition(rootStat.isDirectory() && !rootStat.isSymbolicLink() && (rootStat.mode & 0o777) === 0o755, 'repair source root unsafe');
+            exactJson(fs.readdirSync(repairSourceRoot).sort(), Object.keys(exactProjects).map((project) => `${project}.json`).sort(), 'repair source proof inventory');
+            for (const project of Object.keys(exactProjects)) {
+              const target = path.join(repairSourceRoot, `${project}.json`);
+              const stat = fs.lstatSync(target);
+              requireCondition(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && (stat.mode & 0o777) === 0o644 && stat.size <= 1024 * 1024, 'repair source proof unsafe');
+              const bytes = fs.readFileSync(target);
+              requireCondition(bytes.equals(expectedRepairBytes) && expectedRepair.head === process.env.CLOVER_TREE_HEAD, 'repair source proof differs from current committed source');
+              repairSourceBindings.push({ project, target, sourceProofSelfHash: expectedRepair.sourceProofSelfHash, classification: expectedRepair.classification });
+            }
+          } else requireCondition(!fs.existsSync(repairSourceRoot), 'repair artifacts outside explicit repair context');
           const localReceipts = [];
           if (exactPrLocalClosure) {
           const localReceiptRootStat = fs.lstatSync(localReceiptRoot);
@@ -5707,7 +5727,7 @@ jobs:
           try { safeRelative('../receipt.json'); } catch { unsafePathRejected = true; }
           requireCondition(unsafePathRejected, 'unsafe receipt path mutation was accepted');
           } else {
-            requireCondition(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'disabled-non-pr', 'unreviewed local source-closure workflow context');
+            requireCondition(repairContext || process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'disabled-non-pr', 'unreviewed local source-closure workflow context');
             requireCondition(!fs.existsSync(localReceiptRoot), 'local PR source-closure receipts must not be generated outside the exact PR context');
           }
 
@@ -5748,10 +5768,10 @@ jobs:
             sourceClosureStatus: 'LOCAL_SOURCE_VALIDATED_PROVIDER_ACCEPTANCE_PENDING'
           } : {
             artifactType: 'local-source-closure-receipt-set',
-            context: 'disabled-non-pr',
+            context: repairContext ? process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT : 'disabled-non-pr',
             count: 0,
             canonicalSha256: sha256(`${canonicalJson([])}\n`),
-            providerBindingStatus: 'not-applicable-postmerge-browser-validation',
+            providerBindingStatus: repairContext ? 'not-applicable-local-or-ci-repair-validation' : 'not-applicable-postmerge-browser-validation',
             finalProviderAcceptance: false,
             sourceClosureStatus: 'NOT_GENERATED_OUTSIDE_EXACT_PR_CONTEXT'
           };
@@ -5803,6 +5823,7 @@ jobs:
               })))}\n`)
             },
             localSourceClosure: localSourceClosureSummary,
+            attestationRepairSource: repairSourceBindings.map(({ project, sourceProofSelfHash, classification }) => ({ project, sourceProofSelfHash, classification, exactPr35Acceptance: false, providerAcceptance: false })),
             syntheticPrivacyFixtures: syntheticPrivacyFixtureProof.records,
             publicSanitized: true,
             privateDataAccessed: false,
@@ -5815,6 +5836,7 @@ jobs:
           fs.writeFileSync(summaryPath, summaryBytes, { mode: 0o644 });
           const provenancePath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-source-provenance.json');
           const manifestSources = [
+            ...repairSourceBindings.map(({ project, target, sourceProofSelfHash, classification }) => ({ artifactType: 'attestation-repair-source', label: safeRelative(target), target, binding: { project, sourceProofSelfHash, classification, providerAcceptance: false } })),
             ...documents.map(({ project, target, document }) => ({
               artifactType: 'accessibility-evidence', label: safeRelative(target), target,
               binding: {

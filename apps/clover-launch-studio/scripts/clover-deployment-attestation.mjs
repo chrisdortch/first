@@ -14,6 +14,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  readSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -69,6 +70,84 @@ const PINNED_VENDOR_GENERIC_PATH_SAMPLE = Object.freeze({
   sha256: "7827c52811c9e79838881ec81dc22933682d26e36500d75f5e2184732317914b"
 });
 
+export const ATTESTATION_REPAIR_BASE = "63a1614c11014efffdb6724ea6044e3bddac686a";
+export const ATTESTATION_REPAIR_BRANCH = "codex/clover-provider-attestation-compat-20260908";
+export const ATTESTATION_REPAIR_CONTEXT = "local-attestation-compatibility-repair";
+export const ATTESTATION_REPAIR_CI_CONTEXT = "ci-attestation-compatibility-repair";
+export const ATTESTATION_REPAIR_PATHS = Object.freeze([
+  ".github/workflows/validate-clover-tree-command-center.yml",
+  "apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs",
+  "apps/clover-launch-studio/test/live-truth-attestation.test.mjs",
+  "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"
+]);
+
+// A separate local-only source contract. Historical D18–D20 campaign predicates stay unchanged.
+export function deriveAttestationRepairSource({ repositoryRoot, environment = process.env } = {}) {
+  const ci = environment.GITHUB_ACTIONS === "true";
+  const context = environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT;
+  if (!repositoryRoot || ![undefined, "false", "true"].includes(environment.GITHUB_ACTIONS)
+    || ci && (context !== ATTESTATION_REPAIR_CI_CONTEXT || environment.GITHUB_EVENT_NAME !== "pull_request"
+      || environment.GITHUB_HEAD_REF !== ATTESTATION_REPAIR_BRANCH || !/^[1-9][0-9]*$/u.test(environment.CLOVER_TREE_PR_NUMBER ?? "")
+      || !Number.isSafeInteger(Number(environment.CLOVER_TREE_PR_NUMBER)) || environment.CLOVER_TREE_PR_NUMBER === "35" || !/^[0-9a-f]{40}$/u.test(environment.CLOVER_TREE_EXACT_PR_HEAD ?? ""))
+    || !ci && (context !== ATTESTATION_REPAIR_CONTEXT || environment.CLOVER_TREE_EXACT_PR_HEAD)) throw new Error("CLOVER_REPAIR_CONTEXT_REJECTED");
+  const forbiddenGitEnvironment = (values) => Object.keys(values).some((key) => key.startsWith("GIT_") && !["GIT_PAGER", "GIT_TERMINAL_PROMPT"].includes(key) && values[key] !== undefined);
+  if (forbiddenGitEnvironment(process.env) || forbiddenGitEnvironment(environment)) throw new Error("CLOVER_REPAIR_GIT_ENVIRONMENT_REJECTED");
+  const root = realpathSync(repositoryRoot);
+  if (ci && (typeof environment.GITHUB_WORKSPACE !== "string" || realpathSync(environment.GITHUB_WORKSPACE) !== root)) throw new Error("CLOVER_REPAIR_GIT_ROOT_REJECTED");
+  if (realpathSync(git(root, ["rev-parse", "--show-toplevel"]).trim()) !== root
+    || git(root, ["rev-parse", "--is-shallow-repository"]).trim() !== "false"
+    || git(root, ["for-each-ref", "--format=%(refname)", "refs/replace"]).trim() !== ""
+    || existsSync(path.resolve(root, git(root, ["rev-parse", "--git-path", "info/grafts"]).trim()))) throw new Error("CLOVER_REPAIR_GIT_ROOT_REJECTED");
+  if (git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) !== "") throw new Error("CLOVER_REPAIR_DIRTY_SOURCE_REJECTED");
+  const checkoutBranch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  const branch = ci ? environment.GITHUB_HEAD_REF : checkoutBranch;
+  const head = git(root, ["rev-parse", "HEAD^{commit}"]).trim();
+  const tree = git(root, ["rev-parse", "HEAD^{tree}"]).trim();
+  if (branch !== ATTESTATION_REPAIR_BRANCH || ci && !["HEAD", ATTESTATION_REPAIR_BRANCH].includes(checkoutBranch)
+    || ci && (environment.CLOVER_TREE_HEAD !== head || environment.CLOVER_TREE_EXACT_PR_HEAD !== head)
+    || environment.CLOVER_TREE_HEAD && environment.CLOVER_TREE_HEAD !== head
+    || git(root, ["rev-parse", `${ATTESTATION_REPAIR_BASE}^{tree}`]).trim() !== "f6dffad3a87b0557f3a312bcf3e88eac1e3c8f9a"
+    || git(root, ["show", "-s", "--format=%P", ATTESTATION_REPAIR_BASE]).trim() !== "8d609c08c3a88a0ed8805200abcff96fe5c76f94") throw new Error("CLOVER_REPAIR_IDENTITY_REJECTED");
+  git(root, ["merge-base", "--is-ancestor", ATTESTATION_REPAIR_BASE, head]);
+  const commits = git(root, ["rev-list", "--reverse", `${ATTESTATION_REPAIR_BASE}..${head}`]).trim().split("\n");
+  if (commits.length < 1 || commits.length > 3 || commits[0] === "") throw new Error("CLOVER_REPAIR_DEPTH_REJECTED");
+  let parent = ATTESTATION_REPAIR_BASE;
+  const inspectDelta = (before, after) => {
+    const changes = parseSourceChanges(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "--no-renames", "-z", before, after], { encoding: null }));
+    if (changes.length === 0 || changes.some((entry) => entry.status !== "M" || !ATTESTATION_REPAIR_PATHS.includes(entry.path))) throw new Error("CLOVER_REPAIR_PATH_REJECTED");
+    for (const entry of changes) {
+      const base = sourceObject(root, before, entry.path);
+      const current = sourceObject(root, after, entry.path);
+      decodeUtf8Fatal(sourceBytes(root, before, entry.path), "CLOVER_REPAIR_TEXT");
+      decodeUtf8Fatal(sourceBytes(root, after, entry.path), "CLOVER_REPAIR_TEXT");
+      if (base.mode !== "100644" || current.mode !== "100644" || base.blob === current.blob
+        || sourceBytes(root, before, entry.path).includes(0) || sourceBytes(root, after, entry.path).includes(0)) throw new Error("CLOVER_REPAIR_BLOB_REJECTED");
+    }
+    return changes.map(({ path: changedPath }) => changedPath).sort(compareUtf8);
+  };
+  for (const commit of commits) {
+    if (git(root, ["show", "-s", "--format=%P", commit]).trim() !== parent) throw new Error("CLOVER_REPAIR_LINEARITY_REJECTED");
+    inspectDelta(parent, commit);
+    parent = commit;
+  }
+  const paths = inspectDelta(ATTESTATION_REPAIR_BASE, head);
+  const body = {
+    schemaVersion: "clover-local-attestation-repair-source-v1",
+    classification: ci ? "ci-repair-candidate" : "local-repair-candidate",
+    taskId: "CLOVER-ATTESTATION-COMPATIBILITY-20260908-A",
+    context, githubActions: ci, pullRequestNumber: ci ? Number(environment.CLOVER_TREE_PR_NUMBER) : null, branch, head, tree,
+    parent: git(root, ["show", "-s", "--format=%P", head]).trim(),
+    base: ATTESTATION_REPAIR_BASE, baseTree: "f6dffad3a87b0557f3a312bcf3e88eac1e3c8f9a",
+    commitIds: commits, localCommitCount: commits.length, paths,
+    pathListSha256: sha256(`${paths.join("\n")}\n`),
+    allowedPathListSha256: "bfd0214a1dd7f91010fcdcb5a9a4b6286023a3624d7714801fbb27d4bc2bb28b",
+    diffSha256: sha256(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--binary", "--full-index", "--no-renames", ATTESTATION_REPAIR_BASE, head], { encoding: null })),
+    cleanWorktree: true, linearFirstParent: true, exactPrHeadAcceptance: false,
+    providerAcceptance: false, consequentialAuthorityGranted: false, deploymentAllowanceGranted: false
+  };
+  return Object.freeze({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
+}
+
 export function deriveRuntimeDeploymentKey(commit) {
   assertHex(commit, 40, "source commit");
   const deploymentKey = `clover-${commit.slice(0, 24)}`;
@@ -107,7 +186,7 @@ function decodeUtf8Fatal(value, label) {
   }
 }
 
-function parseJsonWithoutDuplicateKeys(source, label) {
+function parseJsonWithoutDuplicateKeys(source, label, maximumDepth = 256) {
   let offset = 0;
   const reject = () => { throw new Error(`${label}_REJECTED`); };
   const whitespace = () => { while (/[\u0009\u000a\u000d\u0020]/u.test(source[offset] ?? "")) offset += 1; };
@@ -130,7 +209,8 @@ function parseJsonWithoutDuplicateKeys(source, label) {
     }
     reject();
   };
-  const parseValue = () => {
+  const parseValue = (depth = 0) => {
+    if (depth > maximumDepth) reject();
     whitespace();
     const character = source[offset];
     if (character === '"') return parseString();
@@ -147,7 +227,7 @@ function parseJsonWithoutDuplicateKeys(source, label) {
         whitespace();
         if (source[offset] !== ":") reject();
         offset += 1;
-        object[key] = parseValue();
+        object[key] = parseValue(depth + 1);
         whitespace();
         if (source[offset] === "}") { offset += 1; return object; }
         if (source[offset] !== ",") reject();
@@ -162,7 +242,7 @@ function parseJsonWithoutDuplicateKeys(source, label) {
       const array = [];
       if (source[offset] === "]") { offset += 1; return array; }
       while (offset < source.length) {
-        array.push(parseValue());
+        array.push(parseValue(depth + 1));
         whitespace();
         if (source[offset] === "]") { offset += 1; return array; }
         if (source[offset] !== ",") reject();
@@ -225,6 +305,7 @@ function exactSourcePath(value) {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
+    Buffer.from(value, "utf8").toString("utf8") !== value ||
     value !== value.normalize("NFC") ||
     value === "." ||
     value.startsWith("/") ||
@@ -2317,7 +2398,7 @@ function decodeCanonicalBase64(value, label) {
   return bytes;
 }
 
-function exactProviderRequest(value, { method, url, response, requestProjection = NO_PROVIDER_REQUEST_BODY, nowTime }, label) {
+function exactProviderRequest(value, { method, url, response, requestProjection = NO_PROVIDER_REQUEST_BODY, nowTime, nativeContent = false }, label) {
   exactKeys(value, [
     "schemaVersion", "method", "url", "status", "requestStartedAt", "responseObservedAt", "transport",
     "requestProjection", "requestProjectionHashDomain", "requestProjectionBytes", "requestProjectionSha256",
@@ -2328,6 +2409,7 @@ function exactProviderRequest(value, { method, url, response, requestProjection 
     "transportKind", "cliPackage", "cliVersion", "cliIntegrity", "responseView", "redirectTelemetry", "redirectClaim",
     "callerInvocationCount", "automaticRetryPolicy", "actualWireAttemptCount"
   ], `${label}_TRANSPORT`);
+  boundProviderTree(response);
   const requestBytes = Buffer.from(`${canonicalJson(requestProjection)}\n`, "utf8");
   const responseBytes = Buffer.from(`${canonicalJson(response)}\n`, "utf8");
   const requestStartedTime = Date.parse(value.requestStartedAt);
@@ -2352,7 +2434,7 @@ function exactProviderRequest(value, { method, url, response, requestProjection 
     value.requestProjectionHashDomain !== PROVIDER_REQUEST_PROJECTION_HASH_DOMAIN ||
     !Number.isSafeInteger(value.requestProjectionBytes) || value.requestProjectionBytes !== requestBytes.length ||
     value.requestProjectionBytes > MAX_PROVIDER_RESPONSE_PROJECTION_BYTES || value.requestProjectionSha256 !== sha256(requestBytes) ||
-    value.responseMediaTypeEssence !== "application/json" || value.responseCharset !== null && value.responseCharset !== "utf-8" ||
+    value.responseMediaTypeEssence !== "application/json" || value.responseCharset !== null && value.responseCharset !== "utf-8" && !(nativeContent && method === "GET" && /^https:\/\/api\.vercel\.com\/v8\/deployments\/dpl_[A-Za-z0-9]+\/files\/[0-9a-f]{40}\?teamId=team_kx19aCrSTnej6wpz0fLgmYDY$/u.test(url) && value.responseCharset === "utf8") ||
     canonicalJson(value.responseOtherMediaTypeParameters) !== "[]" || value.responseHashDomain !== PROVIDER_RESPONSE_PROJECTION_HASH_DOMAIN ||
     !Number.isSafeInteger(value.responseProjectionBytes) || value.responseProjectionBytes !== responseBytes.length ||
     value.responseProjectionBytes > MAX_PROVIDER_RESPONSE_PROJECTION_BYTES || value.responseProjectionSha256 !== sha256(responseBytes)
@@ -2666,7 +2748,196 @@ function exactProviderEvent(value, { action, url, projectReadUrl, readRequest, e
   };
 }
 
-export function createProviderDeploymentReceipt({ providerDeployment, verifiedEvidence, now = new Date() }) {
+
+export const NATIVE_FILE_TREE_PROFILE = "vercel-native-peer-roots-v1";
+export const LEGACY_FILE_TREE_PROFILE = "vercel-legacy-nested-out-v1";
+const NATIVE_MAX_BYTES = 32 * 1024 * 1024;
+const NATIVE_MAX_DEPTH = 64;
+const NATIVE_MAX_ENTRIES = 50_000;
+const NATIVE_MAX_AGGREGATE_BODY_BYTES = 128 * 1024 * 1024;
+
+// Bound hostile objects before canonicalization. No caller-owned node is sorted or rewritten.
+function boundProviderTree(response) {
+  const pending = [{ value: response, depth: 0 }];
+  const seen = new Set();
+  let entries = 0;
+  let textBytes = 0;
+  while (pending.length) {
+    const { value, depth } = pending.pop();
+    if (depth > NATIVE_MAX_DEPTH * 3 || ++entries > NATIVE_MAX_ENTRIES * 8) throw new Error("CLOVER_PROVIDER_TREE_LIMIT_REJECTED");
+    if (typeof value === "string") textBytes += Buffer.byteLength(value);
+    if (textBytes > NATIVE_MAX_BYTES) throw new Error("CLOVER_PROVIDER_TREE_LIMIT_REJECTED");
+    if (value && typeof value === "object") {
+      if (seen.has(value)) throw new Error("CLOVER_PROVIDER_TREE_ALIAS_REJECTED");
+      seen.add(value);
+      for (const [key, child] of Object.entries(value)) {
+        textBytes += Buffer.byteLength(key);
+        pending.push({ value: child, depth: depth + 1 });
+      }
+    }
+  }
+  if (Buffer.byteLength(canonicalJson(response)) > NATIVE_MAX_BYTES) throw new Error("CLOVER_PROVIDER_TREE_LIMIT_REJECTED");
+}
+
+export function parseProviderFileTree({ response, expectsExternalInputs, profile = LEGACY_FILE_TREE_PROFILE, rawBytes } = {}) {
+  if (![LEGACY_FILE_TREE_PROFILE, NATIVE_FILE_TREE_PROFILE].includes(profile) || typeof expectsExternalInputs !== "boolean") throw new Error("CLOVER_PROVIDER_TREE_PROFILE_REJECTED");
+  const native = profile === NATIVE_FILE_TREE_PROFILE;
+  let rawBodySha256 = null;
+  let rawBodyBytes = null;
+  if (native) {
+    if (!Buffer.isBuffer(rawBytes) || rawBytes.length === 0 || rawBytes.length > NATIVE_MAX_BYTES) throw new Error("CLOVER_PROVIDER_RAW_BODY_REJECTED");
+    const parsed = parseJsonWithoutDuplicateKeys(decodeUtf8Fatal(rawBytes, "CLOVER_PROVIDER_NATIVE_JSON"), "CLOVER_PROVIDER_NATIVE_JSON", NATIVE_MAX_DEPTH * 3);
+    boundProviderTree(parsed);
+    boundProviderTree(response);
+    if (canonicalJson(parsed) !== canonicalJson(response)) throw new Error("CLOVER_PROVIDER_RAW_PROJECTION_MISMATCH");
+    rawBodySha256 = sha256(rawBytes);
+    rawBodyBytes = rawBytes.length;
+  } else {
+    if (rawBytes !== undefined) throw new Error("CLOVER_PROVIDER_LEGACY_RAW_BODY_REJECTED");
+    boundProviderTree(response);
+  }
+  const safeNodeName = (name) => {
+    if (typeof name !== "string" || name.length === 0 || name.length > 255 || Buffer.from(name, "utf8").toString("utf8") !== name || name === "." || name === ".." || name !== name.normalize("NFC") || /[\\/\u0000-\u001f\u007f]/u.test(name)) throw new Error("CLOVER_PROVIDER_FILE_PATH_REJECTED");
+    return name;
+  };
+  const runtimeOccurrences = [];
+  const runtimePaths = new Map();
+  let runtimeCount = 0;
+  const validateNativeRuntime = (node, fullPath, ordinal) => {
+    safeNodeName(node?.name);
+    if (++runtimeCount > NATIVE_MAX_ENTRIES || ordinal.length > NATIVE_MAX_DEPTH) throw new Error("CLOVER_PROVIDER_RUNTIME_LIMIT_REJECTED");
+    exactSourcePath(fullPath);
+    const occurrences = runtimePaths.get(fullPath) ?? [];
+    if (occurrences.includes(node.type) || occurrences.length >= 2 || occurrences.length === 1 && !["directory", "lambda"].includes(node.type)) throw new Error("CLOVER_PROVIDER_RUNTIME_COLLISION_REJECTED");
+    occurrences.push(node.type);
+    runtimePaths.set(fullPath, occurrences);
+    if (node.type === "directory") {
+      exactKeys(node, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_RUNTIME_DIRECTORY");
+      if (node.mode !== 0o40555 || !Array.isArray(node.children)) throw new Error("CLOVER_PROVIDER_RUNTIME_DIRECTORY_REJECTED");
+      runtimeOccurrences.push({ namespace: "out", path: fullPath, type: node.type, mode: node.mode, ordinal: [...ordinal], uid: null });
+      node.children.forEach((child, index) => validateNativeRuntime(child, `${fullPath}/${safeNodeName(child?.name)}`, [...ordinal, index]));
+    } else {
+      exactKeys(node, ["name", "type", "mode", "uid"], "CLOVER_PROVIDER_RUNTIME_LAMBDA");
+      // Observed CLI native profile: team-scoped opaque ID, not a source-content hash.
+      if (node.type !== "lambda" || node.mode !== 0o140666 || typeof node.uid !== "string" || !new RegExp(`^${VERCEL_TEAM_ID}-[0-9a-f]{34}$`, "u").test(node.uid)) throw new Error("CLOVER_PROVIDER_RUNTIME_LAMBDA_REJECTED");
+      runtimeOccurrences.push({ namespace: "out", path: fullPath, type: node.type, mode: node.mode, ordinal: [...ordinal], uid: node.uid });
+    }
+  };
+  const roots = response;
+  if (!Array.isArray(roots)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  if (roots.length !== (native ? 2 : 1)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  if (native && (new Set(roots.map(({ name }) => name)).size !== 2 || !roots.some(({ name }) => name === "out"))) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  const src = native ? roots.find(({ name }) => name === "src") : roots[0];
+  exactKeys(src, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
+  if (src.name !== "src" || src.type !== "directory" || src.mode !== 0o40555 || !Array.isArray(src.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  const childByName = (directory, name) => {
+    const names = directory.children.map((child) => safeNodeName(child.name));
+    if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
+    const matches = directory.children.filter((child) => child.name === name);
+    if (matches.length !== 1) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+    return matches[0];
+  };
+  const sourceChildNames = src.children.map((child) => safeNodeName(child.name)).sort(compareUtf8);
+  const expectedSourceChildNames = expectsExternalInputs ? [".vercel", "apps"] : [".vercel"];
+  if (!native) expectedSourceChildNames.push("out");
+  if (canonicalJson(sourceChildNames) !== canonicalJson(expectedSourceChildNames)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  const vercel = childByName(src, ".vercel");
+  exactKeys(vercel, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
+  if (vercel.type !== "directory" || vercel.mode !== 0o40555 || !Array.isArray(vercel.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  if (vercel.children.length !== 1 || safeNodeName(vercel.children[0]?.name) !== "output") throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  const output = childByName(vercel, "output");
+  exactKeys(output, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
+  if (output.type !== "directory" || output.mode !== 0o40555 || !Array.isArray(output.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+  const providerOut = native ? roots.find(({ name }) => name === "out") : childByName(src, "out");
+  const validateIgnoredProviderTree = (node) => {
+    safeNodeName(node?.name);
+    if (node.type === "directory") {
+      exactKeys(node, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_IGNORED_DIRECTORY");
+      if (node.mode !== 0o40555 || !Array.isArray(node.children)) throw new Error("CLOVER_PROVIDER_IGNORED_DIRECTORY_REJECTED");
+      const names = node.children.map((child) => safeNodeName(child.name));
+      if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
+      for (const child of node.children) validateIgnoredProviderTree(child);
+      return;
+    }
+    exactKeys(node, ["name", "type", "mode", "uid"], "CLOVER_PROVIDER_IGNORED_FILE");
+    const expectedTypeBits = node.type === "file" ? 0o100000 : 0o120000;
+    const permissions = node.mode & 0o7777;
+    if (
+      node.type !== "file" && node.type !== "symlink" || !Number.isSafeInteger(node.mode) || node.mode < 0 ||
+      node.mode !== (expectedTypeBits | permissions) ||
+      !(node.type === "file" ? [0o644, 0o664, 0o755] : [0o755, 0o777]).includes(permissions) ||
+      typeof node.uid !== "string" || !/^[0-9a-f]{40}$/u.test(node.uid)
+    ) throw new Error("CLOVER_PROVIDER_IGNORED_FILE_REJECTED");
+  };
+  if (native && (providerOut?.type !== "directory" || providerOut.name !== "out")) throw new Error("CLOVER_PROVIDER_RUNTIME_ROOT_REJECTED");
+  if (native) validateNativeRuntime(providerOut, "out", [roots.indexOf(providerOut)]);
+  else validateIgnoredProviderTree(providerOut);
+  const rawEntries = [];
+  const flatten = (directory, prefix) => {
+    if (prefix.split("/").length > NATIVE_MAX_DEPTH || rawEntries.length > NATIVE_MAX_ENTRIES) throw new Error("CLOVER_PROVIDER_SOURCE_LIMIT_REJECTED");
+    const names = directory.children.map((child) => safeNodeName(child.name));
+    if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
+    for (const node of [...directory.children].sort((left, right) => compareUtf8(left.name, right.name))) {
+      if (rawEntries.length >= NATIVE_MAX_ENTRIES) throw new Error("CLOVER_PROVIDER_SOURCE_LIMIT_REJECTED");
+      const outputPath = exactSourcePath(prefix ? `${prefix}/${node.name}` : node.name);
+      if (node.type === "directory") {
+        exactKeys(node, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
+        if (node.mode !== 0o40555 || !Array.isArray(node.children)) throw new Error("CLOVER_PROVIDER_DIRECTORY_REJECTED");
+        rawEntries.push({ type: "directory", path: outputPath, mode: node.mode });
+        flatten(node, outputPath);
+      } else {
+        exactKeys(node, ["name", "type", "mode", "uid"], "CLOVER_PROVIDER_FILE");
+        if (node.type !== "file" && node.type !== "symlink" || !Number.isSafeInteger(node.mode) || typeof node.uid !== "string" || !/^[0-9a-f]{40}$/u.test(node.uid)) throw new Error("CLOVER_PROVIDER_FILE_REJECTED");
+        const expectedTypeBits = node.type === "file" ? 0o100000 : 0o120000;
+        const permissions = node.mode & 0o7777;
+        if (
+          node.mode < 0 || node.mode !== (expectedTypeBits | permissions) ||
+          !(node.type === "file" ? [0o644, 0o664, 0o755] : [0o755, 0o777]).includes(permissions)
+        ) throw new Error("CLOVER_PROVIDER_FILE_MODE_REJECTED");
+        rawEntries.push({ type: node.type, path: outputPath, mode: node.mode, uid: node.uid });
+      }
+    }
+  };
+  flatten(output, ".vercel/output");
+  if (expectsExternalInputs) {
+    const apps = childByName(src, "apps");
+    exactKeys(apps, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
+    if (apps.type !== "directory" || apps.mode !== 0o40555 || !Array.isArray(apps.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
+    flatten(apps, "apps");
+  }
+  return Object.freeze({
+    profile, rawEntries, runtimeOccurrences,
+    rawBodyBytes, rawBodySha256,
+    canonicalObservationSha256: sha256(`${canonicalJson(response)}\n`),
+    runtimeObservationSha256: sha256(`${canonicalJson(runtimeOccurrences)}\n`),
+    consequentialAuthorityGranted: false
+  });
+}
+
+// Verifies a separately retained native v8 body against a source entry. This is not an acceptance receipt.
+export function verifyNativeProviderContent({ rawBytes, response, entry, request, deploymentId, now = new Date() } = {}) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_TIME_REJECTED");
+  if (!/^dpl_[A-Za-z0-9]+$/u.test(deploymentId) || !Buffer.isBuffer(rawBytes) || rawBytes.length === 0 || rawBytes.length > NATIVE_MAX_BYTES) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_REJECTED");
+  const parsed = parseJsonWithoutDuplicateKeys(decodeUtf8Fatal(rawBytes, "CLOVER_PROVIDER_NATIVE_CONTENT"), "CLOVER_PROVIDER_NATIVE_CONTENT", 4);
+  exactKeys(parsed, ["data"], "CLOVER_PROVIDER_NATIVE_CONTENT");
+  exactKeys(response, ["data"], "CLOVER_PROVIDER_NATIVE_CONTENT");
+  boundProviderTree(response);
+  if (canonicalJson(parsed) !== canonicalJson(response)) throw new Error("CLOVER_PROVIDER_RAW_CONTENT_MISMATCH");
+  if (!entry || !["file", "symlink"].includes(entry.type) || !/^[0-9a-f]{40}$/u.test(entry.uid)) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_ENTRY_REJECTED");
+  const sourcePath = exactSourcePath(entry.path);
+  if (!sourcePath.startsWith(".vercel/output/") && !EXTERNAL_DEPLOYMENT_INPUT_ROOTS.some((root) => sourcePath.startsWith(root))) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_ENTRY_REJECTED");
+  exactProviderRequest(request, {
+    method: "GET", url: canonicalProviderUrl("v8", `deployments/${deploymentId}/files/${entry.uid}`, [["teamId", VERCEL_TEAM_ID]]),
+    response, nowTime: now.getTime(), nativeContent: true
+  }, "CLOVER_PROVIDER_NATIVE_CONTENT_REQUEST");
+  const bytes = decodeCanonicalBase64(parsed.data, "CLOVER_PROVIDER_NATIVE_BASE64");
+  if (sha1(bytes) !== entry.uid) throw new Error("CLOVER_PROVIDER_UID_REJECTED");
+  return Object.freeze({ path: sourcePath, uid: entry.uid, rawBodyBytes: rawBytes.length, rawBodySha256: sha256(rawBytes),
+    canonicalObservationSha256: sha256(`${canonicalJson(response)}\n`), decodedBytes: bytes.length, decodedSha256: sha256(bytes),
+    providerAcceptance: false, consequentialAuthorityGranted: false });
+}
+
+export function createProviderDeploymentReceipt({ providerDeployment, verifiedEvidence, now = new Date(), fileTreeProfile = LEGACY_FILE_TREE_PROFILE, nativeFileTreeBytes, nativeContentBodies }) {
   const nowTime = now instanceof Date ? now.getTime() : Number.NaN;
   if (!Number.isFinite(nowTime) || new Date(nowTime).toISOString() !== now.toISOString()) throw new Error("CLOVER_PROVIDER_RECEIPT_TIME_REJECTED");
   const generatedAt = new Date(nowTime).toISOString();
@@ -2824,94 +3095,25 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     protection.postRevocationAuthenticatedApplicationRequestCount !== 0
   ) throw new Error("CLOVER_PROVIDER_PROTECTION_REJECTED");
 
-  const safeNodeName = (name) => {
-    if (typeof name !== "string" || name.length === 0 || name === "." || name === ".." || name !== name.normalize("NFC") || /[\\/\0\r\n]/u.test(name)) throw new Error("CLOVER_PROVIDER_FILE_PATH_REJECTED");
-    return name;
-  };
   exactKeys(providerDeployment.fileTree, ["request", "response"], "CLOVER_PROVIDER_FILE_TREE_READBACK");
+  const parsedFileTree = parseProviderFileTree({
+    response: providerDeployment.fileTree.response,
+    expectsExternalInputs: verifiedEvidence.deploymentInputManifest.externalInputs.regularFileCount > 0,
+    profile: fileTreeProfile,
+    rawBytes: nativeFileTreeBytes
+  });
   readRequest(providerDeployment.fileTree.request, {
     method: "GET",
     url: canonicalProviderUrl("v6", `deployments/${raw.id}/files`, [["teamId", VERCEL_TEAM_ID]]),
     response: providerDeployment.fileTree.response
   }, "CLOVER_PROVIDER_FILE_TREE_REQUEST");
-  const roots = providerDeployment.fileTree.response;
-  if (!Array.isArray(roots)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  if (roots.length !== 1) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  const src = roots[0];
-  exactKeys(src, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
-  if (src.name !== "src" || src.type !== "directory" || src.mode !== 0o40555 || !Array.isArray(src.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  const childByName = (directory, name) => {
-    const names = directory.children.map((child) => safeNodeName(child.name));
-    if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
-    const matches = directory.children.filter((child) => child.name === name);
-    if (matches.length !== 1) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-    return matches[0];
-  };
-  const sourceChildNames = src.children.map((child) => safeNodeName(child.name)).sort(compareUtf8);
-  const expectsExternalInputs = verifiedEvidence.deploymentInputManifest.externalInputs.regularFileCount > 0;
-  const expectedSourceChildNames = expectsExternalInputs ? [".vercel", "apps", "out"] : [".vercel", "out"];
-  if (canonicalJson(sourceChildNames) !== canonicalJson(expectedSourceChildNames)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  const vercel = childByName(src, ".vercel");
-  exactKeys(vercel, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
-  if (vercel.type !== "directory" || vercel.mode !== 0o40555 || !Array.isArray(vercel.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  if (vercel.children.length !== 1 || safeNodeName(vercel.children[0]?.name) !== "output") throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  const output = childByName(vercel, "output");
-  exactKeys(output, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
-  if (output.type !== "directory" || output.mode !== 0o40555 || !Array.isArray(output.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-  const providerOut = childByName(src, "out");
-  const validateIgnoredProviderTree = (node) => {
-    safeNodeName(node?.name);
-    if (node.type === "directory") {
-      exactKeys(node, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_IGNORED_DIRECTORY");
-      if (node.mode !== 0o40555 || !Array.isArray(node.children)) throw new Error("CLOVER_PROVIDER_IGNORED_DIRECTORY_REJECTED");
-      const names = node.children.map((child) => safeNodeName(child.name));
-      if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
-      for (const child of node.children) validateIgnoredProviderTree(child);
-      return;
-    }
-    exactKeys(node, ["name", "type", "mode", "uid"], "CLOVER_PROVIDER_IGNORED_FILE");
-    const expectedTypeBits = node.type === "file" ? 0o100000 : 0o120000;
-    const permissions = node.mode & 0o7777;
-    if (
-      node.type !== "file" && node.type !== "symlink" || !Number.isSafeInteger(node.mode) || node.mode < 0 ||
-      node.mode !== (expectedTypeBits | permissions) ||
-      !(node.type === "file" ? [0o644, 0o664, 0o755] : [0o755, 0o777]).includes(permissions) ||
-      typeof node.uid !== "string" || !/^[0-9a-f]{40}$/u.test(node.uid)
-    ) throw new Error("CLOVER_PROVIDER_IGNORED_FILE_REJECTED");
-  };
-  validateIgnoredProviderTree(providerOut);
-  const rawEntries = [];
-  const flatten = (directory, prefix) => {
-    const names = directory.children.map((child) => safeNodeName(child.name));
-    if (new Set(names).size !== names.length) throw new Error("CLOVER_PROVIDER_DUPLICATE_PATH_REJECTED");
-    for (const node of directory.children.sort((left, right) => compareUtf8(left.name, right.name))) {
-      const outputPath = exactSourcePath(prefix ? `${prefix}/${node.name}` : node.name);
-      if (node.type === "directory") {
-        exactKeys(node, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
-        if (node.mode !== 0o40555 || !Array.isArray(node.children)) throw new Error("CLOVER_PROVIDER_DIRECTORY_REJECTED");
-        rawEntries.push({ type: "directory", path: outputPath, mode: node.mode });
-        flatten(node, outputPath);
-      } else {
-        exactKeys(node, ["name", "type", "mode", "uid"], "CLOVER_PROVIDER_FILE");
-        if (node.type !== "file" && node.type !== "symlink" || !Number.isSafeInteger(node.mode) || typeof node.uid !== "string" || !/^[0-9a-f]{40}$/u.test(node.uid)) throw new Error("CLOVER_PROVIDER_FILE_REJECTED");
-        const expectedTypeBits = node.type === "file" ? 0o100000 : 0o120000;
-        const permissions = node.mode & 0o7777;
-        if (
-          node.mode < 0 || node.mode !== (expectedTypeBits | permissions) ||
-          !(node.type === "file" ? [0o644, 0o664, 0o755] : [0o755, 0o777]).includes(permissions)
-        ) throw new Error("CLOVER_PROVIDER_FILE_MODE_REJECTED");
-        rawEntries.push({ type: node.type, path: outputPath, mode: node.mode, uid: node.uid });
-      }
-    }
-  };
-  flatten(output, ".vercel/output");
-  if (expectsExternalInputs) {
-    const apps = childByName(src, "apps");
-    exactKeys(apps, ["name", "type", "mode", "children"], "CLOVER_PROVIDER_DIRECTORY");
-    if (apps.type !== "directory" || apps.mode !== 0o40555 || !Array.isArray(apps.children)) throw new Error("CLOVER_PROVIDER_FILE_TREE_REJECTED");
-    flatten(apps, "apps");
-  }
+  const { rawEntries } = parsedFileTree;
   const contentByPath = new Map();
+  const nativeContentObservations = [];
+  if (fileTreeProfile === NATIVE_FILE_TREE_PROFILE && (!Array.isArray(nativeContentBodies) || nativeContentBodies.length !== providerDeployment.contents.length)) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_INVENTORY_REJECTED");
+  if (fileTreeProfile === NATIVE_FILE_TREE_PROFILE && (nativeContentBodies.length > NATIVE_MAX_ENTRIES || nativeContentBodies.some((entry) => !Buffer.isBuffer(entry?.rawBytes))
+    || nativeContentBodies.reduce((total, entry) => total + entry.rawBytes.length, 0) > NATIVE_MAX_AGGREGATE_BODY_BYTES)) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_BUDGET_REJECTED");
+  if (fileTreeProfile !== NATIVE_FILE_TREE_PROFILE && nativeContentBodies !== undefined) throw new Error("CLOVER_PROVIDER_LEGACY_CONTENT_BODY_REJECTED");
   for (const candidate of providerDeployment.contents) {
     exactKeys(candidate, ["path", "uid", "request", "response"], "CLOVER_PROVIDER_CONTENT");
     exactKeys(candidate.response, ["data"], "CLOVER_PROVIDER_CONTENT_RESPONSE");
@@ -2923,9 +3125,19 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
     if (contentByPath.has(workspacePath)) throw new Error("CLOVER_PROVIDER_CONTENT_DUPLICATE_REJECTED");
     readRequest(candidate.request, {
       method: "GET",
-      url: canonicalProviderUrl("v8", `deployments/${raw.id}/files/${candidate.uid}`, [["path", candidate.path], ["teamId", VERCEL_TEAM_ID]]),
+      url: canonicalProviderUrl("v8", `deployments/${raw.id}/files/${candidate.uid}`, fileTreeProfile === NATIVE_FILE_TREE_PROFILE ? [["teamId", VERCEL_TEAM_ID]] : [["path", candidate.path], ["teamId", VERCEL_TEAM_ID]]),
+      nativeContent: fileTreeProfile === NATIVE_FILE_TREE_PROFILE,
       response: candidate.response
     }, "CLOVER_PROVIDER_CONTENT_REQUEST");
+    if (fileTreeProfile === NATIVE_FILE_TREE_PROFILE) {
+      const bodies = nativeContentBodies.filter((item) => item.path === candidate.path);
+      if (bodies.length !== 1) throw new Error("CLOVER_PROVIDER_NATIVE_CONTENT_INVENTORY_REJECTED");
+      exactKeys(bodies[0], ["path", "rawBytes"], "CLOVER_PROVIDER_NATIVE_CONTENT_BODY");
+      const entry = rawEntries.find((item) => item.path === workspacePath);
+      if (!entry || entry.uid !== candidate.uid) throw new Error("CLOVER_PROVIDER_UID_REJECTED");
+      nativeContentObservations.push(verifyNativeProviderContent({ rawBytes: bodies[0].rawBytes, response: candidate.response, entry,
+        request: candidate.request, deploymentId: raw.id, now }));
+    }
     contentByPath.set(workspacePath, { uid: candidate.uid, bytes: decodeCanonicalBase64(candidate.response.data, "CLOVER_PROVIDER_FILE_CONTENT") });
   }
   const providerEntries = rawEntries.filter(({ type }) => type !== "directory").map((entry) => {
@@ -2963,7 +3175,17 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   ) throw new Error("CLOVER_PROVIDER_POST_REVOCATION_REQUEST_REJECTED");
   const body = {
     documentType: "clover-tree-provider-deployment-receipt",
-    schemaVersion: "0.8.0",
+    schemaVersion: fileTreeProfile === NATIVE_FILE_TREE_PROFILE ? "0.9.0" : "0.8.0",
+    ...(fileTreeProfile === NATIVE_FILE_TREE_PROFILE ? {
+      fileTreeAdapterProfile: parsedFileTree.profile,
+      fileTreeRawBodyBytes: parsedFileTree.rawBodyBytes,
+      fileTreeRawBodySha256: parsedFileTree.rawBodySha256,
+      fileTreeCanonicalObservationSha256: parsedFileTree.canonicalObservationSha256,
+      runtimeOccurrences: parsedFileTree.runtimeOccurrences,
+      runtimeObservationSha256: parsedFileTree.runtimeObservationSha256,
+      runtimeEntriesUsedAsSource: false,
+      nativeContentObservations: nativeContentObservations.sort((left, right) => compareUtf8(left.path, right.path))
+    } : {}),
     provider: "vercel",
     generatedAt,
     providerRequestEvidenceSchemaVersion: PROVIDER_REQUEST_EVIDENCE_SCHEMA,
@@ -3084,6 +3306,59 @@ export function createProviderDeploymentReceipt({ providerDeployment, verifiedEv
   return Object.freeze({ ...body, receiptSelfHash: sha256(`${canonicalJson(body)}\n`) });
 }
 
+function readBoundedNativeBody(filePath, maximumBytes = NATIVE_MAX_BYTES) {
+  const resolved = path.resolve(filePath);
+  if (realpathSync(path.dirname(resolved)) !== path.dirname(resolved)) throw new Error("CLOVER_NATIVE_BODY_PARENT_REJECTED");
+  const descriptor = openSync(resolved, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  try {
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size === 0 || before.size > maximumBytes || before.nlink !== 1) throw new Error("CLOVER_NATIVE_BODY_FILE_REJECTED");
+    const bytes = Buffer.alloc(before.size + 1);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = readSync(descriptor, bytes, offset, bytes.length - offset, null);
+      if (count === 0) break;
+      offset += count;
+    }
+    const after = fstatSync(descriptor);
+    if (offset !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) throw new Error("CLOVER_NATIVE_BODY_FILE_CHANGED");
+    return bytes.subarray(0, offset);
+  } finally { closeSync(descriptor); }
+}
+
+export function loadNativeProviderContentBodies({ indexPath, expectedPaths } = {}) {
+  const indexBytes = readBoundedNativeBody(indexPath);
+  const index = parseJsonWithoutDuplicateKeys(decodeUtf8Fatal(indexBytes, "CLOVER_NATIVE_CONTENT_INDEX"), "CLOVER_NATIVE_CONTENT_INDEX", 4);
+  if (!Buffer.from(`${canonicalJson(index)}\n`).equals(indexBytes) || !Array.isArray(index) || index.length > NATIVE_MAX_ENTRIES
+    || !Array.isArray(expectedPaths) || index.length !== expectedPaths.length || new Set(expectedPaths).size !== expectedPaths.length) throw new Error("CLOVER_NATIVE_CONTENT_INDEX_REJECTED");
+  const isSourcePath = (value) => typeof value === "string" && value.startsWith("src/")
+    && (value.startsWith("src/.vercel/output/") || EXTERNAL_DEPLOYMENT_INPUT_ROOTS.some((root) => value.startsWith(`src/${root}`)))
+    && exactSourcePath(value) === value;
+  if (!expectedPaths.every(isSourcePath)) throw new Error("CLOVER_NATIVE_CONTENT_INDEX_REJECTED");
+  const paths = new Set();
+  const expectedPathSet = new Set(expectedPaths);
+  for (const entry of index) {
+    exactKeys(entry, ["path", "bodyFile"], "CLOVER_NATIVE_CONTENT_INDEX_ENTRY");
+    if (!isSourcePath(entry.path) || !expectedPathSet.has(entry.path) || paths.has(entry.path)
+      || typeof entry.bodyFile !== "string" || !path.isAbsolute(entry.bodyFile) || entry.bodyFile.includes("\0")) throw new Error("CLOVER_NATIVE_CONTENT_INDEX_REJECTED");
+    paths.add(entry.path);
+  }
+  // Complete index/source identity and aggregate-size checks precede any content-body read.
+  let total = 0;
+  for (const entry of index) {
+    const stat = lstatSync(entry.bodyFile);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size === 0 || stat.size > NATIVE_MAX_BYTES) throw new Error("CLOVER_NATIVE_BODY_FILE_REJECTED");
+    total += stat.size;
+    if (total > NATIVE_MAX_AGGREGATE_BODY_BYTES) throw new Error("CLOVER_NATIVE_BODY_BUDGET_REJECTED");
+  }
+  total = 0;
+  return index.map((entry) => {
+    const rawBytes = readBoundedNativeBody(entry.bodyFile, Math.min(NATIVE_MAX_BYTES, NATIVE_MAX_AGGREGATE_BODY_BYTES - total));
+    total += rawBytes.length;
+    return { path: entry.path, rawBytes };
+  });
+}
+
 function parseArguments(values) {
   const options = {};
   for (let index = 0; index < values.length; index += 2) {
@@ -3099,6 +3374,10 @@ function main() {
   const [command, ...argumentsList] = process.argv.slice(2);
   const options = parseArguments(argumentsList);
   const repositoryRoot = path.resolve(options["repository-root"] ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.."));
+  if (command === "repair-source") {
+    process.stdout.write(`${canonicalJson(deriveAttestationRepairSource({ repositoryRoot }))}\n`);
+    return;
+  }
   if (command === "source") {
     process.stdout.write(`${canonicalJson(deriveSourceProvenance({ repositoryRoot }))}\n`);
     return;
@@ -3165,13 +3444,24 @@ function main() {
       evidenceDirectory: path.resolve(options.evidence)
     });
     const provider = readCanonicalDocument(path.resolve(options.provider), "CLOVER_PROVIDER_READBACK").value;
-    const receipt = createProviderDeploymentReceipt({ providerDeployment: provider, verifiedEvidence: verified });
+    const receipt = createProviderDeploymentReceipt({ providerDeployment: provider, verifiedEvidence: verified,
+      fileTreeProfile: options["file-tree-profile"] ?? LEGACY_FILE_TREE_PROFILE,
+      nativeFileTreeBytes: options["native-tree-body"] ? readBoundedNativeBody(options["native-tree-body"]) : undefined,
+      nativeContentBodies: options["native-content-index"] ? loadNativeProviderContentBodies({
+        indexPath: options["native-content-index"],
+        expectedPaths: [
+          ...verified.deploymentInputManifest.files.map((entry) => `src/.vercel/output/${entry.path}`),
+          ...verified.deploymentInputManifest.symlinks.map((entry) => `src/.vercel/output/${entry.path}`),
+          ...verified.deploymentInputManifest.externalInputs.files.map((entry) => `src/${entry.path}`)
+        ]
+      }) : undefined
+    });
     const receiptPath = requireFreshExternalFilePath(options.receipt, realpathSync(options.output), "CLOVER_PROVIDER_RECEIPT_LOCATION");
     writeFileSync(receiptPath, `${canonicalJson(receipt)}\n`, { mode: 0o644, flag: "wx" });
     process.stdout.write(`${canonicalJson(receipt)}\n`);
     return;
   }
-  throw new Error("usage: clover-deployment-attestation.mjs <source|source-manifest|project-settings|output|verify|receipt> [options]");
+  throw new Error("usage: clover-deployment-attestation.mjs <repair-source|source|source-manifest|project-settings|output|verify|receipt> [options]");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
