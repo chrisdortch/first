@@ -1972,11 +1972,14 @@ function exactCorrectionChainAt(repositoryRoot: string, sourceClosureCommit: str
   };
 }
 
-type ExactSourceRole = "exact-pr-head" | "non-authoritative-local-validation-container" | "disabled-non-pr" | "local-attestation-compatibility-repair" | "ci-attestation-compatibility-repair" | "local-dependency-security-successor";
+type ExactSourceRole = "exact-pr-head" | "non-authoritative-local-validation-container" | "disabled-non-pr" | "local-attestation-compatibility-repair" | "ci-attestation-compatibility-repair" | "local-dependency-security-successor" | "local-ci-preview-readiness" | "ci-preview-readiness";
 
 const isRepairContext = (role: string) => role === "local-attestation-compatibility-repair" || role === "ci-attestation-compatibility-repair";
 const isDependencySuccessorContext = (role: string) => role === "local-dependency-security-successor";
-const isNonCampaignSourceContext = (role: string) => isRepairContext(role) || isDependencySuccessorContext(role);
+const isCiPreviewReadinessContext = (role: string) => role === "local-ci-preview-readiness" || role === "ci-preview-readiness";
+const isNonCampaignSourceContext = (role: string) => isRepairContext(role) || isDependencySuccessorContext(role) || isCiPreviewReadinessContext(role);
+
+let readinessSourceBinding: { sourceProofSelfHash: string; ciExecution: Record<string, unknown> | null } | null = null;
 
 function exactExecutionContext(environment: Readonly<Record<string, string | undefined>> = process.env) {
   if (environment.GITHUB_ACTIONS !== undefined
@@ -1997,6 +2000,9 @@ function exactExecutionContext(environment: Readonly<Record<string, string | und
   }
   else if (!githubActions && requested === "local-attestation-compatibility-repair" && exactPrHead === null) role = requested;
   else if (!githubActions && requested === "local-dependency-security-successor" && exactPrHead === null) role = requested;
+  else if (!githubActions && requested === "local-ci-preview-readiness" && exactPrHead === null) role = requested;
+  else if (githubActions && requested === "ci-preview-readiness"
+    && declaredHead !== null && declaredHead === exactPrHead) role = requested;
   else if (githubActions && requested === "ci-attestation-compatibility-repair"
     && declaredHead !== null && declaredHead === exactPrHead) role = requested;
   else if (githubActions && requested === "disabled-non-pr") role = "disabled-non-pr";
@@ -7979,7 +7985,7 @@ async function writeAccessibilityEvidence(
       : ["clover-tree-command-center-mobile-today.png", "clover-tree-command-center-mobile-action-center.png", "clover-tree-command-center-mobile-launch-studio.png"];
   const body = {
     schemaVersion: accessibilityEvidenceSchema,
-    source: { repository: "chrisdortch/first", head },
+    source: { repository: "chrisdortch/first", head, ...(readinessSourceBinding === null ? {} : { readiness: readinessSourceBinding }) },
     project: testInfo.project.name,
     viewport,
     exactViews,
@@ -8058,10 +8064,15 @@ test.beforeAll(async () => {
   if (isNonCampaignSourceContext(context)) {
     if (protectedPreviewEvidence) throw new Error("Local source evidence cannot authorize protected-preview execution");
     const successor = isDependencySuccessorContext(context);
-    const bytes = execFileSync(process.execPath, ["scripts/clover-deployment-attestation.mjs", successor ? "dependency-source" : "repair-source", "--repository-root", "../.."], {
+    const readiness = isCiPreviewReadinessContext(context);
+    const bytes = execFileSync(process.execPath, ["scripts/clover-deployment-attestation.mjs", readiness ? "readiness-source" : successor ? "dependency-source" : "repair-source", "--repository-root", "../.."], {
       cwd: process.cwd(), env: process.env, maxBuffer: 1024 * 1024
     });
-    const directory = path.join(process.cwd(), "test-results", successor ? "clover-dependency-successor-source" : "clover-attestation-repair-source");
+    if (readiness) {
+      const proof = JSON.parse(bytes.toString("utf8"));
+      readinessSourceBinding = { sourceProofSelfHash: proof.sourceProofSelfHash, ciExecution: proof.ciExecution };
+    }
+    const directory = path.join(process.cwd(), "test-results", readiness ? "clover-ci-preview-readiness-source" : successor ? "clover-dependency-successor-source" : "clover-attestation-repair-source");
     mkdirSync(directory, { recursive: true, mode: 0o755 });
     const project = test.info().project.name;
     if (!["desktop-chromium", "mobile-chromium"].includes(project)) throw new Error("Unreviewed source-proof browser project");

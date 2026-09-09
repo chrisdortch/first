@@ -31,7 +31,7 @@ jobs:
     env:
       CLOVER_TREE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_TREE_EXACT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && github.head_ref == 'codex/clover-provider-attestation-compat-20260908' && github.event.number != 35 && 'ci-attestation-compatibility-repair' || github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
+      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && github.head_ref == 'codex/clover-ci-preview-readiness-20260909' && 'ci-preview-readiness' || github.event_name == 'pull_request' && github.head_ref == 'codex/clover-provider-attestation-compat-20260908' && github.event.number != 35 && 'ci-attestation-compatibility-repair' || github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
       CLOVER_TREE_PR_NUMBER: ${{ github.event.number || '' }}
     steps:
       - name: Check out exact candidate
@@ -60,7 +60,7 @@ jobs:
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: ${{ env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness' && (matrix.node-version == '22' && '22.23.2' || '24.16.0') || matrix.node-version }}
           cache: npm
           cache-dependency-path: apps/clover-launch-studio/package-lock.json
 
@@ -164,9 +164,30 @@ jobs:
                 || bytes.length !== record.bytes || hash(bytes) !== record.sha256) throw new Error(`source bytes mismatch: ${record.path}`);
             return { path: record.path, mode: tree.mode, type: tree.type, blob: tree.blob, bytes: bytes.length, sha256: hash(bytes) };
           };
+          const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);
+          let readinessSource = null;
+          if (readinessContext) {
+            const bytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', repositoryRoot], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 });
+            readinessSource = JSON.parse(bytes);
+            if (readinessSource.head !== p.commit || readinessSource.tree !== p.tree
+              || readinessSource.fullMainPathCount !== p.changedPathCount || readinessSource.fullMainPathListSha256 !== p.pathListSha256
+              || readinessSource.sourceManifestSha256 !== p.sourceManifestSha256
+              || readinessSource.context !== process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT
+              || readinessSource.githubActions !== (process.env.GITHUB_ACTIONS === 'true')
+              || readinessSource.exactPrHeadAcceptance !== false || readinessSource.releaseAuthority !== false
+              || readinessSource.providerAcceptance !== false || readinessSource.deploymentAllowanceGranted !== false
+              || readinessSource.consequentialAuthorityGranted !== false
+              || (process.env.GITHUB_ACTIONS === 'true' ? readinessSource.ciExecution?.nodeVersion !== process.version : readinessSource.ciExecution !== null)) {
+              throw new Error('readiness source provenance or authority mismatch');
+            }
+            const target = path.join(process.env.RUNNER_TEMP, 'clover-ci-preview-readiness-source.json');
+            fs.writeFileSync(target, bytes, { flag: 'wx', mode: 0o644 });
+          }
+          const expectedMainPathCount = readinessSource?.fullMainPathCount ?? 72;
+          const expectedMainPathListSha256 = readinessSource?.fullMainPathListSha256 ?? '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8';
           if (!exactKeys(m, ['documentType','schemaVersion','sourceCommit','stackABase','entries','pathCount','pathListSha256','sourceManifestSha256','manifestSelfHash']) ||
               m.documentType !== 'clover-tree-source-manifest' || m.schemaVersion !== '0.4.0' || m.sourceCommit !== p.commit || m.stackABase !== p.stackABase ||
-              m.pathCount !== 72 || m.pathCount !== p.changedPathCount || m.pathListSha256 !== '9217479f428109ec268f8e2579e6da55abb649080306966c31d5ab62edc8a6a8' ||
+              m.pathCount !== expectedMainPathCount || m.pathCount !== p.changedPathCount || m.pathListSha256 !== expectedMainPathListSha256 ||
               m.pathListSha256 !== p.pathListSha256 || m.sourceManifestSha256 !== p.sourceManifestSha256 || !Array.isArray(m.entries) || m.entries.length !== m.pathCount) throw new Error('source manifest identity mismatch');
           const paths = m.entries.map(entry => entry.path);
           if (paths.some(path => !safePath(path)) || new Set(paths).size !== paths.length || paths.some((path, index) => index && Buffer.compare(Buffer.from(paths[index - 1]), Buffer.from(path)) >= 0) ||
@@ -369,6 +390,19 @@ jobs:
           const root = process.env.RUNNER_TEMP;
           const read = (name) => JSON.parse(fs.readFileSync(path.join(root, name), 'utf8'));
           const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+          const cp = require('node:child_process');
+          const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);
+          const readinessProofPath = path.join(process.env.RUNNER_TEMP, 'clover-ci-preview-readiness-source.json');
+          let readinessBinding = null;
+          if (readinessContext) {
+            const retainedStat = fs.lstatSync(readinessProofPath);
+            if (!retainedStat.isFile() || retainedStat.isSymbolicLink() || retainedStat.nlink !== 1
+              || (retainedStat.mode & 0o777) !== 0o644 || retainedStat.size > 1024 * 1024) throw new Error('unsafe retained readiness source proof');
+            const expectedBytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', process.env.GITHUB_WORKSPACE], { cwd: process.env.GITHUB_WORKSPACE, maxBuffer: 1024 * 1024 });
+            if (!fs.readFileSync(readinessProofPath).equals(expectedBytes)) throw new Error('retained readiness proof differs from actual source, event, run, attempt or runtime');
+            const expected = JSON.parse(expectedBytes);
+            readinessBinding = { sourceProofSelfHash: expected.sourceProofSelfHash, ciExecution: expected.ciExecution };
+          } else if (fs.existsSync(readinessProofPath)) throw new Error('readiness source proof outside explicit successor context');
           const source = read('clover-tree-source-provenance.json');
           const manifest = read('clover-tree-source-manifest.json');
           const created = read('clover-deployment-input-digests.json');
@@ -410,6 +444,7 @@ jobs:
               created.attestationHash !== attestation.attestationHash || created.frozenOutputReady !== true) throw new Error('deployment input identity mismatch');
           const receipt = {
             schemaVersion: 'clover-tree-ci-deployment-input-evidence-v1',
+            ...(readinessBinding === null ? {} : { readiness: readinessBinding }),
             sourceCommit: source.commit,
             sourceManifestSha256: source.sourceManifestSha256,
             payloadManifestRootSha256: created.payloadManifestRootSha256,
@@ -481,8 +516,22 @@ jobs:
             if (prohibited.some((pattern) => pattern.test(text))) findings.push(file);
           }
           if (findings.length) throw new Error(`privacy findings: ${findings.join(', ')}`);
+          const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);
+          const readinessProofPath = path.join(process.env.RUNNER_TEMP, 'clover-ci-preview-readiness-source.json');
+          let readinessBinding = null;
+          if (readinessContext) {
+            const retainedStat = fs.lstatSync(readinessProofPath);
+            if (!retainedStat.isFile() || retainedStat.isSymbolicLink() || retainedStat.nlink !== 1
+              || (retainedStat.mode & 0o777) !== 0o644 || retainedStat.size > 1024 * 1024) throw new Error('unsafe retained readiness source proof');
+            const expectedBytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', process.env.GITHUB_WORKSPACE], { cwd: process.env.GITHUB_WORKSPACE, maxBuffer: 1024 * 1024 });
+            if (!fs.readFileSync(readinessProofPath).equals(expectedBytes)) throw new Error('retained readiness proof differs from actual source, event, run, attempt or runtime');
+            const expected = JSON.parse(expectedBytes);
+            readinessBinding = { sourceProofSelfHash: expected.sourceProofSelfHash, ciExecution: expected.ciExecution };
+          } else if (fs.existsSync(readinessProofPath)) throw new Error('readiness source proof outside explicit successor context');
+
           const evidence = {
             schemaVersion: 'clover-tree-command-center-evidence-v1',
+            ...(readinessBinding === null ? {} : { readiness: readinessBinding }),
             head,
             tree,
             node: process.version,
@@ -503,9 +552,10 @@ jobs:
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-tree-command-center-node-${{ matrix.node-version }}-${{ github.event.pull_request.head.sha || github.sha }}
+          name: ${{ env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness' && format('clover-ci-preview-readiness-{0}-{1}-{2}-validation-node-{3}', env.CLOVER_TREE_HEAD, github.run_id, github.run_attempt, matrix.node-version) || format('clover-tree-command-center-node-{0}-{1}', matrix.node-version, env.CLOVER_TREE_HEAD) }}
           path: |
             ${{ runner.temp }}/clover-tree-command-center-evidence.json
+            ${{ runner.temp }}/clover-ci-preview-readiness-source.json
             ${{ runner.temp }}/clover-tree-source-provenance.json
             ${{ runner.temp }}/clover-tree-source-manifest.json
           if-no-files-found: error
@@ -514,11 +564,12 @@ jobs:
         if: success() && matrix.node-version == '24'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-tree-deployment-input-node-24-${{ github.event.pull_request.head.sha || github.sha }}
+          name: ${{ env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness' && format('clover-ci-preview-readiness-{0}-{1}-{2}-sealed-input-node-24', env.CLOVER_TREE_HEAD, github.run_id, github.run_attempt) || format('clover-tree-deployment-input-node-24-{0}', env.CLOVER_TREE_HEAD) }}
           path: |
             ${{ runner.temp }}/clover-deployment-input-digests.json
             ${{ runner.temp }}/clover-deployment-input-verification.json
             ${{ runner.temp }}/clover-ci-deployment-input-evidence.json
+            ${{ runner.temp }}/clover-ci-preview-readiness-source.json
             ${{ runner.temp }}/clover-attestation-evidence/clover-build-output-manifest.json
             ${{ runner.temp }}/clover-attestation-evidence/clover-deployment-attestation.json
             ${{ runner.temp }}/clover-attestation-evidence/clover-deployment-input-manifest.json
@@ -534,7 +585,7 @@ jobs:
     env:
       CLOVER_TREE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
       CLOVER_TREE_EXACT_PR_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && github.head_ref == 'codex/clover-provider-attestation-compat-20260908' && github.event.number != 35 && 'ci-attestation-compatibility-repair' || github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
+      CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ${{ github.event_name == 'pull_request' && github.head_ref == 'codex/clover-ci-preview-readiness-20260909' && 'ci-preview-readiness' || github.event_name == 'pull_request' && github.head_ref == 'codex/clover-provider-attestation-compat-20260908' && github.event.number != 35 && 'ci-attestation-compatibility-repair' || github.event_name == 'pull_request' && 'exact-pr-head' || 'disabled-non-pr' }}
       CLOVER_TREE_PR_NUMBER: ${{ github.event.number || '' }}
     steps:
       - name: Check out exact candidate
@@ -560,7 +611,7 @@ jobs:
       - name: Use Node.js 24
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24'
+          node-version: ${{ env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness' && '24.16.0' || '24' }}
           cache: npm
           cache-dependency-path: apps/clover-launch-studio/package-lock.json
 
@@ -5256,6 +5307,40 @@ jobs:
               repairSourceBindings.push({ project, target, sourceProofSelfHash: expectedRepair.sourceProofSelfHash, classification: expectedRepair.classification });
             }
           } else requireCondition(!fs.existsSync(repairSourceRoot), 'repair artifacts outside explicit repair context');
+          const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);
+          const readinessSourceRoot = path.join(root, 'clover-ci-preview-readiness-source');
+          const readinessSourceBindings = [];
+          if (readinessContext) {
+            const expectedBytes = execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', repositoryRoot], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 });
+            const expected = JSON.parse(expectedBytes);
+            requireCondition(expected.head === process.env.CLOVER_TREE_HEAD
+              && expected.context === process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT
+              && expected.githubActions === (process.env.GITHUB_ACTIONS === 'true')
+              && expected.exactPrHeadAcceptance === false && expected.releaseAuthority === false && expected.providerAcceptance === false
+              && expected.deploymentAllowanceGranted === false && expected.consequentialAuthorityGranted === false
+              && (expected.githubActions ? expected.ciExecution?.nodeVersion === process.version : expected.ciExecution === null), 'readiness source identity or authority mismatch');
+            const provenance = JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-source-provenance.json')));
+            requireCondition(provenance.commit === expected.head && provenance.tree === expected.tree
+              && provenance.nodeVersion === process.version && provenance.changedPathCount === expected.fullMainPathCount
+              && provenance.pathListSha256 === expected.fullMainPathListSha256
+              && provenance.sourceManifestSha256 === expected.sourceManifestSha256, 'readiness browser build provenance mismatch');
+            const rootStat = fs.lstatSync(readinessSourceRoot);
+            requireCondition(rootStat.isDirectory() && !rootStat.isSymbolicLink() && (rootStat.mode & 0o777) === 0o755, 'readiness source root unsafe');
+            exactJson(fs.readdirSync(readinessSourceRoot).sort(), Object.keys(exactProjects).map((project) => `${project}.json`).sort(), 'readiness source proof inventory');
+            for (const project of Object.keys(exactProjects)) {
+              const target = path.join(readinessSourceRoot, `${project}.json`);
+              const stat = fs.lstatSync(target);
+              requireCondition(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && (stat.mode & 0o777) === 0o644 && stat.size <= 1024 * 1024, 'readiness source proof unsafe');
+              requireCondition(fs.readFileSync(target).equals(expectedBytes), 'readiness proof differs from current source, event, run, attempt or runtime');
+              const generatedDocument = documents.find((entry) => entry.project === project)?.document;
+              exactJson(generatedDocument?.source?.readiness, { sourceProofSelfHash: expected.sourceProofSelfHash, ciExecution: expected.ciExecution }, 'browser document readiness generation binding');
+              readinessSourceBindings.push({ project, target, sourceProofSelfHash: expected.sourceProofSelfHash, classification: expected.classification,
+                head: expected.head, tree: expected.tree, base: expected.base, lockfiles: expected.lockfiles, ciExecution: expected.ciExecution });
+            }
+          } else {
+            requireCondition(!fs.existsSync(readinessSourceRoot), 'readiness artifacts outside explicit successor context');
+            for (const { document } of documents) requireCondition(document.source?.readiness === undefined, 'readiness document outside explicit successor context');
+          }
           const dependencySuccessorContext = process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'local-dependency-security-successor';
           const dependencySourceRoot = path.join(root, 'clover-dependency-successor-source');
           const dependencySourceBindings = [];
@@ -5749,7 +5834,7 @@ jobs:
           try { safeRelative('../receipt.json'); } catch { unsafePathRejected = true; }
           requireCondition(unsafePathRejected, 'unsafe receipt path mutation was accepted');
           } else {
-            requireCondition(repairContext || dependencySuccessorContext || process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'disabled-non-pr', 'unreviewed local source-closure workflow context');
+            requireCondition(repairContext || dependencySuccessorContext || readinessContext || process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'disabled-non-pr', 'unreviewed local source-closure workflow context');
             requireCondition(!fs.existsSync(localReceiptRoot), 'local PR source-closure receipts must not be generated outside the exact PR context');
           }
 
@@ -5790,10 +5875,10 @@ jobs:
             sourceClosureStatus: 'LOCAL_SOURCE_VALIDATED_PROVIDER_ACCEPTANCE_PENDING'
           } : {
             artifactType: 'local-source-closure-receipt-set',
-            context: repairContext || dependencySuccessorContext ? process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT : 'disabled-non-pr',
+            context: repairContext || dependencySuccessorContext || readinessContext ? process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT : 'disabled-non-pr',
             count: 0,
             canonicalSha256: sha256(`${canonicalJson([])}\n`),
-            providerBindingStatus: dependencySuccessorContext ? 'not-applicable-local-dependency-successor-validation' : repairContext ? 'not-applicable-local-or-ci-repair-validation' : 'not-applicable-postmerge-browser-validation',
+            providerBindingStatus: readinessContext ? 'not-applicable-local-or-ci-preview-readiness-validation' : dependencySuccessorContext ? 'not-applicable-local-dependency-successor-validation' : repairContext ? 'not-applicable-local-or-ci-repair-validation' : 'not-applicable-postmerge-browser-validation',
             finalProviderAcceptance: false,
             sourceClosureStatus: 'NOT_GENERATED_OUTSIDE_EXACT_PR_CONTEXT'
           };
@@ -5847,6 +5932,7 @@ jobs:
             localSourceClosure: localSourceClosureSummary,
             attestationRepairSource: repairSourceBindings.map(({ project, sourceProofSelfHash, classification }) => ({ project, sourceProofSelfHash, classification, exactPr35Acceptance: false, providerAcceptance: false })),
             ...(dependencySuccessorContext ? { dependencySuccessorSource: dependencySourceBindings.map(({ project, sourceProofSelfHash, classification, lockfiles }) => ({ project, sourceProofSelfHash, classification, lockfiles, releaseAuthority: false, exactPr35Acceptance: false, providerAcceptance: false })) } : {}),
+            ...(readinessContext ? { ciPreviewReadinessSource: readinessSourceBindings.map(({ project, sourceProofSelfHash, classification, head, tree, base, lockfiles, ciExecution }) => ({ project, sourceProofSelfHash, classification, head, tree, base, lockfiles, ciExecution, releaseAuthority: false, exactPr35Acceptance: false, providerAcceptance: false })) } : {}),
             syntheticPrivacyFixtures: syntheticPrivacyFixtureProof.records,
             publicSanitized: true,
             privateDataAccessed: false,
@@ -5859,6 +5945,7 @@ jobs:
           fs.writeFileSync(summaryPath, summaryBytes, { mode: 0o644 });
           const provenancePath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-source-provenance.json');
           const manifestSources = [
+            ...readinessSourceBindings.map(({ project, target, sourceProofSelfHash, classification, head, tree, base, lockfiles, ciExecution }) => ({ artifactType: 'ci-preview-readiness-source', label: safeRelative(target), target, binding: { project, sourceProofSelfHash, classification, head, tree, base, lockfiles, ciExecution, releaseAuthority: false, providerAcceptance: false } })),
             ...repairSourceBindings.map(({ project, target, sourceProofSelfHash, classification }) => ({ artifactType: 'attestation-repair-source', label: safeRelative(target), target, binding: { project, sourceProofSelfHash, classification, providerAcceptance: false } })),
             ...dependencySourceBindings.map(({ project, target, sourceProofSelfHash, classification, lockfiles }) => ({ artifactType: 'dependency-successor-source', label: safeRelative(target), target, binding: { project, sourceProofSelfHash, classification, lockfiles, releaseAuthority: false, providerAcceptance: false } })),
             ...documents.map(({ project, target, document }) => ({
@@ -5900,9 +5987,11 @@ jobs:
           });
           requireCondition(manifestEntries.filter(({ artifactType }) => artifactType === 'local-source-closure-receipt').length === (exactPrLocalClosure ? 4 : 0), 'browser manifest local receipt count mismatch');
           requireCondition(manifestEntries.filter(({ artifactType }) => artifactType === 'gate-scan-attempt-closure').length === 2, 'browser manifest Gate scan-attempt sidecar count mismatch');
+          requireCondition(manifestEntries.filter(({ artifactType }) => artifactType === 'ci-preview-readiness-source').length === (readinessContext ? 2 : 0), 'browser manifest readiness source proof count mismatch');
           const manifestBody = {
             schemaVersion: 'clover-tree-browser-artifact-manifest-v2',
             head: process.env.CLOVER_TREE_HEAD,
+            ...(readinessContext ? { ciPreviewReadinessSource: summary.ciPreviewReadinessSource } : {}),
             localSourceClosure: summary.localSourceClosure,
             stagedAcceptance: summary.stagedAcceptance,
             providerAcceptance: { artifactType: 'provider-acceptance-receipt-set', status: 'not-present-predeployment', count: 0 },
@@ -5919,9 +6008,10 @@ jobs:
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: clover-tree-browser-${{ github.event.pull_request.head.sha || github.sha }}
+          name: ${{ env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness' && format('clover-ci-preview-readiness-{0}-{1}-{2}-browser', env.CLOVER_TREE_HEAD, github.run_id, github.run_attempt) || format('clover-tree-browser-{0}', env.CLOVER_TREE_HEAD) }}
           path: |
             apps/clover-launch-studio/test-results/clover-tree-accessibility/*.json
+            apps/clover-launch-studio/test-results/clover-ci-preview-readiness-source/*.json
             apps/clover-launch-studio/test-results/clover-tree-local-source-closure/*/receipt.json
             apps/clover-launch-studio/test-results/**/*.png
             ${{ runner.temp }}/clover-tree-browser-artifact-manifest.json

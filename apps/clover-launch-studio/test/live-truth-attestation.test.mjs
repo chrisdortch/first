@@ -74,6 +74,16 @@ import {
   DEPENDENCY_SUCCESSOR_LOCKS,
   DEPENDENCY_SUCCESSOR_REQUIRED_PATHS,
   deriveDependencySuccessorSource,
+  deriveCiPreviewReadinessSource,
+  deriveCiPreviewExecutionIdentity,
+  CI_PREVIEW_READINESS_TASK,
+  CI_PREVIEW_READINESS_BASE,
+  CI_PREVIEW_READINESS_BASE_TREE,
+  CI_PREVIEW_READINESS_BRANCH,
+  CI_PREVIEW_READINESS_CONTEXT,
+  CI_PREVIEW_READINESS_CI_CONTEXT,
+  CI_PREVIEW_RECEIPT_PROFILE,
+  validateCiPreviewExecutionContract,
   parseProviderFileTree,
   verifyNativeProviderContent,
   loadNativeProviderContentBodies,
@@ -2530,7 +2540,17 @@ test("live reconciliation binds merged Stack A and integrated Stack B provenance
   const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
   const provenance = deriveSourceProvenance({ repositoryRoot });
   assert.equal(provenance.stackABase, mergedStackABase);
-  if (process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === DEPENDENCY_SUCCESSOR_CONTEXT) {
+  if (["local-ci-preview-readiness", "ci-preview-readiness"].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT)) {
+    const successor = deriveCiPreviewReadinessSource({ repositoryRoot });
+    assert.equal(provenance.commit, successor.head);
+    assert.equal(provenance.tree, successor.tree);
+    assert.equal(provenance.changedPathCount, successor.fullMainPathCount);
+    assert.equal(provenance.pathListSha256, successor.fullMainPathListSha256);
+    assert.equal(provenance.sourceManifestSha256, successor.sourceManifestSha256);
+    assert.equal(successor.releaseAuthority, false);
+    assert.equal(successor.exactPrHeadAcceptance, false);
+    assert.equal(successor.providerAcceptance, false);
+  } else if (process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === DEPENDENCY_SUCCESSOR_CONTEXT) {
     const successor = deriveDependencySuccessorSource({ repositoryRoot });
     const historicalPaths = deriveSourceManifestEntries({ repositoryRoot, stackABase: mergedStackABase,
       candidateCommit: DEPENDENCY_SUCCESSOR_BASE }).map(({ path: sourcePath }) => sourcePath);
@@ -4511,6 +4531,284 @@ test("dependency successor source is local, exact-lock-bound and separate from b
     run(["branch", "-m", DEPENDENCY_SUCCESSOR_BRANCH]);
     run(["reset", "--hard", ATTESTATION_REPAIR_BASE]); assert.throws(proof, /BASE_REJECTED/u);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+
+function readinessEventFixture(head) {
+  // All IDs here are explicitly synthetic fixtures, never observations or owner approvals.
+  const number = 123456;
+  const event = { action: "opened", number, repository: { full_name: "chrisdortch/first" }, pull_request: {
+    number, state: "open", head: { sha: head, ref: CI_PREVIEW_READINESS_BRANCH, repo: { full_name: "chrisdortch/first" } },
+    base: { sha: CI_PREVIEW_READINESS_BASE, ref: DEPENDENCY_SUCCESSOR_BRANCH, repo: { full_name: "chrisdortch/first" } },
+    merge_commit_sha: "a".repeat(40)
+  } };
+  const environment = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_REPOSITORY: "chrisdortch/first",
+    CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CI_CONTEXT, CLOVER_TREE_PR_NUMBER: String(number),
+    GITHUB_HEAD_REF: CI_PREVIEW_READINESS_BRANCH, GITHUB_BASE_REF: DEPENDENCY_SUCCESSOR_BRANCH,
+    CLOVER_TREE_HEAD: head, CLOVER_TREE_EXACT_PR_HEAD: head, GITHUB_SHA: event.pull_request.merge_commit_sha,
+    GITHUB_WORKFLOW_REF: `chrisdortch/first/${ATTESTATION_REPAIR_PATHS[0]}@refs/pull/${number}/merge`,
+    GITHUB_WORKFLOW_SHA: event.pull_request.merge_commit_sha,
+    GITHUB_REF: `refs/pull/${number}/merge`, GITHUB_RUN_ID: "123456789", GITHUB_RUN_ATTEMPT: "1" };
+  return { event, environment, head, workflowBlob: "b".repeat(40) };
+}
+
+test("readiness CI binds the actual event, exact stacked base/head, merge ref and run attempt without authority", () => {
+  const fixture = readinessEventFixture("c".repeat(40));
+  const identity = deriveCiPreviewExecutionIdentity(fixture);
+  assert.equal(identity.baseSha, CI_PREVIEW_READINESS_BASE);
+  assert.notEqual(identity.headSha, identity.mergeSha);
+  assert.equal(identity.artifactPrefix, `clover-ci-preview-readiness-${fixture.head}-123456789-1`);
+  assert.equal(identity.nodeVersion, process.version);
+  const changes = [
+    (v) => { v.environment.GITHUB_ACTIONS = "false"; },
+    (v) => { v.environment.GITHUB_EVENT_NAME = "push"; },
+    (v) => { v.environment.GITHUB_EVENT_NAME = "pull_request_target"; },
+    (v) => { v.event.action = "closed"; },
+    (v) => { v.event.number = 35; },
+    (v) => { v.event.pull_request.number += 1; },
+    (v) => { v.event.pull_request.state = "closed"; },
+    (v) => { v.event.repository.full_name = "other/repo"; },
+    (v) => { v.event.pull_request.head.repo.full_name = "other/first"; },
+    (v) => { v.event.pull_request.base.repo.full_name = "other/first"; },
+    (v) => { v.event.pull_request.base.sha = "d".repeat(40); },
+    (v) => { v.event.pull_request.base.ref = "main"; },
+    (v) => { v.event.pull_request.head.sha = "d".repeat(40); },
+    (v) => { v.event.pull_request.head.ref = DEPENDENCY_SUCCESSOR_BRANCH; },
+    (v) => { v.environment.CLOVER_TREE_EXACT_PR_HEAD = "d".repeat(40); },
+    (v) => { v.environment.CLOVER_TREE_HEAD = "d".repeat(40); },
+    (v) => { v.environment.GITHUB_SHA = v.head; },
+    (v) => { v.environment.GITHUB_REF = `refs/heads/${CI_PREVIEW_READINESS_BRANCH}`; },
+    (v) => { v.environment.GITHUB_HEAD_REF = "wrong"; },
+    (v) => { v.environment.GITHUB_BASE_REF = "main"; },
+    (v) => { v.environment.GITHUB_REPOSITORY = "other/first"; },
+    (v) => { v.environment.GITHUB_RUN_ID = ""; },
+    (v) => { v.environment.GITHUB_RUN_ATTEMPT = "0"; },
+    (v) => { v.environment.GITHUB_RUN_ATTEMPT = "9007199254740992"; },
+    (v) => { v.environment.GITHUB_WORKFLOW_REF = "unrelated-workflow"; },
+    (v) => { v.environment.GITHUB_WORKFLOW_SHA = v.head; },
+    (v) => { v.workflowBlob = "not-a-blob"; }
+  ];
+  for (const change of changes) {
+    const changed = structuredClone(fixture); change(changed);
+    assert.throws(() => deriveCiPreviewExecutionIdentity(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
+  }
+});
+
+test("readiness source preserves frozen base, four-file scope, linear budget, locks and LOCAL separation", () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-readiness-source-test-")));
+  const fixture = path.join(temporary, "repository");
+  const run = (args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const environment = { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT };
+  const proof = (changes = {}) => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: { ...environment, ...changes } });
+  try {
+    execFileSync("git", ["clone", "--quiet", "--no-hardlinks", "--no-checkout", repositoryRoot, fixture]);
+    run(["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, CI_PREVIEW_READINESS_BASE]);
+    run(["config", "user.name", "Synthetic readiness fixture"]); run(["config", "user.email", "synthetic@example.invalid"]);
+    run(["config", "commit.gpgsign", "false"]);
+    assert.throws(proof, /DEPTH_REJECTED/u);
+    const sourcePath = ATTESTATION_REPAIR_PATHS[1]; const target = path.join(fixture, sourcePath);
+    const addCommit = (message) => { run(["add", "-A"]); run(["commit", "--quiet", "-m", message]); };
+    writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic readiness fixture.\n`); addCommit("Synthetic readiness scope");
+    const clean = run(["rev-parse", "HEAD"]).trim();
+    const result = proof({ CLOVER_TREE_HEAD: clean });
+    assert.equal(result.taskId, CI_PREVIEW_READINESS_TASK); assert.equal(result.base, CI_PREVIEW_READINESS_BASE);
+    assert.equal(result.baseTree, CI_PREVIEW_READINESS_BASE_TREE); assert.deepEqual(result.paths, [sourcePath]);
+    assert.equal(result.localCommitCount, 1); assert.equal(result.changedPathCount, 1); assert.equal(result.ciExecution, null);
+    assert.equal(result.fullMainPathCount, 75);
+    assert.equal(result.sourceManifestSha256, deriveSourceProvenance({ repositoryRoot: fixture }).sourceManifestSha256);
+    assert.deepEqual(result.lockfiles.map(({ sha256: hash }) => hash), DEPENDENCY_SUCCESSOR_LOCKS.map(({ sha256: hash }) => hash));
+    for (const field of ["githubActions", "releaseAuthority", "exactPrHeadAcceptance", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted"]) assert.equal(result[field], false);
+    const { sourceProofSelfHash, ...body } = result; assert.equal(sourceProofSelfHash, sha256(`${canonicalJson(body)}\n`));
+    for (const changes of [
+      { GITHUB_ACTIONS: "true" }, { GITHUB_EVENT_NAME: "pull_request" }, { CLOVER_TREE_PR_NUMBER: "35" },
+      { CLOVER_TREE_EXACT_PR_HEAD: clean }, { GITHUB_RUN_ID: "123" }, { CLOVER_READINESS_RELEASE_AUTHORITY: "true" },
+      { CLOVER_TREE_PROTECTED_PREVIEW_HEAD: clean }, { CLOVER_TREE_BROWSER_EVIDENCE_MODE: "protected-preview" },
+      { CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: DEPENDENCY_SUCCESSOR_CONTEXT }
+    ]) assert.throws(() => proof(changes), /CONTEXT_REJECTED/u);
+    assert.throws(() => proof({ CLOVER_TREE_HEAD: "d".repeat(40) }), /IDENTITY_REJECTED/u);
+    assert.throws(() => proof({ GIT_INDEX_FILE: target }), /GIT_ENVIRONMENT_REJECTED/u);
+    assert.throws(() => proof({ GITHUB_WORKSPACE: temporary }), /GIT_ROOT_REJECTED/u);
+    const ci = readinessEventFixture(clean); const eventPath = path.join(temporary, "event.json"); writeFileSync(eventPath, JSON.stringify(ci.event));
+    const ciEnvironment = { ...ci.environment, GITHUB_EVENT_PATH: eventPath, GITHUB_WORKSPACE: fixture };
+    const ciProof = deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment });
+    assert.equal(ciProof.githubActions, true); assert.equal(ciProof.ciExecution.headSha, clean);
+    assert.equal(ciProof.ciExecution.workflowBlob, run(["rev-parse", `${clean}:${ATTESTATION_REPAIR_PATHS[0]}`]).trim());
+    assert.equal(ciProof.releaseAuthority, false); assert.equal(ciProof.providerAcceptance, false);
+    ci.event.pull_request.base.sha = "d".repeat(40); writeFileSync(eventPath, JSON.stringify(ci.event));
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CI_EVENT_REJECTED/u);
+    for (const flag of ["assume-unchanged", "skip-worktree"]) {
+      run(["update-index", `--${flag}`, "--", sourcePath]); assert.throws(proof, /HIDDEN_INDEX_STATE_REJECTED/u);
+      run(["update-index", `--no-${flag}`, "--", sourcePath]);
+    }
+    writeFileSync(path.join(fixture, "untracked-synthetic"), "fixture"); assert.throws(proof, /DIRTY_SOURCE_REJECTED/u); unlinkSync(path.join(fixture, "untracked-synthetic"));
+    for (const mutation of [
+      () => writeFileSync(path.join(fixture, "unexpected-synthetic"), "fixture"),
+      () => chmodSync(target, 0o755), () => writeFileSync(target, Buffer.from([0, 1, 2])), () => unlinkSync(target),
+      () => renameSync(target, `${target}.renamed`),
+      ...DEPENDENCY_SUCCESSOR_LOCKS.map(({ path: lockPath }) => () => writeFileSync(path.join(fixture, lockPath), `${readFileSync(path.join(fixture, lockPath), "utf8")}\n`))
+    ]) {
+      mutation(); addCommit("Synthetic prohibited mutation"); assert.throws(proof, /PATH_REJECTED|BLOB_REJECTED/u);
+      // Reset only this disposable synthetic clone, never an owner checkout.
+      run(["reset", "--hard", clean]);
+    }
+    run(["commit", "--allow-empty", "--quiet", "-m", "Synthetic empty tail"]); assert.throws(proof, /PATH_REJECTED/u); run(["reset", "--hard", clean]);
+    for (let count = 2; count <= 4; count += 1) {
+      writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic tail ${count}.\n`); addCommit(`Synthetic tail ${count}`);
+      if (count < 4) assert.equal(proof().localCommitCount, count); else assert.throws(proof, /DEPTH_REJECTED/u);
+    }
+    run(["reset", "--hard", clean]);
+    const tree = run(["rev-parse", `${clean}^{tree}`]).trim();
+    const side = run(["commit-tree", tree, "-p", CI_PREVIEW_READINESS_BASE, "-m", "Synthetic side"]).trim();
+    const merge = run(["commit-tree", tree, "-p", clean, "-p", side, "-m", "Synthetic merge"]).trim();
+    run(["reset", "--hard", merge]); assert.throws(proof, /LINEARITY_REJECTED/u); run(["reset", "--hard", clean]);
+    run(["branch", "-m", "synthetic-wrong-branch"]); assert.throws(proof, /IDENTITY_REJECTED/u); run(["branch", "-m", CI_PREVIEW_READINESS_BRANCH]);
+    run(["reset", "--hard", DEPENDENCY_SUCCESSOR_BASE]); assert.throws(proof, /BASE_REJECTED/u);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+
+function readinessPreviewFixture(verifiedEvidence) {
+  // Synthetic consistency inputs only: these hashes/IDs do not represent approvals, CI or provider operations.
+  const seal = (body) => ({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
+  const provenance = verifiedEvidence.sourceProvenance;
+  const proof = seal({ schemaVersion: "clover-ci-preview-readiness-source-v1", classification: "local-readiness-candidate",
+    taskId: CI_PREVIEW_READINESS_TASK, context: CI_PREVIEW_READINESS_CONTEXT, githubActions: false, pullRequestNumber: null,
+    branch: CI_PREVIEW_READINESS_BRANCH, head: provenance.commit, tree: provenance.tree, ciExecution: null,
+    fullMainPathCount: provenance.changedPathCount, fullMainPathListSha256: provenance.pathListSha256,
+    sourceManifestSha256: provenance.sourceManifestSha256, parent: provenance.parent,
+    base: CI_PREVIEW_READINESS_BASE, baseTree: CI_PREVIEW_READINESS_BASE_TREE, commitIds: [provenance.commit], localCommitCount: 1,
+    changedPathCount: 4, paths: [...ATTESTATION_REPAIR_PATHS], pathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`),
+    allowedPathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`), diffSha256: hex64("c"),
+    sourceFiles: ATTESTATION_REPAIR_PATHS.map((sourcePath) => ({ path: sourcePath, mode: "100644", blob: hex40("b"), bytes: 100, sha256: hex64("d") })),
+    lockfiles: DEPENDENCY_SUCCESSOR_LOCKS.map((entry) => ({ path: entry.path, mode: "100644", blob: hex40("e"), bytes: 100, sha256: entry.sha256, baseSha256: entry.sha256 })),
+    cleanWorktree: true, linearFirstParent: true, exactPrHeadAcceptance: false, releaseAuthority: false, providerAcceptance: false,
+    consequentialAuthorityGranted: false, deploymentAllowanceGranted: false });
+  const execution = { ...deriveCiPreviewExecutionIdentity(readinessEventFixture(proof.head)), nodeVersion: "v24.16.0" };
+  // Use a distinct synthetic merge SHA even though this shared suite's synthetic source commit is all 'a'.
+  execution.mergeSha = hex40("f"); execution.workflowSha = execution.mergeSha;
+  const { sourceProofSelfHash: _ignoredHash, ...ciBody } = proof;
+  void _ignoredHash;
+  const ciProof = seal({ ...ciBody, classification: "ci-readiness-candidate", context: CI_PREVIEW_READINESS_CI_CONTEXT,
+    githubActions: true, pullRequestNumber: execution.pullRequestNumber, ciExecution: execution });
+  const sealedInput = { deploymentInputRootSha256: verifiedEvidence.deploymentInputManifest.deploymentInputRootSha256,
+    deploymentInputManifestSelfHash: verifiedEvidence.deploymentInputManifest.manifestSelfHash,
+    payloadManifestRootSha256: verifiedEvidence.payloadManifest.rootSha256,
+    attestationRawSha256: verifiedEvidence.deploymentInputManifest.attestation.rawSha256,
+    archiveSha256: verifiedEvidence.archiveManifest.archiveSha256, archiveManifestSelfHash: verifiedEvidence.archiveManifest.manifestSelfHash };
+  const source = { repository: "chrisdortch/first", ref: `refs/heads/${proof.branch}`, head: proof.head, tree: proof.tree,
+    base: proof.base, baseTree: proof.baseTree, sourceProofSelfHash: proof.sourceProofSelfHash,
+    sourceManifestSha256: proof.sourceManifestSha256, fullMainPathCount: proof.fullMainPathCount };
+  const contract = { schemaVersion: "clover-ci-preview-execution-contract-v1", taskId: CI_PREVIEW_READINESS_TASK, source, sealedInput,
+    ci: { sourceProof: ciProof, run: { id: execution.runId, runAttempt: execution.runAttempt, event: "pull_request", repository: source.repository,
+      headSha: source.head, headBranch: proof.branch, workflowPath: execution.workflowPath, status: "completed", conclusion: "success",
+      completedAt: "2026-08-29T19:58:00.000Z", observedAt: "2026-08-29T19:59:00.000Z" },
+      artifacts: ["validation-node-22", "validation-node-24", "sealed-input-node-24", "browser"].map((role, index) => ({
+        role, id: 123450 + index, name: `${execution.artifactPrefix}-${role}`, runId: execution.runId, runAttempt: execution.runAttempt,
+        headSha: proof.head, sizeInBytes: 100, providerDigest: `sha256:${hex64("d")}`, downloadSha256: hex64("d"), expired: false,
+        sourceManifestSha256: proof.sourceManifestSha256, archiveSha256: role === "sealed-input-node-24" ? sealedInput.archiveSha256 : null })),
+      artifactValidationReceiptSha256: hex64("e") },
+    ownerApproval: { taskId: CI_PREVIEW_READINESS_TASK, recordSha256: hex64("f"), approvedAt: "2026-08-29T19:50:00.000Z", expiresAt: "2026-08-29T20:20:00.000Z",
+      repository: source.repository, ref: source.ref, head: source.head, tree: source.tree, projectId: VERCEL_PROJECT_ID, teamId: VERCEL_TEAM_ID,
+      target: "preview", dataClass: "synthetic-only", ciPolicy: "successful-exact-source-stacked-pr-run-with-verified-artifacts",
+      maximumDeployments: 1, maximumBypassCreates: 1, maximumBypassRevocations: 1, publication: false, merge: false,
+      production: false, settingsChanges: false, privateData: false },
+    allowance: { taskId: CI_PREVIEW_READINESS_TASK, id: "synthetic-allowance-not-authority", ownerApprovalRecordSha256: hex64("f"), head: source.head, tree: source.tree,
+      projectId: VERCEL_PROJECT_ID, teamId: VERCEL_TEAM_ID, state: "unconsumed", executionsConsumed: 0,
+      observedAt: "2026-08-29T19:59:30.000Z", observationReceiptSha256: hex64("c") } };
+  return { contract, sourceProof: proof, verifiedEvidence, now: providerReceiptNow };
+}
+
+test("readiness preview contract rejects source, CI, artifact and authority substitutions and preserves native receipt guards", () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-readiness-preview-")));
+  try {
+    const output = path.join(root, "output");
+    const successorBuild = { ...build, parent: CI_PREVIEW_READINESS_BASE, changedPathCount: 75 };
+    writeRawBuildOutput(output, root, { sourceProvenance: successorBuild });
+    const sealed = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: path.join(root, "evidence"),
+      frozenOutputRoot: path.join(root, "frozen-workspace"), sourceProvenance: successorBuild });
+    const verifiedEvidence = { sourceProvenance: successorBuild, payloadManifest: sealed.outputManifest, attestation: sealed.attestation,
+      deploymentInputManifest: sealed.deploymentInputManifest, archiveManifest: sealed.archiveManifest };
+    const fixture = readinessPreviewFixture(verifiedEvidence);
+    const validation = validateCiPreviewExecutionContract(fixture);
+    assert.equal(validation.suppliedRecordsConsistent, true); assert.equal(validation.releaseAuthority, false);
+    assert.equal(validation.deploymentAllowanceGranted, false);
+    assert.equal(validation.ownerApprovalAuthentication, "external-procedural-verification-required");
+    const changes = [
+      (c) => { c.taskId = "historical-task"; }, (c) => { c.source.base = DEPENDENCY_SUCCESSOR_BASE; },
+      (c) => { c.source.tree = hex40("e"); }, (c) => { c.source.ref = `refs/heads/${DEPENDENCY_SUCCESSOR_BRANCH}`; },
+      (c) => { c.sealedInput.archiveSha256 = hex64("e"); }, (c) => { c.sealedInput.deploymentInputRootSha256 = hex64("e"); },
+      (c) => { c.ci.run.conclusion = "failure"; }, (c) => { c.ci.run.status = "in_progress"; },
+      (c) => { c.ci.run.headSha = hex40("e"); }, (c) => { c.ci.run.runAttempt = "2"; },
+      (c) => { c.ci.run.observedAt = "2026-08-29T18:00:00.000Z"; },
+      (c) => { c.ci.run.observedAt = "2026-08-29T21:00:00.000Z"; },
+      (c) => { c.ci.artifacts.pop(); }, (c) => { c.ci.artifacts[1] = c.ci.artifacts[0]; },
+      (c) => { c.ci.artifacts[0].name = "old-run-artifact"; }, (c) => { c.ci.artifacts[0].expired = true; },
+      (c) => { c.ci.artifacts[0].runAttempt = "2"; }, (c) => { c.ci.artifacts[0].downloadSha256 = hex64("e"); },
+      (c) => { c.ci.artifacts[2].archiveSha256 = hex64("e"); }, (c) => { c.ci.artifacts[0].sourceManifestSha256 = hex64("e"); },
+      (c) => { delete c.ownerApproval; }, (c) => { c.ownerApproval.head = hex40("e"); },
+      (c) => { c.ownerApproval.projectId = "other-project"; }, (c) => { c.ownerApproval.teamId = "other-team"; },
+      (c) => { c.ownerApproval.expiresAt = "2026-08-29T19:00:00.000Z"; },
+      (c) => { c.ownerApproval.maximumBypassCreates = 0; }, (c) => { c.ownerApproval.production = true; },
+      (c) => { c.ownerApproval.privateData = true; }, (c) => { c.ownerApproval.maximumDeployments = 2; },
+      (c) => { delete c.allowance; }, (c) => { c.allowance.state = "consumed"; },
+      (c) => { c.allowance.executionsConsumed = 1; }, (c) => { c.allowance.ownerApprovalRecordSha256 = hex64("a"); },
+      (c) => { c.allowance.observedAt = "2026-08-29T18:00:00.000Z"; }
+    ];
+    for (const change of changes) { const contract = structuredClone(fixture.contract); change(contract);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, contract }), /CLOVER_/u); }
+    for (const change of [
+      (p) => { p.base = DEPENDENCY_SUCCESSOR_BASE; }, (p) => { p.baseTree = hex40("e"); },
+      (p) => { p.releaseAuthority = true; }, (p) => { p.paths[0] = "outside-allowlist"; },
+      (p) => { p.localCommitCount = 4; }, (p) => { p.lockfiles[0].sha256 = hex64("a"); },
+      (p) => { p.providerAcceptance = true; }, (p) => { p.consequentialAuthorityGranted = true; },
+      (p) => { p.unreviewedAuthority = true; }
+    ]) {
+      const proof = structuredClone(fixture.sourceProof); change(proof); const { sourceProofSelfHash: _hash, ...body } = proof; void _hash;
+      proof.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, sourceProof: proof }), /CLOVER_/u);
+    }
+    for (const change of [
+      (e) => { e.eventName = "push"; }, (e) => { e.pullRequestNumber = 35; }, (e) => { e.baseRef = "main"; },
+      (e) => { e.baseSha = hex40("d"); }, (e) => { e.headRef = DEPENDENCY_SUCCESSOR_BRANCH; },
+      (e) => { e.nodeVersion = "v22.23.2"; }, (e) => { e.workflowSha = hex40("e"); },
+      (e) => { e.workflowRef = "unrelated-workflow"; }, (e) => { e.artifactPrefix = "old-run"; }
+    ]) {
+      const contract = structuredClone(fixture.contract); const proof = contract.ci.sourceProof; change(proof.ciExecution);
+      const { sourceProofSelfHash: _hash, ...body } = proof; void _hash; proof.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, contract }), /CLOVER_/u);
+    }
+    const provider = providerDeploymentFixture(output, verifiedEvidence);
+    provider.deployment.response.meta.gitCommitRef = CI_PREVIEW_READINESS_BRANCH;
+    provider.deployment.request = providerRequest("GET", provider.deployment.request.url, provider.deployment.response, provider.deployment.request.responseObservedAt);
+    for (const key of ["argv", "executedArgv"]) provider.deploymentInvocation[key] = provider.deploymentInvocation[key].map((arg) => arg.startsWith("gitCommitRef=") ? `gitCommitRef=${CI_PREVIEW_READINESS_BRANCH}` : arg);
+    const nativeSrc = provider.fileTree.response[0]; nativeSrc.children = nativeSrc.children.filter(({ name }) => name !== "out");
+    provider.fileTree.response = [nativeSrc, nativeTreeFixture()[1]];
+    provider.fileTree.request = providerRequest("GET", provider.fileTree.request.url, provider.fileTree.response);
+    for (const content of provider.contents) { content.request = providerRequest("GET", content.request.url.replace(/\?path=[^&]*&/u, "?"), content.response); content.request.responseCharset = "utf8"; }
+    const args = { providerDeployment: provider, verifiedEvidence, now: providerReceiptNow, fileTreeProfile: NATIVE_FILE_TREE_PROFILE,
+      receiptProfile: CI_PREVIEW_RECEIPT_PROFILE, previewContract: fixture.contract, previewSourceProof: fixture.sourceProof,
+      nativeFileTreeBytes: Buffer.from(JSON.stringify(provider.fileTree.response)),
+      nativeContentBodies: provider.contents.map(({ path: entryPath, response }) => ({ path: entryPath, rawBytes: Buffer.from(JSON.stringify(response)) })) };
+    const receipt = createProviderDeploymentReceipt(args);
+    assert.equal(receipt.schemaVersion, "1.0.0"); assert.equal(receipt.sourceBranch, CI_PREVIEW_READINESS_BRANCH);
+    assert.equal(receipt.runtimeEntriesUsedAsSource, false); assert.equal(receipt.automationBypassLifecycle, "0->1->0");
+    assert.equal(receipt.previewExecution.deploymentAllowanceGranted, false); assert.equal(receipt.consequentialAuthorityGranted, false);
+    for (const changes of [{ receiptProfile: "historical-tree-campaign" }, { receiptProfile: "unknown" },
+      { previewContract: undefined }, { previewSourceProof: undefined }, { fileTreeProfile: "vercel-legacy-nested-out-v1" }]) {
+      assert.throws(() => createProviderDeploymentReceipt({ ...args, ...changes }), /CLOVER_/u);
+    }
+    for (const change of [
+      (p) => { p.deployment.response.meta.gitCommitRef = STACK_B_BRANCH; },
+      (p) => { p.deployment.response.meta.gitCommitSha = hex40("e"); },
+      (p) => { p.deploymentInvocation.executionCount = 2; },
+      (p) => { p.deploymentInvocation.executedArgv.push("--prod"); },
+      (p) => { p.protection.revoke.afterReadback.response.bypassCount = 1; }
+    ]) { const candidate = structuredClone(provider); change(candidate);
+      assert.throws(() => createProviderDeploymentReceipt({ ...args, providerDeployment: candidate }), /CLOVER_/u); }
+    assert.throws(() => createProviderDeploymentReceipt({ ...args, nativeContentBodies: [] }), /CLOVER_/u);
+    assert.throws(() => createProviderDeploymentReceipt({ ...args, nativeFileTreeBytes: Buffer.from("[]") }), /CLOVER_/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("provider receipt binds the exact immutable deployment, bytes and protection lifecycle", () => {
