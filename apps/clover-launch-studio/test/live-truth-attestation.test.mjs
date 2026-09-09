@@ -2530,8 +2530,25 @@ test("live reconciliation binds merged Stack A and integrated Stack B provenance
   const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
   const provenance = deriveSourceProvenance({ repositoryRoot });
   assert.equal(provenance.stackABase, mergedStackABase);
-  assert.equal(provenance.changedPathCount, 72);
-  assert.equal(provenance.pathListSha256, integratedPathListSha256);
+  if (process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === DEPENDENCY_SUCCESSOR_CONTEXT) {
+    const successor = deriveDependencySuccessorSource({ repositoryRoot });
+    const historicalPaths = deriveSourceManifestEntries({ repositoryRoot, stackABase: mergedStackABase,
+      candidateCommit: DEPENDENCY_SUCCESSOR_BASE }).map(({ path: sourcePath }) => sourcePath);
+    assert.equal(historicalPaths.length, 72);
+    assert.equal(sha256(`${historicalPaths.join("\n")}\n`), integratedPathListSha256);
+    const successorPaths = [...new Set([...historicalPaths, ...successor.paths])]
+      .sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
+    assert.equal(provenance.commit, successor.head);
+    assert.equal(provenance.tree, successor.tree);
+    assert.equal(provenance.changedPathCount, successorPaths.length);
+    assert.equal(provenance.pathListSha256, sha256(`${successorPaths.join("\n")}\n`));
+    assert.notEqual(provenance.pathListSha256, integratedPathListSha256);
+    assert.equal(successor.releaseAuthority, false);
+    assert.equal(successor.exactPrHeadAcceptance, false);
+  } else {
+    assert.equal(provenance.changedPathCount, 72);
+    assert.equal(provenance.pathListSha256, integratedPathListSha256);
+  }
 });
 
 test("deployment attestation rejects every exact source identity substitution", async () => {
