@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { composeTodaySibling, handler } from "../server.js";
 
 function canonicalJson(value) {
@@ -963,3 +964,244 @@ test("command center preserves the technical bridge and adds a fail-closed exact
     assert.doesNotMatch(html, /catch[\s\S]{0,300}callTool\('prepare_clover_command'/);
   });
 });
+
+// These synthetic regressions exercise the SDK upgrade's actual stateless request lifecycle.
+// Test-local observers preserve the real server, transport and registered tool implementations.
+const securitySurfaces = [
+  { path: "/mcp", tool: "prepare_clover_command", tools: technicalToolNames },
+  { path: "/owner-mcp", tool: "clover_owner_request", tools: ["clover_owner_request"] },
+];
+
+async function waitForMcpCondition(predicate, message) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, message);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function observeMcpConnections(t) {
+  const connections = [];
+  const connect = McpServer.prototype.connect;
+  t.mock.method(McpServer.prototype, "connect", async function (transport) {
+    const record = { server: this, transport, closeEvents: 0 };
+    connections.push(record);
+    await connect.call(this, transport);
+    const onclose = transport.onclose;
+    transport.onclose = () => {
+      record.closeEvents += 1;
+      onclose?.();
+    };
+  });
+  return {
+    connections,
+    async assertClosed() {
+      assert.ok(connections.length > 0, "real MCP connections were observed");
+      await waitForMcpCondition(
+        () => connections.every(({ server, closeEvents }) => closeEvents > 0 && !server.isConnected()),
+        "every request must close its own transport and disconnect its own server",
+      );
+      assert.equal(new Set(connections.map(({ server }) => server)).size, connections.length);
+      assert.equal(new Set(connections.map(({ transport }) => transport)).size, connections.length);
+      for (const { transport } of connections) assert.equal(transport.sessionId, undefined);
+    },
+  };
+}
+
+function holdSyntheticToolRequests(t, requests) {
+  const held = new Set(requests);
+  const arrived = new Map();
+  const completed = new Set();
+  let release;
+  const ready = new Promise((resolve) => { release = resolve; });
+  const registerTool = McpServer.prototype.registerTool;
+  t.mock.method(McpServer.prototype, "registerTool", function (name, config, callback) {
+    if (!securitySurfaces.some(({ tool }) => tool === name)) {
+      return registerTool.call(this, name, config, callback);
+    }
+    return registerTool.call(this, name, config, async (args, extra) => {
+      if (!held.has(args.request)) return callback(args, extra);
+      assert.equal(arrived.has(args.request), false, "one handler owns each synthetic request");
+      arrived.set(args.request, extra.signal);
+      try {
+        await ready;
+        return await callback(args, extra);
+      } finally {
+        completed.add(args.request);
+      }
+    });
+  });
+  return { arrived, completed, release };
+}
+
+function assertSyntheticToolResult(result, request, surface) {
+  assert.equal(result.isError, undefined);
+  const payload = result.structuredContent;
+  assert.equal(payload.packet.originalRequest, request);
+  assert.equal(payload.packet.authority.previewOnlyByDefault, true);
+  for (const [key, value] of Object.entries(payload.packet.authority)) {
+    if (key !== "previewOnlyByDefault") assert.equal(value, false, key);
+  }
+  if (surface.path === "/owner-mcp") {
+    assert.equal(payload.requestIntegrity.receivedRequest, request);
+    assert.equal(payload.requestIntegrity.sha256, createHash("sha256").update(request).digest("hex"));
+    assert.equal(payload.sourceHeader.consequentialAuthorityGranted, false);
+  }
+}
+
+async function postSyntheticRpc(baseUrl, surface, message, {
+  contentType = "application/json",
+  rawBody,
+  signal = AbortSignal.timeout(5000),
+} = {}) {
+  const response = await fetch(`${baseUrl}${surface.path}`, {
+    method: "POST",
+    headers: {
+      "content-type": contentType,
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": "2025-11-25",
+    },
+    body: rawBody ?? JSON.stringify(message),
+    signal,
+  });
+  assert.equal(response.headers.get("mcp-session-id"), null);
+  return { status: response.status, body: await response.json() };
+}
+
+for (const surface of securitySurfaces) {
+  test(`SDK security successor ${surface.path} preserves sequential initialize/list/call and resource policy`, { timeout: 20000 }, async (t) => {
+    const observed = observeMcpConnections(t);
+    await withGateway(async (baseUrl) => {
+      for (let clientIndex = 0; clientIndex < 2; clientIndex += 1) {
+        await withMcpClient(`${baseUrl}${surface.path}`, `security-sequential-${clientIndex}`, async (client) => {
+          const listed = await client.listTools();
+          assert.deepEqual(listed.tools.map(({ name }) => name).sort(), surface.tools);
+          for (const tool of listed.tools) assert.deepEqual(tool.annotations, expectedReadOnlyAnnotations);
+          for (let requestIndex = 0; requestIndex < 2; requestIndex += 1) {
+            const request = `Synthetic SDK sequential client ${clientIndex} request ${requestIndex}.`;
+            assertSyntheticToolResult(await client.callTool({ name: surface.tool, arguments: { request } }), request, surface);
+          }
+          const templates = await client.listResourceTemplates();
+          assert.deepEqual(templates.resourceTemplates, []);
+          const resources = await client.listResources();
+          assert.deepEqual(resources.resources.map(({ uri }) => uri), ["ui://clover/command-center.html"]);
+          const widget = await client.readResource({ uri: "ui://clover/command-center.html" });
+          assert.equal(widget.contents.length, 1);
+          assert.equal(widget.contents[0].mimeType, "text/html;profile=mcp-app");
+          await assert.rejects(client.readResource({ uri: "ui://synthetic-unregistered-resource" }));
+          const forbidden = await client.callTool({ name: "synthetic_write_not_registered", arguments: {} });
+          assert.equal(forbidden.isError, true);
+        });
+      }
+      await observed.assertClosed();
+    });
+  });
+
+  test(`SDK security successor ${surface.path} closes malformed and denied requests and preserves parsed JSON media types`, { timeout: 20000 }, async (t) => {
+    const observed = observeMcpConnections(t);
+    await withGateway(async (baseUrl) => {
+      const message = { jsonrpc: "2.0", id: 17, method: "tools/list", params: {} };
+      for (const contentType of ["application/json; charset=utf-8", "Application/JSON"]) {
+        const response = await postSyntheticRpc(baseUrl, surface, message, { contentType });
+        assert.equal(response.status, 200);
+        assert.equal(response.body.id, 17);
+        assert.deepEqual(response.body.result.tools.map(({ name }) => name).sort(), surface.tools);
+      }
+      for (const contentType of ["text/plain", "text/plain; a=application/json"]) {
+        const response = await postSyntheticRpc(baseUrl, surface, message, { contentType });
+        assert.equal(response.status, 415);
+        assert.ok(response.body.error);
+      }
+      const malformed = await postSyntheticRpc(baseUrl, surface, message, { rawBody: "{invalid synthetic JSON" });
+      assert.equal(malformed.status, 400);
+      assert.ok(malformed.body.error);
+      const invalidInput = await postSyntheticRpc(baseUrl, surface, {
+        jsonrpc: "2.0", id: 18, method: "tools/call", params: { name: surface.tool, arguments: { request: "" } },
+      });
+      assert.equal(invalidInput.status, 200);
+      assert.equal(invalidInput.body.id, 18);
+      assert.equal(invalidInput.body.result.isError, true);
+      await observed.assertClosed();
+      assert.equal(observed.connections.length, 6, "denied requests also own and close a distinct connection");
+    });
+  });
+}
+
+for (const pair of [
+  [securitySurfaces[0], securitySurfaces[0]],
+  [securitySurfaces[1], securitySurfaces[1]],
+  [securitySurfaces[0], securitySurfaces[1]],
+]) {
+  test(`SDK security successor ${pair.map(({ path }) => path).join(" + ")} isolates concurrent overlapping JSON-RPC IDs`, { timeout: 20000 }, async (t) => {
+    const requests = ["Synthetic SDK overlapping request A.", "Synthetic SDK overlapping request B."];
+    const observed = observeMcpConnections(t);
+    const barrier = holdSyntheticToolRequests(t, requests);
+    await withGateway(async (baseUrl) => {
+      const responses = pair.map((surface, index) => postSyntheticRpc(baseUrl, surface, {
+        jsonrpc: "2.0", id: 29, method: "tools/call", params: { name: surface.tool, arguments: { request: requests[index] } },
+      }));
+      try {
+        await waitForMcpCondition(() => barrier.arrived.size === 2, "both overlapping requests must reach real registered handlers");
+        assert.equal(observed.connections.filter(({ server }) => server.isConnected()).length, 2);
+        assert.notEqual(observed.connections[0].server, observed.connections[1].server);
+        assert.notEqual(observed.connections[0].transport, observed.connections[1].transport);
+      } finally {
+        barrier.release();
+      }
+      const values = await Promise.all(responses);
+      for (let index = 0; index < values.length; index += 1) {
+        assert.equal(values[index].status, 200);
+        assert.equal(values[index].body.id, 29);
+        assertSyntheticToolResult(values[index].body.result, requests[index], pair[index]);
+        assert.equal(JSON.stringify(values[index].body).includes(requests[1 - index]), false);
+      }
+      assert.equal(barrier.completed.size, 2);
+      await observed.assertClosed();
+    });
+  });
+}
+
+for (const surface of securitySurfaces) {
+  test(`SDK security successor ${surface.path} abort cleanup leaves the concurrent client isolated and usable`, { timeout: 20000 }, async (t) => {
+    const requests = ["Synthetic SDK aborted client request.", "Synthetic SDK surviving client request."];
+    const observed = observeMcpConnections(t);
+    const barrier = holdSyntheticToolRequests(t, requests);
+    const abort = new AbortController();
+    await withGateway(async (baseUrl) => {
+      const aborted = postSyntheticRpc(baseUrl, surface, {
+        jsonrpc: "2.0", id: 41, method: "tools/call", params: { name: surface.tool, arguments: { request: requests[0] } },
+      }, { signal: AbortSignal.any([abort.signal, AbortSignal.timeout(5000)]) }).then(
+        () => assert.fail("aborted request must not receive another client's result"),
+        (error) => assert.equal(error.name, "AbortError"),
+      );
+      const surviving = postSyntheticRpc(baseUrl, surface, {
+        jsonrpc: "2.0", id: 41, method: "tools/call", params: { name: surface.tool, arguments: { request: requests[1] } },
+      });
+      try {
+        await waitForMcpCondition(() => barrier.arrived.size === 2, "both client handlers must be pending before disconnect");
+        abort.abort();
+        await aborted;
+        await waitForMcpCondition(() => barrier.arrived.get(requests[0]).aborted, "closed transport must abort only its own handler");
+        assert.equal(barrier.arrived.get(requests[1]).aborted, false);
+        assert.equal(observed.connections.filter(({ server }) => server.isConnected()).length, 1);
+      } finally {
+        abort.abort();
+        barrier.release();
+      }
+      const response = await surviving;
+      assert.equal(response.status, 200);
+      assert.equal(response.body.id, 41);
+      assertSyntheticToolResult(response.body.result, requests[1], surface);
+      assert.equal(JSON.stringify(response.body).includes(requests[0]), false);
+      await waitForMcpCondition(() => barrier.completed.size === 2, "aborted and surviving handlers must settle");
+      await observed.assertClosed();
+      const followUp = "Synthetic SDK request after peer disconnect.";
+      const next = await postSyntheticRpc(baseUrl, surface, {
+        jsonrpc: "2.0", id: 41, method: "tools/call", params: { name: surface.tool, arguments: { request: followUp } },
+      });
+      assert.equal(next.status, 200);
+      assertSyntheticToolResult(next.body.result, followUp, surface);
+      await observed.assertClosed();
+    });
+  });
+}

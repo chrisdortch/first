@@ -148,6 +148,116 @@ export function deriveAttestationRepairSource({ repositoryRoot, environment = pr
   return Object.freeze({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
 }
 
+export const DEPENDENCY_SUCCESSOR_TASK = "CLOVER-DEPENDENCY-REMEDIATION-20260908-B";
+export const DEPENDENCY_SUCCESSOR_BASE = "9f6e8303267ca163cbd838ce84b3115ca04b775b";
+export const DEPENDENCY_SUCCESSOR_BASE_TREE = "96370cc2b3057b8a91d433fcf0a1836211e7c53a";
+export const DEPENDENCY_SUCCESSOR_BRANCH = "codex/clover-dependency-security-20260908";
+export const DEPENDENCY_SUCCESSOR_CONTEXT = "local-dependency-security-successor";
+export const DEPENDENCY_SUCCESSOR_REQUIRED_PATHS = Object.freeze([
+  "apps/clover-context-gateway/package-lock.json",
+  "apps/clover-context-gateway/package.json",
+  "apps/clover-launch-studio/package-lock.json"
+]);
+export const DEPENDENCY_SUCCESSOR_PATHS = Object.freeze([
+  ...ATTESTATION_REPAIR_PATHS,
+  ...DEPENDENCY_SUCCESSOR_REQUIRED_PATHS,
+  "apps/clover-context-gateway/server.js",
+  "apps/clover-context-gateway/test/serverless-mcp.test.js",
+  "apps/clover-launch-studio/package.json"
+].sort(compareUtf8));
+export const DEPENDENCY_SUCCESSOR_LOCKS = Object.freeze([
+  Object.freeze({ path: "apps/clover-context-gateway/package-lock.json",
+    baseSha256: "d107042705a781c955276edc0ee52e9dc509103b6d45f075cc1f519eba23f58a",
+    sha256: "de24b0ed2068eee232997e25b68e12b83d868c75c51d48ed7a0e8e3a4eb44f24" }),
+  Object.freeze({ path: "apps/clover-launch-studio/package-lock.json",
+    baseSha256: "00cd94570f127463be83e330efe0af7e01349fb6fcc21596bb897ec3aa0d864b",
+    sha256: "301241419abf43e182c0327f0e2fe178f45de369ae230f95d0b2fcbf5ad0146c" })
+]);
+
+// This successor has its own local evidence contract; neither historical contract accepts its dependency edits.
+export function deriveDependencySuccessorSource({ repositoryRoot, environment = process.env } = {}) {
+  const context = environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT;
+  if (!repositoryRoot || ![undefined, "false"].includes(environment.GITHUB_ACTIONS)
+    || context !== DEPENDENCY_SUCCESSOR_CONTEXT
+    || ["CLOVER_TREE_EXACT_PR_HEAD", "CLOVER_TREE_PR_NUMBER", "GITHUB_HEAD_REF", "GITHUB_EVENT_NAME", "CLOVER_TREE_BROWSER_EVIDENCE_MODE"]
+      .some((key) => environment[key] !== undefined)
+    || Object.keys(environment).some((key) => key.startsWith("CLOVER_TREE_PROTECTED_PREVIEW_") && environment[key] !== undefined)
+    || ![undefined, "false"].includes(environment.CLOVER_DEPENDENCY_RELEASE_AUTHORITY)) throw new Error("CLOVER_DEPENDENCY_CONTEXT_REJECTED");
+  const forbiddenGitEnvironment = (values) => Object.keys(values).some((key) => key.startsWith("GIT_")
+    && !["GIT_PAGER", "GIT_TERMINAL_PROMPT"].includes(key) && values[key] !== undefined);
+  if (forbiddenGitEnvironment(process.env) || forbiddenGitEnvironment(environment)) throw new Error("CLOVER_DEPENDENCY_GIT_ENVIRONMENT_REJECTED");
+  const root = realpathSync(repositoryRoot);
+  if (realpathSync(git(root, ["rev-parse", "--show-toplevel"]).trim()) !== root
+    || git(root, ["rev-parse", "--is-shallow-repository"]).trim() !== "false"
+    || git(root, ["for-each-ref", "--format=%(refname)", "refs/replace"]).trim() !== ""
+    || existsSync(path.resolve(root, git(root, ["rev-parse", "--git-path", "info/grafts"]).trim()))
+    || environment.GITHUB_WORKSPACE !== undefined && realpathSync(environment.GITHUB_WORKSPACE) !== root) throw new Error("CLOVER_DEPENDENCY_GIT_ROOT_REJECTED");
+  const requireVisibleTrackedSource = () => {
+    for (const flagView of ["-v", "-f"]) {
+      const entries = decodeUtf8Fatal(git(root, ["ls-files", flagView, "-z"], { encoding: null }), "CLOVER_DEPENDENCY_INDEX").split("\0");
+      if (entries.pop() !== "" || entries.length === 0 || entries.some((entry) => !entry.startsWith("H ")))
+        throw new Error("CLOVER_DEPENDENCY_HIDDEN_INDEX_STATE_REJECTED");
+    }
+  };
+  requireVisibleTrackedSource();
+  if (git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) !== "") throw new Error("CLOVER_DEPENDENCY_DIRTY_SOURCE_REJECTED");
+  const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  const head = git(root, ["rev-parse", "HEAD^{commit}"]).trim();
+  const tree = git(root, ["rev-parse", "HEAD^{tree}"]).trim();
+  if (branch !== DEPENDENCY_SUCCESSOR_BRANCH || environment.CLOVER_TREE_HEAD !== undefined && environment.CLOVER_TREE_HEAD !== head
+    || git(root, ["rev-parse", `${DEPENDENCY_SUCCESSOR_BASE}^{tree}`]).trim() !== DEPENDENCY_SUCCESSOR_BASE_TREE
+    || git(root, ["show", "-s", "--format=%P", DEPENDENCY_SUCCESSOR_BASE]).trim() !== ATTESTATION_REPAIR_BASE) throw new Error("CLOVER_DEPENDENCY_IDENTITY_REJECTED");
+  try { git(root, ["merge-base", "--is-ancestor", DEPENDENCY_SUCCESSOR_BASE, head]); }
+  catch { throw new Error("CLOVER_DEPENDENCY_BASE_REJECTED"); }
+  const commits = git(root, ["rev-list", "--reverse", `${DEPENDENCY_SUCCESSOR_BASE}..${head}`]).trim().split("\n");
+  if (commits.length < 1 || commits.length > 3 || commits[0] === "") throw new Error("CLOVER_DEPENDENCY_DEPTH_REJECTED");
+  const inspectDelta = (before, after) => {
+    const changes = parseSourceChanges(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "--no-renames", "-z", before, after], { encoding: null }));
+    if (changes.length === 0 || changes.some((entry) => entry.status !== "M" || !DEPENDENCY_SUCCESSOR_PATHS.includes(entry.path))) throw new Error("CLOVER_DEPENDENCY_PATH_REJECTED");
+    for (const entry of changes) {
+      const prior = sourceObject(root, before, entry.path);
+      const current = sourceObject(root, after, entry.path);
+      const priorBytes = sourceBytes(root, before, entry.path);
+      const currentBytes = sourceBytes(root, after, entry.path);
+      decodeUtf8Fatal(priorBytes, "CLOVER_DEPENDENCY_TEXT"); decodeUtf8Fatal(currentBytes, "CLOVER_DEPENDENCY_TEXT");
+      if (prior.mode !== "100644" || current.mode !== "100644" || prior.blob === current.blob
+        || priorBytes.includes(0) || currentBytes.includes(0)) throw new Error("CLOVER_DEPENDENCY_BLOB_REJECTED");
+    }
+    return changes.map(({ path: changedPath }) => changedPath).sort(compareUtf8);
+  };
+  let parent = DEPENDENCY_SUCCESSOR_BASE;
+  for (const commit of commits) {
+    if (git(root, ["show", "-s", "--format=%P", commit]).trim() !== parent) throw new Error("CLOVER_DEPENDENCY_LINEARITY_REJECTED");
+    inspectDelta(parent, commit); parent = commit;
+  }
+  const paths = inspectDelta(DEPENDENCY_SUCCESSOR_BASE, head);
+  if (!DEPENDENCY_SUCCESSOR_REQUIRED_PATHS.every((required) => paths.includes(required))) throw new Error("CLOVER_DEPENDENCY_REQUIRED_PATH_REJECTED");
+  const lockfiles = DEPENDENCY_SUCCESSOR_LOCKS.map((expected) => {
+    const base = sourceObject(root, DEPENDENCY_SUCCESSOR_BASE, expected.path);
+    const current = sourceObject(root, head, expected.path);
+    if (!/^[0-9a-f]{64}$/u.test(expected.sha256) || expected.sha256 === expected.baseSha256
+      || base.sha256 !== expected.baseSha256 || current.sha256 !== expected.sha256
+      || sha256(readFileSync(path.join(root, expected.path))) !== expected.sha256) throw new Error("CLOVER_DEPENDENCY_LOCK_REJECTED");
+    return { ...current, baseSha256: base.sha256 };
+  });
+  const body = {
+    schemaVersion: "clover-local-dependency-successor-source-v1", classification: "local-dependency-security-candidate",
+    taskId: DEPENDENCY_SUCCESSOR_TASK, context, githubActions: false, pullRequestNumber: null, branch, head, tree,
+    parent: git(root, ["show", "-s", "--format=%P", head]).trim(),
+    base: DEPENDENCY_SUCCESSOR_BASE, baseTree: DEPENDENCY_SUCCESSOR_BASE_TREE,
+    commitIds: commits, localCommitCount: commits.length, changedPathCount: paths.length, paths,
+    pathListSha256: sha256(`${paths.join("\n")}\n`), allowedPathListSha256: sha256(`${DEPENDENCY_SUCCESSOR_PATHS.join("\n")}\n`),
+    diffSha256: sha256(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--binary", "--full-index", "--no-renames", DEPENDENCY_SUCCESSOR_BASE, head], { encoding: null })),
+    sourceFiles: paths.map((sourcePath) => sourceObject(root, head, sourcePath)), lockfiles,
+    cleanWorktree: true, linearFirstParent: true, exactPrHeadAcceptance: false, releaseAuthority: false,
+    providerAcceptance: false, consequentialAuthorityGranted: false, deploymentAllowanceGranted: false
+  };
+  if (git(root, ["rev-parse", "HEAD^{commit}"]).trim() !== head
+    || git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) !== "") throw new Error("CLOVER_DEPENDENCY_SOURCE_CHANGED_DURING_PROOF");
+  requireVisibleTrackedSource();
+  return Object.freeze({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
+}
+
 export function deriveRuntimeDeploymentKey(commit) {
   assertHex(commit, 40, "source commit");
   const deploymentKey = `clover-${commit.slice(0, 24)}`;
@@ -3378,6 +3488,10 @@ function main() {
     process.stdout.write(`${canonicalJson(deriveAttestationRepairSource({ repositoryRoot }))}\n`);
     return;
   }
+  if (command === "dependency-source") {
+    process.stdout.write(`${canonicalJson(deriveDependencySuccessorSource({ repositoryRoot }))}\n`);
+    return;
+  }
   if (command === "source") {
     process.stdout.write(`${canonicalJson(deriveSourceProvenance({ repositoryRoot }))}\n`);
     return;
@@ -3461,7 +3575,7 @@ function main() {
     process.stdout.write(`${canonicalJson(receipt)}\n`);
     return;
   }
-  throw new Error("usage: clover-deployment-attestation.mjs <repair-source|source|source-manifest|project-settings|output|verify|receipt> [options]");
+  throw new Error("usage: clover-deployment-attestation.mjs <dependency-source|repair-source|source|source-manifest|project-settings|output|verify|receipt> [options]");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();

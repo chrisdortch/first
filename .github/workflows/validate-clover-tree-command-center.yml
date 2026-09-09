@@ -5256,6 +5256,28 @@ jobs:
               repairSourceBindings.push({ project, target, sourceProofSelfHash: expectedRepair.sourceProofSelfHash, classification: expectedRepair.classification });
             }
           } else requireCondition(!fs.existsSync(repairSourceRoot), 'repair artifacts outside explicit repair context');
+          const dependencySuccessorContext = process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'local-dependency-security-successor';
+          const dependencySourceRoot = path.join(root, 'clover-dependency-successor-source');
+          const dependencySourceBindings = [];
+          if (dependencySuccessorContext) {
+            requireCondition(process.env.GITHUB_ACTIONS !== 'true', 'dependency successor is local-only');
+            const expectedBytes = execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'dependency-source', '--repository-root', process.cwd()], { maxBuffer: 1024 * 1024 });
+            const expected = JSON.parse(expectedBytes.toString('utf8'));
+            requireCondition(expected.head === process.env.CLOVER_TREE_HEAD && expected.githubActions === false && expected.pullRequestNumber === null
+              && expected.releaseAuthority === false && expected.exactPrHeadAcceptance === false && expected.providerAcceptance === false
+              && expected.deploymentAllowanceGranted === false && expected.consequentialAuthorityGranted === false, 'dependency successor authority or head mismatch');
+            const rootStat = fs.lstatSync(dependencySourceRoot);
+            requireCondition(rootStat.isDirectory() && !rootStat.isSymbolicLink() && (rootStat.mode & 0o777) === 0o755, 'dependency source root unsafe');
+            exactJson(fs.readdirSync(dependencySourceRoot).sort(), Object.keys(exactProjects).map((project) => `${project}.json`).sort(), 'dependency source proof inventory');
+            for (const project of Object.keys(exactProjects)) {
+              const target = path.join(dependencySourceRoot, `${project}.json`);
+              const stat = fs.lstatSync(target);
+              requireCondition(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && (stat.mode & 0o777) === 0o644 && stat.size <= 1024 * 1024, 'dependency source proof unsafe');
+              requireCondition(fs.readFileSync(target).equals(expectedBytes), 'dependency proof differs from exact committed source and locks');
+              dependencySourceBindings.push({ project, target, sourceProofSelfHash: expected.sourceProofSelfHash, classification: expected.classification,
+                lockfiles: expected.lockfiles.map(({ path: lockPath, sha256: lockSha256 }) => ({ path: lockPath, sha256: lockSha256 })) });
+            }
+          } else requireCondition(!fs.existsSync(dependencySourceRoot), 'dependency artifacts outside explicit local successor context');
           const localReceipts = [];
           if (exactPrLocalClosure) {
           const localReceiptRootStat = fs.lstatSync(localReceiptRoot);
@@ -5727,7 +5749,7 @@ jobs:
           try { safeRelative('../receipt.json'); } catch { unsafePathRejected = true; }
           requireCondition(unsafePathRejected, 'unsafe receipt path mutation was accepted');
           } else {
-            requireCondition(repairContext || process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'disabled-non-pr', 'unreviewed local source-closure workflow context');
+            requireCondition(repairContext || dependencySuccessorContext || process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === 'disabled-non-pr', 'unreviewed local source-closure workflow context');
             requireCondition(!fs.existsSync(localReceiptRoot), 'local PR source-closure receipts must not be generated outside the exact PR context');
           }
 
@@ -5768,10 +5790,10 @@ jobs:
             sourceClosureStatus: 'LOCAL_SOURCE_VALIDATED_PROVIDER_ACCEPTANCE_PENDING'
           } : {
             artifactType: 'local-source-closure-receipt-set',
-            context: repairContext ? process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT : 'disabled-non-pr',
+            context: repairContext || dependencySuccessorContext ? process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT : 'disabled-non-pr',
             count: 0,
             canonicalSha256: sha256(`${canonicalJson([])}\n`),
-            providerBindingStatus: repairContext ? 'not-applicable-local-or-ci-repair-validation' : 'not-applicable-postmerge-browser-validation',
+            providerBindingStatus: dependencySuccessorContext ? 'not-applicable-local-dependency-successor-validation' : repairContext ? 'not-applicable-local-or-ci-repair-validation' : 'not-applicable-postmerge-browser-validation',
             finalProviderAcceptance: false,
             sourceClosureStatus: 'NOT_GENERATED_OUTSIDE_EXACT_PR_CONTEXT'
           };
@@ -5824,6 +5846,7 @@ jobs:
             },
             localSourceClosure: localSourceClosureSummary,
             attestationRepairSource: repairSourceBindings.map(({ project, sourceProofSelfHash, classification }) => ({ project, sourceProofSelfHash, classification, exactPr35Acceptance: false, providerAcceptance: false })),
+            ...(dependencySuccessorContext ? { dependencySuccessorSource: dependencySourceBindings.map(({ project, sourceProofSelfHash, classification, lockfiles }) => ({ project, sourceProofSelfHash, classification, lockfiles, releaseAuthority: false, exactPr35Acceptance: false, providerAcceptance: false })) } : {}),
             syntheticPrivacyFixtures: syntheticPrivacyFixtureProof.records,
             publicSanitized: true,
             privateDataAccessed: false,
@@ -5837,6 +5860,7 @@ jobs:
           const provenancePath = path.join(process.env.RUNNER_TEMP, 'clover-tree-browser-source-provenance.json');
           const manifestSources = [
             ...repairSourceBindings.map(({ project, target, sourceProofSelfHash, classification }) => ({ artifactType: 'attestation-repair-source', label: safeRelative(target), target, binding: { project, sourceProofSelfHash, classification, providerAcceptance: false } })),
+            ...dependencySourceBindings.map(({ project, target, sourceProofSelfHash, classification, lockfiles }) => ({ artifactType: 'dependency-successor-source', label: safeRelative(target), target, binding: { project, sourceProofSelfHash, classification, lockfiles, releaseAuthority: false, providerAcceptance: false } })),
             ...documents.map(({ project, target, document }) => ({
               artifactType: 'accessibility-evidence', label: safeRelative(target), target,
               binding: {

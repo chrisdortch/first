@@ -67,6 +67,13 @@ import {
   ATTESTATION_REPAIR_PATHS,
   NATIVE_FILE_TREE_PROFILE,
   deriveAttestationRepairSource,
+  DEPENDENCY_SUCCESSOR_BASE,
+  DEPENDENCY_SUCCESSOR_BASE_TREE,
+  DEPENDENCY_SUCCESSOR_BRANCH,
+  DEPENDENCY_SUCCESSOR_CONTEXT,
+  DEPENDENCY_SUCCESSOR_LOCKS,
+  DEPENDENCY_SUCCESSOR_REQUIRED_PATHS,
+  deriveDependencySuccessorSource,
   parseProviderFileTree,
   verifyNativeProviderContent,
   loadNativeProviderContentBodies,
@@ -4383,6 +4390,109 @@ test("local repair source contract accepts only one to three scoped linear desce
       assert.throws(proof, /PATH_REJECTED|BLOB_REJECTED/u); run(["reset", "--hard", clean]);
     }
     run(["branch", "-m", "synthetic-wrong-branch"]); assert.throws(proof, /IDENTITY_REJECTED/u);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("dependency successor source is local, exact-lock-bound and separate from both frozen source contracts", () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-dependency-source-test-")));
+  const fixture = path.join(temporary, "repository");
+  const run = (args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const environment = { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: DEPENDENCY_SUCCESSOR_CONTEXT };
+  const proof = (changes = {}) => deriveDependencySuccessorSource({ repositoryRoot: fixture, environment: { ...environment, ...changes } });
+  try {
+    execFileSync("git", ["clone", "--quiet", "--no-hardlinks", "--no-checkout", repositoryRoot, fixture]);
+    run(["switch", "--quiet", "-C", DEPENDENCY_SUCCESSOR_BRANCH, DEPENDENCY_SUCCESSOR_BASE]);
+    run(["config", "user.name", "Synthetic dependency source fixture"]);
+    run(["config", "user.email", "synthetic@example.invalid"]);
+    run(["config", "commit.gpgsign", "false"]);
+    assert.throws(proof, /DEPTH_REJECTED/u);
+    for (const sourcePath of DEPENDENCY_SUCCESSOR_REQUIRED_PATHS) {
+      writeFileSync(path.join(fixture, sourcePath), readFileSync(path.join(repositoryRoot, sourcePath)));
+    }
+    run(["add", "--", ...DEPENDENCY_SUCCESSOR_REQUIRED_PATHS]); run(["commit", "--quiet", "-m", "Synthetic exact prospective dependency fixture"]);
+    const clean = run(["rev-parse", "HEAD"]).trim();
+    const result = proof({ CLOVER_TREE_HEAD: clean, GITHUB_WORKSPACE: fixture });
+    assert.equal(result.base, DEPENDENCY_SUCCESSOR_BASE); assert.equal(result.baseTree, DEPENDENCY_SUCCESSOR_BASE_TREE);
+    assert.equal(result.localCommitCount, 1); assert.equal(result.changedPathCount, 3);
+    assert.deepEqual(result.paths, [...DEPENDENCY_SUCCESSOR_REQUIRED_PATHS]);
+    assert.deepEqual(result.lockfiles.map(({ path: lockPath, sha256: hash }) => ({ path: lockPath, sha256: hash })),
+      DEPENDENCY_SUCCESSOR_LOCKS.map(({ path: lockPath, sha256: hash }) => ({ path: lockPath, sha256: hash })));
+    for (const field of ["githubActions", "exactPrHeadAcceptance", "releaseAuthority", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted"]) {
+      assert.equal(result[field], false, field);
+    }
+    assert.equal(result.pullRequestNumber, null);
+    const { sourceProofSelfHash, ...body } = result;
+    assert.equal(sourceProofSelfHash, sha256(`${canonicalJson(body)}\n`));
+    assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: {
+      GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CONTEXT
+    } }), /CLOVER_REPAIR_/u);
+    run(["branch", "-m", ATTESTATION_REPAIR_BRANCH]);
+    assert.throws(() => deriveAttestationRepairSource({ repositoryRoot: fixture, environment: {
+      GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CONTEXT
+    } }), /CLOVER_REPAIR_PATH_REJECTED/u);
+    run(["branch", "-m", DEPENDENCY_SUCCESSOR_BRANCH]);
+    for (const changes of [
+      { GITHUB_ACTIONS: "true" }, { GITHUB_ACTIONS: "yes" }, { GITHUB_EVENT_NAME: "pull_request" },
+      { CLOVER_TREE_PR_NUMBER: "35" }, { CLOVER_TREE_EXACT_PR_HEAD: clean }, { GITHUB_HEAD_REF: DEPENDENCY_SUCCESSOR_BRANCH },
+      { CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CONTEXT },
+      { CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: ATTESTATION_REPAIR_CI_CONTEXT },
+      { CLOVER_DEPENDENCY_RELEASE_AUTHORITY: "true" }, { CLOVER_TREE_BROWSER_EVIDENCE_MODE: "protected-preview" },
+      { CLOVER_TREE_PROTECTED_PREVIEW_HEAD: clean }
+    ]) assert.throws(() => proof(changes), /CONTEXT_REJECTED/u);
+    assert.throws(() => proof({ CLOVER_TREE_HEAD: "a".repeat(40) }), /IDENTITY_REJECTED/u);
+    assert.throws(() => proof({ GITHUB_WORKSPACE: temporary }), /GIT_ROOT_REJECTED/u);
+    assert.throws(() => deriveDependencySuccessorSource({ repositoryRoot: path.join(fixture, "apps"), environment }), /GIT_ROOT_REJECTED/u);
+    for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_CONFIG_COUNT", "GIT_CONFIG_SYSTEM", "GIT_REPLACE_REF_BASE"]) {
+      assert.throws(() => proof({ [key]: fixture }), /GIT_ENVIRONMENT_REJECTED/u);
+    }
+    const target = path.join(fixture, ATTESTATION_REPAIR_PATHS[1]);
+    for (let count = 2; count <= 4; count += 1) {
+      writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic dependency evidence fixture ${count}.\n`);
+      run(["add", "--", ATTESTATION_REPAIR_PATHS[1]]); run(["commit", "--quiet", "-m", `Synthetic evidence scope ${count}`]);
+      if (count <= 3) assert.equal(proof().localCommitCount, count);
+      else assert.throws(proof, /DEPTH_REJECTED/u);
+    }
+    // These resets affect only this disposable test clone, never an owner checkout or preserved branch.
+    run(["reset", "--hard", clean]);
+    writeFileSync(path.join(fixture, "untracked-synthetic"), "fixture");
+    assert.throws(proof, /DIRTY_SOURCE_REJECTED/u); unlinkSync(path.join(fixture, "untracked-synthetic"));
+    for (const flag of ["assume-unchanged", "skip-worktree"]) {
+      for (const sourcePath of [ATTESTATION_REPAIR_PATHS[1], "apps/clover-launch-studio/src/lib/provenance.ts"]) {
+        const hidden = path.join(fixture, sourcePath); const original = readFileSync(hidden);
+        run(["update-index", `--${flag}`, "--", sourcePath]);
+        assert.throws(proof, /HIDDEN_INDEX_STATE_REJECTED/u);
+        writeFileSync(hidden, `${original.toString("utf8")}\n// Synthetic hidden tracked byte drift.\n`);
+        assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
+        assert.throws(proof, /HIDDEN_INDEX_STATE_REJECTED/u);
+        writeFileSync(hidden, original); run(["update-index", `--no-${flag}`, "--", sourcePath]);
+      }
+    }
+    for (const mutation of [
+      { label: "unexpected path", change: () => writeFileSync(path.join(fixture, "new-synthetic-file"), "fixture"), error: /PATH_REJECTED/u },
+      { label: "mode change", change: () => chmodSync(target, 0o755), error: /BLOB_REJECTED/u },
+      { label: "binary content", change: () => writeFileSync(target, Buffer.from([0, 1, 2])), error: /BLOB_REJECTED/u },
+      ...DEPENDENCY_SUCCESSOR_LOCKS.map(({ path: lockPath }) => ({ label: `stale ${lockPath}`, change: () => {
+        writeFileSync(path.join(fixture, lockPath), execFileSync("git", ["show", `${DEPENDENCY_SUCCESSOR_BASE}:${lockPath}`], { cwd: fixture }));
+      }, error: /REQUIRED_PATH_REJECTED|LOCK_REJECTED/u })),
+      ...DEPENDENCY_SUCCESSOR_LOCKS.map(({ path: lockPath }) => ({ label: `substituted bytes ${lockPath}`, change: () => {
+        writeFileSync(path.join(fixture, lockPath), `${readFileSync(path.join(fixture, lockPath), "utf8")}\n`);
+      }, error: /LOCK_REJECTED/u }))
+    ]) {
+      mutation.change(); run(["add", "-A"]); run(["commit", "--quiet", "-m", `Synthetic prohibited ${mutation.label}`]);
+      assert.throws(proof, mutation.error); run(["reset", "--hard", clean]);
+    }
+    const sentinel = path.join(temporary, "external-diff-invoked");
+    const driver = path.join(temporary, "synthetic-diff-driver.sh");
+    writeFileSync(driver, `#!/bin/sh\ntouch '${sentinel}'\nexit 99\n`, { mode: 0o755 }); run(["config", "diff.external", driver]);
+    assert.doesNotThrow(proof); assert.equal(existsSync(sentinel), false);
+    const sourceTree = run(["rev-parse", `${clean}^{tree}`]).trim();
+    const side = run(["commit-tree", sourceTree, "-p", DEPENDENCY_SUCCESSOR_BASE, "-m", "Synthetic separate lineage"]).trim();
+    const merge = run(["commit-tree", sourceTree, "-p", clean, "-p", side, "-m", "Synthetic merge rejection fixture"]).trim();
+    run(["reset", "--hard", merge]); assert.throws(proof, /LINEARITY_REJECTED/u); run(["reset", "--hard", clean]);
+    run(["branch", "-m", "synthetic-wrong-branch"]); assert.throws(proof, /IDENTITY_REJECTED/u);
+    run(["branch", "-m", DEPENDENCY_SUCCESSOR_BRANCH]);
+    run(["reset", "--hard", ATTESTATION_REPAIR_BASE]); assert.throws(proof, /BASE_REJECTED/u);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
