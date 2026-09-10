@@ -70,6 +70,16 @@ jobs:
           cache: npm
           cache-dependency-path: apps/clover-launch-studio/package-lock.json
 
+      # Original selected inputs are logged before acquisition; failure does not depend on artifact uploads.
+      # Seven public, unauthenticated GETs only. Retain one proof per job for deterministic downstream checks.
+      - name: Prove readiness CI identity and retain safe failure evidence
+        id: readiness-ci-identity-proof
+        if: env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs readiness-ci-proof --repository-root "$GITHUB_WORKSPACE"
+
       - name: Install exact locked dependencies
         working-directory: apps/clover-launch-studio
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -173,7 +183,7 @@ jobs:
           const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);
           let readinessSource = null;
           if (readinessContext) {
-            const bytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', repositoryRoot], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 });
+            const bytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', repositoryRoot], { cwd: repositoryRoot, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
             readinessSource = JSON.parse(bytes);
             if (readinessSource.head !== p.commit || readinessSource.tree !== p.tree
               || readinessSource.fullMainPathCount !== p.changedPathCount || readinessSource.fullMainPathListSha256 !== p.pathListSha256
@@ -404,7 +414,7 @@ jobs:
             const retainedStat = fs.lstatSync(readinessProofPath);
             if (!retainedStat.isFile() || retainedStat.isSymbolicLink() || retainedStat.nlink !== 1
               || (retainedStat.mode & 0o777) !== 0o644 || retainedStat.size > 1024 * 1024) throw new Error('unsafe retained readiness source proof');
-            const expectedBytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', process.env.GITHUB_WORKSPACE], { cwd: process.env.GITHUB_WORKSPACE, maxBuffer: 1024 * 1024 });
+            const expectedBytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', process.env.GITHUB_WORKSPACE], { cwd: process.env.GITHUB_WORKSPACE, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
             if (!fs.readFileSync(readinessProofPath).equals(expectedBytes)) throw new Error('retained readiness proof differs from actual source, event, run, attempt or runtime');
             const expected = JSON.parse(expectedBytes);
             readinessBinding = { sourceProofSelfHash: expected.sourceProofSelfHash, ciExecution: expected.ciExecution };
@@ -529,7 +539,7 @@ jobs:
             const retainedStat = fs.lstatSync(readinessProofPath);
             if (!retainedStat.isFile() || retainedStat.isSymbolicLink() || retainedStat.nlink !== 1
               || (retainedStat.mode & 0o777) !== 0o644 || retainedStat.size > 1024 * 1024) throw new Error('unsafe retained readiness source proof');
-            const expectedBytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', process.env.GITHUB_WORKSPACE], { cwd: process.env.GITHUB_WORKSPACE, maxBuffer: 1024 * 1024 });
+            const expectedBytes = cp.execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', process.env.GITHUB_WORKSPACE], { cwd: process.env.GITHUB_WORKSPACE, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
             if (!fs.readFileSync(readinessProofPath).equals(expectedBytes)) throw new Error('retained readiness proof differs from actual source, event, run, attempt or runtime');
             const expected = JSON.parse(expectedBytes);
             readinessBinding = { sourceProofSelfHash: expected.sourceProofSelfHash, ciExecution: expected.ciExecution };
@@ -620,6 +630,16 @@ jobs:
           node-version: ${{ env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness' && '24.16.0' || '24' }}
           cache: npm
           cache-dependency-path: apps/clover-launch-studio/package-lock.json
+
+      # Original selected inputs are logged before acquisition; failure does not depend on artifact uploads.
+      # Seven public, unauthenticated GETs only. Retain one proof per job for deterministic downstream checks.
+      - name: Prove readiness CI identity and retain safe failure evidence
+        id: readiness-ci-identity-proof
+        if: env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs readiness-ci-proof --repository-root "$GITHUB_WORKSPACE"
 
       - name: Install exact locked dependencies
         working-directory: apps/clover-launch-studio
@@ -5317,7 +5337,7 @@ jobs:
           const readinessSourceRoot = path.join(root, 'clover-ci-preview-readiness-source');
           const readinessSourceBindings = [];
           if (readinessContext) {
-            const expectedBytes = execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', repositoryRoot], { cwd: repositoryRoot, maxBuffer: 1024 * 1024 });
+            const expectedBytes = execFileSync(process.execPath, ['apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs', 'readiness-source', '--repository-root', repositoryRoot], { cwd: repositoryRoot, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'inherit'] });
             const expected = JSON.parse(expectedBytes);
             requireCondition(expected.head === process.env.CLOVER_TREE_HEAD
               && expected.context === process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT
