@@ -4540,7 +4540,7 @@ function readinessEventFixture(head) {
   const event = { action: "opened", number, repository: { full_name: "chrisdortch/first" }, pull_request: {
     number, state: "open", head: { sha: head, ref: CI_PREVIEW_READINESS_BRANCH, repo: { full_name: "chrisdortch/first" } },
     base: { sha: CI_PREVIEW_READINESS_BASE, ref: DEPENDENCY_SUCCESSOR_BRANCH, repo: { full_name: "chrisdortch/first" } },
-    merge_commit_sha: "a".repeat(40)
+    merge_commit_sha: head === "a".repeat(40) ? "f".repeat(40) : "a".repeat(40)
   } };
   const environment = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_REPOSITORY: "chrisdortch/first",
     CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CI_CONTEXT, CLOVER_TREE_PR_NUMBER: String(number),
@@ -4591,6 +4591,82 @@ test("readiness CI binds the actual event, exact stacked base/head, merge ref an
   for (const change of changes) {
     const changed = structuredClone(fixture); change(changed);
     assert.throws(() => deriveCiPreviewExecutionIdentity(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
+  }
+});
+
+test("readiness CI diagnostics identify fixed predicates without exposing supplied values", () => {
+  const fixture = readinessEventFixture("c".repeat(40));
+  const untrusted = "synthetic-secret-canary\n::error::untrusted";
+  const cases = [
+    ["GITHUB_ACTIONS", (v) => { v.environment.GITHUB_ACTIONS = untrusted; }],
+    ["GITHUB_EVENT_NAME", (v) => { v.environment.GITHUB_EVENT_NAME = untrusted; }],
+    ["SOURCE_CONTEXT", (v) => { v.environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT = untrusted; }],
+    ["EVENT_ACTION", (v) => { v.event.action = untrusted; }],
+    ["EVENT_PR_NUMBER", (v) => { v.event.number = untrusted; }],
+    ["PAYLOAD_PR_NUMBER", (v) => { v.event.pull_request.number = untrusted; }],
+    ["ENV_PR_NUMBER", (v) => { v.environment.CLOVER_TREE_PR_NUMBER = untrusted; }],
+    ["PR_STATE", (v) => { v.event.pull_request.state = untrusted; }],
+    ["EVENT_REPOSITORY", (v) => { v.event.repository.full_name = untrusted; }],
+    ["HEAD_REPOSITORY", (v) => { v.event.pull_request.head.repo.full_name = untrusted; }],
+    ["BASE_REPOSITORY", (v) => { v.event.pull_request.base.repo.full_name = untrusted; }],
+    ["GITHUB_REPOSITORY", (v) => { v.environment.GITHUB_REPOSITORY = untrusted; }],
+    ["PAYLOAD_HEAD_REF", (v) => { v.event.pull_request.head.ref = untrusted; }],
+    ["GITHUB_HEAD_REF", (v) => { v.environment.GITHUB_HEAD_REF = untrusted; }],
+    ["PAYLOAD_BASE_REF", (v) => { v.event.pull_request.base.ref = untrusted; }],
+    ["GITHUB_BASE_REF", (v) => { v.environment.GITHUB_BASE_REF = untrusted; }],
+    ["PAYLOAD_BASE_SHA", (v) => { v.event.pull_request.base.sha = untrusted; }],
+    ["CHECKOUT_HEAD_FORMAT", (v) => { v.head = untrusted; }],
+    ["PAYLOAD_HEAD_SHA", (v) => { v.event.pull_request.head.sha = untrusted; }],
+    ["ENV_HEAD_SHA", (v) => { v.environment.CLOVER_TREE_HEAD = untrusted; }],
+    ["ENV_EXACT_PR_HEAD", (v) => { v.environment.CLOVER_TREE_EXACT_PR_HEAD = untrusted; }],
+    ["PAYLOAD_MERGE_SHA_FORMAT", (v) => { v.event.pull_request.merge_commit_sha = untrusted; }],
+    ["GITHUB_SHA_MATCHES_MERGE", (v) => { v.environment.GITHUB_SHA = untrusted; }],
+    ["GITHUB_REF", (v) => { v.environment.GITHUB_REF = untrusted; }],
+    ["WORKFLOW_SHA_MATCHES_MERGE", (v) => { v.environment.GITHUB_WORKFLOW_SHA = untrusted; }],
+    ["GITHUB_WORKFLOW_REF", (v) => { v.environment.GITHUB_WORKFLOW_REF = untrusted; }],
+    ["GITHUB_RUN_ID", (v) => { v.environment.GITHUB_RUN_ID = untrusted; }],
+    ["GITHUB_RUN_ATTEMPT", (v) => { v.environment.GITHUB_RUN_ATTEMPT = untrusted; }],
+    ["WORKFLOW_BLOB", (v) => { v.workflowBlob = untrusted; }]
+  ];
+  for (const [predicate, change] of cases) {
+    const changed = structuredClone(fixture); change(changed);
+    assert.throws(() => deriveCiPreviewExecutionIdentity(changed), (error) => {
+      assert.equal(error.message, `CLOVER_READINESS_CI_EVENT_REJECTED:${predicate}`);
+      assert.equal(error.message.includes(untrusted), false);
+      return true;
+    });
+  }
+  const multiple = structuredClone(fixture);
+  multiple.event.action = untrusted; multiple.environment.GITHUB_RUN_ID = untrusted;
+  assert.throws(() => deriveCiPreviewExecutionIdentity(multiple), /CI_EVENT_REJECTED:EVENT_ACTION$/u);
+});
+
+test("readiness CI retains unknown and conflicting merge/workflow rejection and downstream merge distinction", () => {
+  // Hypotheses only: the failed PR36 runner's original event/default identity values were not retained.
+  const fixture = readinessEventFixture("c".repeat(40));
+  for (const merge of [undefined, null, "", "not-a-sha"]) {
+    const changed = structuredClone(fixture); changed.event.pull_request.merge_commit_sha = merge;
+    assert.throws(() => deriveCiPreviewExecutionIdentity(changed), /CI_EVENT_REJECTED:PAYLOAD_MERGE_SHA_FORMAT$/u);
+  }
+  const sameHead = structuredClone(fixture);
+  sameHead.event.pull_request.merge_commit_sha = sameHead.head;
+  sameHead.environment.GITHUB_SHA = sameHead.head; sameHead.environment.GITHUB_WORKFLOW_SHA = sameHead.head;
+  assert.throws(() => deriveCiPreviewExecutionIdentity(sameHead), /CI_EVENT_REJECTED:MERGE_DISTINCT_FROM_HEAD$/u);
+  const staleMerge = structuredClone(fixture); staleMerge.event.pull_request.merge_commit_sha = "d".repeat(40);
+  assert.throws(() => deriveCiPreviewExecutionIdentity(staleMerge), /CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE$/u);
+  const alternateWorkflow = structuredClone(fixture); alternateWorkflow.environment.GITHUB_WORKFLOW_SHA = alternateWorkflow.head;
+  assert.throws(() => deriveCiPreviewExecutionIdentity(alternateWorkflow), /CI_EVENT_REJECTED:WORKFLOW_SHA_MATCHES_MERGE$/u);
+  const missingWorkflow = structuredClone(fixture); delete missingWorkflow.environment.GITHUB_WORKFLOW_REF;
+  assert.throws(() => deriveCiPreviewExecutionIdentity(missingWorkflow), /CI_EVENT_REJECTED:GITHUB_WORKFLOW_REF$/u);
+  // Dynamic run IDs/attempts and supported actions are allowed input, not evidence of execution approval.
+  for (const action of ["opened", "synchronize", "reopened"]) {
+    const changed = structuredClone(fixture); changed.event.action = action;
+    changed.environment.GITHUB_RUN_ID = "987654321"; changed.environment.GITHUB_RUN_ATTEMPT = "2";
+    const result = deriveCiPreviewExecutionIdentity(changed);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(result.runId, "987654321"); assert.equal(result.runAttempt, "2");
+    assert.equal(result.artifactPrefix, `clover-ci-preview-readiness-${changed.head}-987654321-2`);
+    assert.equal(Object.hasOwn(result, "releaseAuthority"), false);
   }
 });
 
@@ -4740,6 +4816,7 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
       (c) => { c.sealedInput.archiveSha256 = hex64("e"); }, (c) => { c.sealedInput.deploymentInputRootSha256 = hex64("e"); },
       (c) => { c.ci.run.conclusion = "failure"; }, (c) => { c.ci.run.status = "in_progress"; },
       (c) => { c.ci.run.headSha = hex40("e"); }, (c) => { c.ci.run.runAttempt = "2"; },
+      (c) => { c.ci.run.id = "987654321"; }, (c) => { c.ci.artifacts[0].runId = "987654321"; },
       (c) => { c.ci.run.observedAt = "2026-08-29T18:00:00.000Z"; },
       (c) => { c.ci.run.observedAt = "2026-08-29T21:00:00.000Z"; },
       (c) => { c.ci.artifacts.pop(); }, (c) => { c.ci.artifacts[1] = c.ci.artifacts[0]; },
@@ -4772,7 +4849,8 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
       (e) => { e.eventName = "push"; }, (e) => { e.pullRequestNumber = 35; }, (e) => { e.baseRef = "main"; },
       (e) => { e.baseSha = hex40("d"); }, (e) => { e.headRef = DEPENDENCY_SUCCESSOR_BRANCH; },
       (e) => { e.nodeVersion = "v22.23.2"; }, (e) => { e.workflowSha = hex40("e"); },
-      (e) => { e.workflowRef = "unrelated-workflow"; }, (e) => { e.artifactPrefix = "old-run"; }
+      (e) => { e.workflowRef = "unrelated-workflow"; }, (e) => { e.artifactPrefix = "old-run"; },
+      (e) => { e.mergeSha = e.headSha; e.workflowSha = e.headSha; }
     ]) {
       const contract = structuredClone(fixture.contract); const proof = contract.ci.sourceProof; change(proof.ciExecution);
       const { sourceProofSelfHash: _hash, ...body } = proof; void _hash; proof.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);

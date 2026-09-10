@@ -272,22 +272,43 @@ export function deriveCiPreviewExecutionIdentity({ environment, event, head, wor
   const number = event?.number;
   const positiveId = (value) => typeof value === "string" && /^[1-9][0-9]*$/u.test(value) && Number.isSafeInteger(Number(value));
   const repository = "chrisdortch/first";
-  if (environment.GITHUB_ACTIONS !== "true" || environment.GITHUB_EVENT_NAME !== "pull_request"
-    || environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT !== CI_PREVIEW_READINESS_CI_CONTEXT
-    || !["opened", "synchronize", "reopened"].includes(event?.action)
-    || !Number.isSafeInteger(number) || number <= 0 || number === 35 || pr?.number !== number
-    || String(number) !== environment.CLOVER_TREE_PR_NUMBER || pr?.state !== "open"
-    || event?.repository?.full_name !== repository || pr?.head?.repo?.full_name !== repository || pr?.base?.repo?.full_name !== repository
-    || environment.GITHUB_REPOSITORY !== repository || pr?.head?.ref !== CI_PREVIEW_READINESS_BRANCH
-    || environment.GITHUB_HEAD_REF !== CI_PREVIEW_READINESS_BRANCH || pr?.base?.ref !== DEPENDENCY_SUCCESSOR_BRANCH
-    || environment.GITHUB_BASE_REF !== DEPENDENCY_SUCCESSOR_BRANCH || pr?.base?.sha !== CI_PREVIEW_READINESS_BASE
-    || !/^[0-9a-f]{40}$/u.test(head) || pr?.head?.sha !== head || environment.CLOVER_TREE_HEAD !== head
-    || environment.CLOVER_TREE_EXACT_PR_HEAD !== head || !/^[0-9a-f]{40}$/u.test(pr?.merge_commit_sha ?? "")
-    || environment.GITHUB_SHA !== pr.merge_commit_sha || environment.GITHUB_REF !== `refs/pull/${number}/merge`
-    || environment.GITHUB_WORKFLOW_SHA !== pr.merge_commit_sha
-    || environment.GITHUB_WORKFLOW_REF !== `${repository}/${ATTESTATION_REPAIR_PATHS[0]}@refs/pull/${number}/merge`
-    || !positiveId(environment.GITHUB_RUN_ID) || !positiveId(environment.GITHUB_RUN_ATTEMPT)
-    || !/^[0-9a-f]{40}$/u.test(workflowBlob) || !/^v(?:22|24)\./u.test(process.version)) throw new Error("CLOVER_READINESS_CI_EVENT_REJECTED");
+  // Emit only fixed predicate names: never echo event/environment values or runner secrets.
+  // The original webhook cannot be reconstructed from a later PR API response.
+  const requireIdentity = (accepted, predicate) => {
+    if (!accepted) throw new Error(`CLOVER_READINESS_CI_EVENT_REJECTED:${predicate}`);
+  };
+  requireIdentity(environment.GITHUB_ACTIONS === "true", "GITHUB_ACTIONS");
+  requireIdentity(environment.GITHUB_EVENT_NAME === "pull_request", "GITHUB_EVENT_NAME");
+  requireIdentity(environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === CI_PREVIEW_READINESS_CI_CONTEXT, "SOURCE_CONTEXT");
+  requireIdentity(["opened", "synchronize", "reopened"].includes(event?.action), "EVENT_ACTION");
+  requireIdentity(Number.isSafeInteger(number) && number > 0 && number !== 35, "EVENT_PR_NUMBER");
+  requireIdentity(pr?.number === number, "PAYLOAD_PR_NUMBER");
+  requireIdentity(String(number) === environment.CLOVER_TREE_PR_NUMBER, "ENV_PR_NUMBER");
+  requireIdentity(pr?.state === "open", "PR_STATE");
+  requireIdentity(event?.repository?.full_name === repository, "EVENT_REPOSITORY");
+  requireIdentity(pr?.head?.repo?.full_name === repository, "HEAD_REPOSITORY");
+  requireIdentity(pr?.base?.repo?.full_name === repository, "BASE_REPOSITORY");
+  requireIdentity(environment.GITHUB_REPOSITORY === repository, "GITHUB_REPOSITORY");
+  requireIdentity(pr?.head?.ref === CI_PREVIEW_READINESS_BRANCH, "PAYLOAD_HEAD_REF");
+  requireIdentity(environment.GITHUB_HEAD_REF === CI_PREVIEW_READINESS_BRANCH, "GITHUB_HEAD_REF");
+  requireIdentity(pr?.base?.ref === DEPENDENCY_SUCCESSOR_BRANCH, "PAYLOAD_BASE_REF");
+  requireIdentity(environment.GITHUB_BASE_REF === DEPENDENCY_SUCCESSOR_BRANCH, "GITHUB_BASE_REF");
+  requireIdentity(pr?.base?.sha === CI_PREVIEW_READINESS_BASE, "PAYLOAD_BASE_SHA");
+  requireIdentity(/^[0-9a-f]{40}$/u.test(head), "CHECKOUT_HEAD_FORMAT");
+  requireIdentity(pr?.head?.sha === head, "PAYLOAD_HEAD_SHA");
+  requireIdentity(environment.CLOVER_TREE_HEAD === head, "ENV_HEAD_SHA");
+  requireIdentity(environment.CLOVER_TREE_EXACT_PR_HEAD === head, "ENV_EXACT_PR_HEAD");
+  requireIdentity(/^[0-9a-f]{40}$/u.test(pr?.merge_commit_sha ?? ""), "PAYLOAD_MERGE_SHA_FORMAT");
+  // Match the existing downstream CI receipt rule; this is not proof of any particular run's failure.
+  requireIdentity(pr.merge_commit_sha !== head, "MERGE_DISTINCT_FROM_HEAD");
+  requireIdentity(environment.GITHUB_SHA === pr.merge_commit_sha, "GITHUB_SHA_MATCHES_MERGE");
+  requireIdentity(environment.GITHUB_REF === `refs/pull/${number}/merge`, "GITHUB_REF");
+  requireIdentity(environment.GITHUB_WORKFLOW_SHA === pr.merge_commit_sha, "WORKFLOW_SHA_MATCHES_MERGE");
+  requireIdentity(environment.GITHUB_WORKFLOW_REF === `${repository}/${ATTESTATION_REPAIR_PATHS[0]}@refs/pull/${number}/merge`, "GITHUB_WORKFLOW_REF");
+  requireIdentity(positiveId(environment.GITHUB_RUN_ID), "GITHUB_RUN_ID");
+  requireIdentity(positiveId(environment.GITHUB_RUN_ATTEMPT), "GITHUB_RUN_ATTEMPT");
+  requireIdentity(/^[0-9a-f]{40}$/u.test(workflowBlob), "WORKFLOW_BLOB");
+  requireIdentity(/^v(?:22|24)\./u.test(process.version), "NODE_RUNTIME");
   return Object.freeze({ eventName: "pull_request", repository, pullRequestNumber: number,
     headSha: head, headRef: CI_PREVIEW_READINESS_BRANCH, baseSha: CI_PREVIEW_READINESS_BASE, baseRef: DEPENDENCY_SUCCESSOR_BRANCH,
     mergeSha: pr.merge_commit_sha, ref: environment.GITHUB_REF, runId: environment.GITHUB_RUN_ID, runAttempt: environment.GITHUB_RUN_ATTEMPT,
