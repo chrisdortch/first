@@ -22,7 +22,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { load as loadYaml } from "js-yaml";
 import { getEnv } from "@vercel/functions";
 import {
@@ -95,6 +95,10 @@ import {
   CI_PREVIEW_FIFTH_PARENT,
   CI_PREVIEW_FIFTH_PARENT_TREE,
   CI_PREVIEW_FIFTH_PREFIX,
+  CI_PREVIEW_SIXTH_PARENT,
+  CI_PREVIEW_SIXTH_PARENT_TREE,
+  CI_PREVIEW_SIXTH_PREFIX,
+  CI_PREVIEW_SIXTH_PATHS,
   CI_PREVIEW_RECEIPT_PROFILE,
   validateCiPreviewExecutionContract,
   parseProviderFileTree,
@@ -4547,6 +4551,93 @@ test("dependency successor source is local, exact-lock-bound and separate from b
 });
 
 
+// Subprocess fixtures own their complete CI identity/context. Only operational settings
+// cross the boundary; fixture omissions must not be repaired by the real runner.
+const readinessOperationalKeys = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+  "NODE_OPTIONS", "NODE_V8_COVERAGE", "NEXT_TELEMETRY_DISABLED", "VERCEL_TELEMETRY_DISABLED",
+  "npm_config_ignore_scripts", "npm_config_audit", "npm_config_fund", "npm_config_offline", "npm_config_update_notifier",
+  "CLOVER_OFFLINE_GUARD_LOG", "CLOVER_IDENTITY_DEMO_OUTPUT", "CLOVER_FIXTURE_OPERATIONAL_SENTINEL"
+]);
+function readinessFixtureEnvironment(values) {
+  const operational = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !/^(?:GITHUB_|RUNNER_|CLOVER_TREE_|CLOVER_READINESS_|SYNTHETIC_)/u.test(key) && readinessOperationalKeys.has(key)));
+  return { ...operational, ...values,
+    NODE_OPTIONS: [operational.NODE_OPTIONS, values.NODE_OPTIONS].filter((value) => value !== undefined && value !== "").join(" ") };
+}
+
+const syntheticParentCiEnvironment = Object.freeze({
+  "GITHUB_ACTIONS": "true",
+  "GITHUB_REPOSITORY": "synthetic-owner/synthetic-repo",
+  "GITHUB_WORKSPACE": "/synthetic/parent/workspace",
+  "GITHUB_EVENT_PATH": "/synthetic/parent/event.json",
+  "GITHUB_EVENT_NAME": "pull_request",
+  "GITHUB_HEAD_REF": "synthetic-parent",
+  "GITHUB_BASE_REF": "synthetic-base",
+  "GITHUB_RUN_ID": "987654321",
+  "GITHUB_RUN_ATTEMPT": "9",
+  "GITHUB_SHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "GITHUB_REF": "refs/pull/999/merge",
+  "GITHUB_WORKFLOW_REF": "synthetic-owner/synthetic-repo/.github/workflows/synthetic.yml@refs/pull/999/merge",
+  "GITHUB_WORKFLOW_SHA": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "CLOVER_TREE_HEAD": "cccccccccccccccccccccccccccccccccccccccc",
+  "CLOVER_TREE_EXACT_PR_HEAD": "dddddddddddddddddddddddddddddddddddddddd",
+  "CLOVER_TREE_PR_NUMBER": "999",
+  "CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT": "synthetic-parent-context",
+  "CLOVER_TREE_BROWSER_EVIDENCE_MODE": "synthetic-parent-mode",
+  "CLOVER_TREE_PROTECTED_PREVIEW_PARENT_CANARY": "synthetic-parent-only",
+  "CLOVER_READINESS_RELEASE_AUTHORITY": "true",
+  "RUNNER_TEMP": "/synthetic/parent/temp"
+});
+
+// Each affected family runs in an actual test process with populated synthetic parent
+// identities. No test mutates the shared parent process environment, including in CI.
+function readinessSubprocessTest(name, callback) {
+  test(name, async () => {
+    if (process.env.CLOVER_FIXTURE_POPULATED_TEST === name) {
+      for (const [key, value] of Object.entries(syntheticParentCiEnvironment)) assert.equal(process.env[key], value, key);
+      assert.equal(globalThis[Symbol.for("clover.fixture.operational-preload")], process.version);
+      return callback();
+    }
+    const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-populated-parent-")));
+    try {
+      const sentinel = path.join(temporary, "operational-preload.jsonl");
+      const preload = path.join(temporary, "operational-network-denial.cjs");
+      writeFileSync(preload, [
+        'const fs = require("node:fs");',
+        'const deny = () => { throw new Error("SYNTHETIC_PARENT_NETWORK_DENIED"); };',
+        'for (const name of ["node:http", "node:https"]) { const m = require(name); m.request = m.get = deny; }',
+        'const net = require("node:net"); net.connect = net.createConnection = net.Socket.prototype.connect = deny;',
+        'require("node:tls").connect = deny; require("node:dgram").createSocket = deny;',
+        'const dns = require("node:dns"); for (const key of ["lookup", "resolve", "resolve4", "resolve6", "reverse"]) dns[key] = deny;',
+        'globalThis.fetch = deny; require("node:module").syncBuiltinESMExports();',
+        'let rejected = false; try { require("node:https").get("https://example.invalid/"); } catch (error) { rejected = error.message === "SYNTHETIC_PARENT_NETWORK_DENIED"; }',
+        'if (!rejected) throw new Error("SYNTHETIC_PARENT_DENIAL_SENTINEL_FAILED");',
+        'globalThis[Symbol.for("clover.fixture.operational-preload")] = process.version;',
+        'fs.appendFileSync(process.env.CLOVER_FIXTURE_OPERATIONAL_SENTINEL, JSON.stringify({ marker: "operational-preload-and-denial-active", runtime: process.version }) + "\\n");'
+      ].join("\n"));
+      const environment = readinessFixtureEnvironment({ ...syntheticParentCiEnvironment,
+        CLOVER_FIXTURE_POPULATED_TEST: name, CLOVER_FIXTURE_OPERATIONAL_SENTINEL: sentinel,
+        NODE_OPTIONS: `--require=${JSON.stringify(preload)}` });
+      const pattern = `^${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`;
+      const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], {
+        env: environment, encoding: "utf8", timeout: 2_400_000, maxBuffer: 1024 * 1024
+      });
+      const markers = existsSync(sentinel) ? readFileSync(sentinel, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
+      retainSyntheticCiDemonstration(`populated-parent-${name.includes("replays") ? "historical" : name.includes("preserves complete") ? "failure" : "source-consumers"}`, {
+        scenario: "actual-populated-parent-test-process", runtime: process.version, status: result.status, signal: result.signal,
+        parentIdentitySha256: sha256(canonicalJson(syntheticParentCiEnvironment)), parentKeys: Object.keys(syntheticParentCiEnvironment),
+        inheritedOperationalOptionsPreserved: !process.env.NODE_OPTIONS || environment.NODE_OPTIONS.startsWith(process.env.NODE_OPTIONS),
+        sentinelMarkers: markers, stdout: result.stdout, stderr: result.stderr
+      });
+      assert.equal(result.error, undefined); assert.equal(result.signal, null);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.ok(markers.length >= 3, "operational denial preload must reach actual children, not just the parent");
+      assert.ok(markers.every((entry) => entry.marker === "operational-preload-and-denial-active" && entry.runtime === process.version));
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+  });
+}
+
 function readinessEventFixture(head) {
   // All IDs here are explicitly synthetic fixtures, never observations or owner approvals.
   const number = 36;
@@ -4565,10 +4656,15 @@ function readinessEventFixture(head) {
   return { event, environment, head, workflowBlob: "b".repeat(40) };
 }
 
-function syntheticCiSourceBinding(head = hex40("c"), tree = hex40("d")) {
+function syntheticFifthCiSourceBinding(head = hex40("c"), tree = hex40("d")) {
   return { head, tree, parent: CI_PREVIEW_FIFTH_PARENT, parentTree: CI_PREVIEW_FIFTH_PARENT_TREE,
     commitIds: [...CI_PREVIEW_FIFTH_PREFIX, head], fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS],
     fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS] };
+}
+
+function syntheticCiSourceBinding(head = hex40("c"), tree = hex40("d")) {
+  return { ...syntheticFifthCiSourceBinding(head, tree), parent: CI_PREVIEW_SIXTH_PARENT, parentTree: CI_PREVIEW_SIXTH_PARENT_TREE,
+    commitIds: [...CI_PREVIEW_SIXTH_PREFIX, head], sixthCommitPaths: [...CI_PREVIEW_SIXTH_PATHS] };
 }
 
 function syntheticCiProviderFixture({ fixture = readinessEventFixture(hex40("c")), tree = hex40("d"),
@@ -4781,7 +4877,7 @@ test("readiness CI synchronize mismatch requires an eighth immediate-predecessor
   }
 });
 
-test("readiness CI replays the retained f059 source and c612 versus 373922 operands without inventing a fifth identity", async () => {
+readinessSubprocessTest("readiness CI replays the retained f059 source and c612 versus 373922 operands without inventing a fifth identity", async () => {
   const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
   const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-historical-f059-replay-")));
   const head = "f0591972971036fd4258429ed363b71f23b8516a", tree = "92f8efe9f72b927e35bd4dbefca0c7fd13ce936e";
@@ -4824,14 +4920,14 @@ test("readiness CI replays the retained f059 source and c612 versus 373922 opera
     const eventPath = path.join(temporary, "original-selected-event-fixture.json"); writeFileSync(eventPath, JSON.stringify(observed.event));
     const bin = path.join(temporary, "bin"); mkdirSync(bin); symlinkSync(process.execPath, path.join(bin, "node"));
     const guard = path.join(temporary, "deny-historical-acquisition.mjs");
-    writeFileSync(guard, 'globalThis.fetch = () => { throw new Error("HISTORICAL_REPLAY_MUST_NOT_ACQUIRE"); };\n');
+    writeFileSync(guard, 'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");\nglobalThis.fetch = () => { throw new Error("HISTORICAL_REPLAY_MUST_NOT_ACQUIRE"); };\n');
     const workflow = loadYaml(workflowBytes.toString("utf8"));
     for (const [job, value] of Object.entries(workflow.jobs)) {
       const step = value.steps.find((entry) => entry.id === "readiness-ci-identity-proof"); if (!step) continue;
       const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
-        cwd: checkout, env: { ...process.env, ...observed.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
+        cwd: checkout, env: readinessFixtureEnvironment({ ...observed.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
           RUNNER_TEMP: temporary, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(guard)}` },
+          NODE_OPTIONS: `--import=${JSON.stringify(guard)}` }),
         encoding: "utf8", timeout: 20_000, maxBuffer: 128 * 1024
       });
       retainSyntheticCiDemonstration(`historical-f059-${job}`, { scenario: "historical-f059-actual-source-replay", job,
@@ -5057,7 +5153,7 @@ test("readiness CI snapshot keeps original public operands and classifies unsafe
   }
 });
 
-test("readiness source preserves fourth histories and permits only the anchored fifth while rejecting sixth or substituted histories", () => {
+test("readiness source preserves fourth and fifth histories and admits only the anchored two-path sixth", () => {
   const prefix = [
     "7c1f817e973c260266e937ff3328e21b715db7c6",
     "337816e15d29f66a2ac0011b6413d688e752a01d",
@@ -5086,7 +5182,7 @@ test("readiness source preserves fourth histories and permits only the anchored 
     const changed = structuredClone(fourth); change(changed);
     assert.equal(isAllowedCiPreviewReadinessLineage(changed), false);
   }
-  const fifth = syntheticCiSourceBinding();
+  const fifth = syntheticFifthCiSourceBinding();
   assert.equal(isAllowedCiPreviewReadinessLineage(fifth), true);
   for (const change of [
     (v) => { v.parent = CI_PREVIEW_FOURTH_PARENT; }, (v) => { v.parentTree = hex40("e"); },
@@ -5096,9 +5192,21 @@ test("readiness source preserves fourth histories and permits only the anchored 
     (v) => { v.fifthCommitPaths.push("apps/clover-launch-studio/package-lock.json"); },
     (v) => { v.commitIds.push(hex40("e")); v.parent = v.head; v.head = hex40("e"); }
   ]) { const changed = structuredClone(fifth); change(changed); assert.equal(isAllowedCiPreviewReadinessLineage(changed), false); }
+  const sixth = syntheticCiSourceBinding();
+  assert.equal(isAllowedCiPreviewReadinessLineage(sixth), true);
+  for (const change of [
+    (v) => { v.commitIds[4] = hex40("e"); v.parent = hex40("e"); },
+    (v) => { v.parent = CI_PREVIEW_FIFTH_PARENT; }, (v) => { v.parentTree = hex40("e"); },
+    (v) => { delete v.sixthCommitPaths; }, (v) => { v.sixthCommitPaths = null; },
+    (v) => { v.sixthCommitPaths.pop(); }, (v) => { v.sixthCommitPaths.reverse(); },
+    (v) => { v.sixthCommitPaths.push(CI_PREVIEW_FOURTH_PATHS[0]); },
+    (v) => { v.sixthCommitPaths.push(v.sixthCommitPaths[0]); },
+    (v) => { v.commitIds.push(hex40("e")); v.parent = v.head; v.head = hex40("e"); }
+  ]) { const changed = structuredClone(sixth); change(changed); assert.equal(isAllowedCiPreviewReadinessLineage(changed), false); }
+  assert.equal(isAllowedCiPreviewReadinessLineage({ ...fifth, sixthCommitPaths: null }), false);
 });
 
-test("readiness CI actual parsed workflow preserves complete sanitized failure records through the CLI offline", () => {
+readinessSubprocessTest("readiness CI actual parsed workflow preserves complete sanitized failure records through the CLI offline", () => {
   const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
   const workflow = loadYaml(readFileSync(path.join(repositoryRoot, ATTESTATION_REPAIR_PATHS[0]), "utf8"));
   const steps = Object.entries(workflow.jobs).flatMap(([job, value]) => value.steps
@@ -5113,6 +5221,7 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
     const preload = path.join(temporary, "synthetic-offline-acquisition.mjs");
     writeFileSync(preload, [
       'import fs from "node:fs";',
+      'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");',
       'import http from "node:http"; import https from "node:https";',
       'import net from "node:net"; import tls from "node:tls"; import dns from "node:dns";',
       'import { syncBuiltinESMExports } from "node:module";',
@@ -5137,11 +5246,21 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
         predicate: "GITHUB_SHA_FORMAT", eventFormat: "valid", runnerFormat: "invalid", calls: 0 },
       { name: "missing-run-id", change: (v) => { delete v.environment.GITHUB_RUN_ID; },
         predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "absent", calls: 0 },
+      { name: "empty-run-id", change: (v) => { v.environment.GITHUB_RUN_ID = ""; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "invalid", calls: 0 },
+      { name: "null-run-id", change: (v) => { v.environment.GITHUB_RUN_ID = null; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "invalid", calls: 0 },
+      { name: "malformed-run-id", change: (v) => { v.environment.GITHUB_RUN_ID = "synthetic-invalid-id"; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "invalid", calls: 0 },
+      { name: "missing-run-attempt", change: (v) => { delete v.environment.GITHUB_RUN_ATTEMPT; },
+        predicate: "GITHUB_RUN_ATTEMPT", eventFormat: "valid", field: "runAttempt", format: "absent", calls: 0 },
+      { name: "missing-workflow-sha", change: (v) => { delete v.environment.GITHUB_WORKFLOW_SHA; },
+        predicate: "WORKFLOW_SHA_MATCHES_RUNNER_MERGE", eventFormat: "valid", field: "workflowSha", format: "absent", calls: 0 },
       { name: "malformed-workflow-ref", change: (v) => { v.environment.GITHUB_WORKFLOW_REF = canary; },
         predicate: "GITHUB_WORKFLOW_REF", eventFormat: "valid", field: "workflowRef", format: "invalid", calls: 0 },
       { name: "adjacent-identity-failures", change: (v) => { v.environment.GITHUB_SHA = hex40("f");
         v.environment.GITHUB_WORKFLOW_SHA = hex40("f"); v.environment.GITHUB_WORKFLOW_REF = canary; delete v.environment.GITHUB_RUN_ID; },
-        predicate: "DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", eventFormat: "valid", calls: 0,
+        predicate: "DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", eventFormat: "valid", calls: 0, field: "runId", format: "absent",
         failedPredicates: ["DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", "GITHUB_WORKFLOW_REF", "GITHUB_RUN_ID"] }
     ];
     for (const { job, step } of steps) {
@@ -5154,14 +5273,21 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
         const eventPath = path.join(caseRoot, "synthetic-event.json");
         const trace = path.join(caseRoot, "synthetic-fetch.trace");
         const fixture = readinessEventFixture(head); scenario.change(fixture);
+        const fixtureBefore = structuredClone(fixture);
+        const isolatedProbe = readinessFixtureEnvironment(fixture.environment);
+        for (const key of Object.keys(syntheticParentCiEnvironment)) {
+          if (!Object.hasOwn(fixture.environment, key)) assert.equal(Object.hasOwn(isolatedProbe, key), false, key);
+        }
+        assert.deepEqual(fixture, fixtureBefore);
+        assert.deepEqual(Object.fromEntries(Object.keys(syntheticParentCiEnvironment).map((key) => [key, process.env[key]])), syntheticParentCiEnvironment);
         writeFileSync(eventPath, JSON.stringify(fixture.event));
         const startedAt = new Date().toISOString();
         const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
           cwd: step["working-directory"] ? path.resolve(repositoryRoot, step["working-directory"]) : repositoryRoot,
-          env: { ...process.env, ...fixture.environment, GITHUB_WORKSPACE: repositoryRoot, GITHUB_EVENT_PATH: eventPath,
+          env: readinessFixtureEnvironment({ ...fixture.environment, GITHUB_WORKSPACE: repositoryRoot, GITHUB_EVENT_PATH: eventPath,
             RUNNER_TEMP: caseRoot, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-            NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(preload)}`,
-            SYNTHETIC_FETCH_TRACE: trace, SYNTHETIC_ACQUISITION_CANARY: canary },
+            NODE_OPTIONS: `--import=${JSON.stringify(preload)}`,
+            SYNTHETIC_FETCH_TRACE: trace, SYNTHETIC_ACQUISITION_CANARY: canary }),
           encoding: "utf8", timeout: 20_000, maxBuffer: 128 * 1024
         });
         const calls = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n").length : 0;
@@ -5211,26 +5337,36 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
-test("readiness CI actual parsed workflow consumes a synthetic fifth candidate proof offline in both lanes", async () => {
+readinessSubprocessTest("readiness CI actual parsed workflow consumes a synthetic sixth candidate proof offline in both lanes", async () => {
   const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-synthetic-fifth-ci-")));
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-synthetic-sixth-ci-")));
   const checkout = path.join(temporary, "repository");
   const run = (args) => execFileSync("git", args, { cwd: checkout, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   try {
     // Disposable offline fixture: shared immutable object reads avoid copying the entire historical object store.
     execFileSync("git", ["clone", "--shared", "--no-checkout", "--quiet", repositoryRoot, checkout], { stdio: "pipe" });
-    run(["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, CI_PREVIEW_FIFTH_PARENT]);
-    for (const entry of CI_PREVIEW_FOURTH_PATHS) writeFileSync(path.join(checkout, entry), readFileSync(path.join(repositoryRoot, entry)));
-    run(["add", "--", ...CI_PREVIEW_FOURTH_PATHS]);
-    run(["-c", "user.name=Synthetic fifth readiness fixture", "-c", "user.email=synthetic@example.invalid",
-      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic fifth identity-proof fixture"]);
+    run(["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, CI_PREVIEW_SIXTH_PARENT]);
+    const localEnvironment = { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT };
+    const retainedScript = path.join(temporary, "retained-fifth-script.mjs");
+    writeFileSync(retainedScript, readFileSync(path.join(checkout, ATTESTATION_REPAIR_PATHS[1])));
+    const retainedModule = await import(pathToFileURL(retainedScript).href);
+    const historicalLocal = retainedModule.deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment });
+    assert.deepEqual(deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment }), historicalLocal);
+    assert.equal(historicalLocal.schemaVersion, "clover-ci-preview-readiness-source-v2");
+    assert.equal(Object.hasOwn(historicalLocal, "sixthCommitPaths"), false);
+    retainSyntheticCiDemonstration("retained-fifth-source-shape", { historicalHead: CI_PREVIEW_SIXTH_PARENT,
+      originalScriptSha256: sha256(readFileSync(retainedScript)), unchangedProof: historicalLocal, currentSourceAcceptance: false });
+    for (const entry of CI_PREVIEW_SIXTH_PATHS) writeFileSync(path.join(checkout, entry), readFileSync(path.join(repositoryRoot, entry)));
+    run(["add", "--", ...CI_PREVIEW_SIXTH_PATHS]);
+    run(["-c", "user.name=Synthetic sixth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic sixth identity-proof fixture"]);
     const head = run(["rev-parse", "HEAD"]), tree = run(["rev-parse", "HEAD^{tree}"]);
-    assert.equal(run(["show", "-s", "--format=%P", "HEAD"]), CI_PREVIEW_FIFTH_PARENT);
+    assert.equal(run(["show", "-s", "--format=%P", "HEAD"]), CI_PREVIEW_SIXTH_PARENT);
     assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
     const localProof = deriveCiPreviewReadinessSource({ repositoryRoot: checkout,
       environment: { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT } });
-    assert.equal(localProof.localCommitCount, 5); assert.equal(localProof.parent, CI_PREVIEW_FIFTH_PARENT);
-    assert.equal(localProof.parentTree, CI_PREVIEW_FIFTH_PARENT_TREE); assert.equal(localProof.ciExecution, null);
+    assert.equal(localProof.localCommitCount, 6); assert.equal(localProof.parent, CI_PREVIEW_SIXTH_PARENT);
+    assert.equal(localProof.parentTree, CI_PREVIEW_SIXTH_PARENT_TREE); assert.equal(localProof.ciExecution, null);
     assert.equal(localProof.releaseAuthority, false);
     const workflowBytes = readFileSync(path.join(checkout, ATTESTATION_REPAIR_PATHS[0]));
     const workflow = loadYaml(workflowBytes.toString("utf8"));
@@ -5278,6 +5414,7 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
     const preload = path.join(scenarioRoot, "synthetic-seven-get-provider.mjs");
     writeFileSync(preload, [
       'import fs from "node:fs";',
+      'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");',
       'import http from "node:http"; import https from "node:https";',
       'import net from "node:net"; import tls from "node:tls"; import dns from "node:dns";',
       'import { syncBuiltinESMExports } from "node:module";',
@@ -5298,21 +5435,21 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
     for (const { job, step } of steps) {
       const caseRoot = path.join(scenarioRoot, job); mkdirSync(caseRoot);
       const trace = path.join(caseRoot, "synthetic-fetch.trace");
-      const environment = { ...process.env, ...provider.input.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
+      const environment = readinessFixtureEnvironment({ ...provider.input.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
         RUNNER_TEMP: caseRoot, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(preload)}`,
-        SYNTHETIC_PROVIDER_REPLIES: replies, SYNTHETIC_FETCH_TRACE: trace };
+        NODE_OPTIONS: `--import=${JSON.stringify(preload)}`,
+        SYNTHETIC_PROVIDER_REPLIES: replies, SYNTHETIC_FETCH_TRACE: trace });
       lastEnvironment = environment;
       const startedAt = new Date().toISOString();
       const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
         cwd: step["working-directory"] ? path.resolve(checkout, step["working-directory"]) : checkout,
-        env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
+        env: environment, encoding: "utf8", timeout: 60_000, maxBuffer: 128 * 1024
       });
       const requests = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
       retainSyntheticCiDemonstration(`${relationship}-${job}-proof-success`, { job, scenario: "proof-success", startedAt,
         endedAt: new Date().toISOString(), status: result.status, signal: result.signal,
         stdout: result.stdout, stderr: result.stderr, syntheticRequests: requests, command: step.run,
-        commandSha256: sha256(step.run), syntheticCandidate: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT },
+        commandSha256: sha256(step.run), syntheticCandidate: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT },
         sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(checkout, entry)))])) });
       assert.equal(result.error, undefined); assert.equal(result.signal, null);
       assert.equal(result.status, 0, `${job}: ${result.stderr}`);
@@ -5331,7 +5468,7 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
         retainSyntheticCiDemonstration(`${relationship}-${job}-${failKind}-acquisition-failure`, {
           scenario: "actual-workflow-acquisition-failure", relationship, job, failKind, status: failed.status,
           signal: failed.signal, stdout: failed.stdout, stderr: failed.stderr, workflowSha256: sha256(workflowBytes),
-          command: step.run, syntheticCandidate: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT }
+          command: step.run, syntheticCandidate: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT }
         });
         assert.equal(failed.error, undefined); assert.equal(failed.signal, null); assert.notEqual(failed.status, 0);
         assert.ok(failed.stderr.includes(`CLOVER_READINESS_CI_PROOF_REJECTED:${failKind}_ACQUISITION`));
@@ -5346,7 +5483,7 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
       });
       assert.equal(consumed.error, undefined); assert.equal(consumed.status, 0, consumed.stderr);
       const proof = JSON.parse(consumed.stdout);
-      assert.equal(proof.schemaVersion, "clover-ci-preview-readiness-source-v2");
+      assert.equal(proof.schemaVersion, "clover-ci-preview-readiness-source-v3");
       assert.equal(proof.ciExecution.mergeRelationship, relationship);
       assert.equal(proof.ciExecution.eventMergeSha, eventFixture.event.pull_request.merge_commit_sha);
       assert.equal(proof.ciExecution.runnerMergeSha, eventFixture.environment.GITHUB_SHA);
@@ -5355,14 +5492,14 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
       assert.equal(snapshot.fields.eventMergeSha.value, proof.ciExecution.eventMergeSha);
       assert.equal(snapshot.fields.runnerMergeSha.value, proof.ciExecution.runnerMergeSha);
       assert.deepEqual(snapshot, proof.ciExecution.originalSnapshot);
-      assert.deepEqual(proof.commitIds, [...CI_PREVIEW_FIFTH_PREFIX, head]);
-      assert.equal(proof.localCommitCount, 5); assert.equal(proof.parentTree, CI_PREVIEW_FIFTH_PARENT_TREE); assert.deepEqual(proof.fifthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]); assert.deepEqual(proof.fourthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]);
-      assert.equal(proof.parent, CI_PREVIEW_FIFTH_PARENT); assert.equal(proof.sourceProofSelfHash, resultRecord.sourceProofSelfHash);
+      assert.deepEqual(proof.commitIds, [...CI_PREVIEW_SIXTH_PREFIX, head]);
+      assert.equal(proof.localCommitCount, 6); assert.equal(proof.parentTree, CI_PREVIEW_SIXTH_PARENT_TREE); assert.deepEqual(proof.sixthCommitPaths, [...CI_PREVIEW_SIXTH_PATHS]); assert.deepEqual(proof.fifthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]); assert.deepEqual(proof.fourthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]);
+      assert.equal(proof.parent, CI_PREVIEW_SIXTH_PARENT); assert.equal(proof.sourceProofSelfHash, resultRecord.sourceProofSelfHash);
       assert.equal(proof.ciExecution.providerProof.records.length, expectedRequests);
       assert.equal(proof.releaseAuthority, false); assert.equal(proof.providerAcceptance, false);
       assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, expectedRequests, "cached source validation must not reacquire provider facts");
       if (job === "validate") {
-        const syntheticBuild = buildWith({ commit: head, tree, parent: CI_PREVIEW_FIFTH_PARENT, runtimeDeploymentKey: `clover-${head.slice(0, 24)}`,
+        const syntheticBuild = buildWith({ commit: head, tree, parent: CI_PREVIEW_SIXTH_PARENT, runtimeDeploymentKey: `clover-${head.slice(0, 24)}`,
           changedPathCount: proof.fullMainPathCount, pathListSha256: proof.fullMainPathListSha256,
           sourceManifestSha256: proof.sourceManifestSha256 });
         const outputRoot = path.join(caseRoot, "synthetic-sealed-output");
@@ -5386,7 +5523,7 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
         }
         retainSyntheticCiDemonstration(`${relationship}-actual-source-to-downstream`, {
           scenario: "actual-cli-cache-proof-to-downstream-contract", sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(checkout, entry)))])),
-          sourceProofSelfHash: proof.sourceProofSelfHash, sourceIdentity: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT },
+          sourceProofSelfHash: proof.sourceProofSelfHash, sourceIdentity: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT },
           ciExecution: proof.ciExecution, independentReadbackFixture: downstream.contract.ci.identityReadback,
           independentReadbackIsSynthetic: true, outcome: downstreamResult
         });
@@ -5406,6 +5543,7 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
         const program = [
           'const cp = require("node:child_process"), fs = require("node:fs"), path = require("node:path");',
           'const { execFileSync } = cp;',
+          'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");',
           `const repositoryRoot = ${JSON.stringify(checkout)}, p = ${JSON.stringify(provenance)};`,
           'const requireCondition = (condition, message) => { if (!condition) throw new Error(message); };',
           'const exactJson = (actual, expected, message) => requireCondition(JSON.stringify(actual) === JSON.stringify(expected), message);',
@@ -5422,7 +5560,7 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
           job, scenario, wrapper: wrapper.name, startedAt: started, endedAt: new Date().toISOString(),
           status: observed.status, signal: observed.signal, stdout: observed.stdout, stderr: observed.stderr,
           exactWorkflowSnippet: wrapper.code, snippetSha256: sha256(wrapper.code),
-          workflowSha256: sha256(workflowBytes), syntheticCandidate: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT }
+          workflowSha256: sha256(workflowBytes), syntheticCandidate: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT }
         });
         assert.equal(observed.error, undefined); assert.equal(observed.signal, null);
         assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, expectedRequests, "embedded source wrappers must reuse the frozen provider cache");
@@ -5435,6 +5573,26 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
       }
       const retainedPath = path.join(caseRoot, "clover-ci-preview-readiness-source.json");
       assert.equal(readFileSync(retainedPath, "utf8"), consumed.stdout);
+      // Shape equality is independent of merge relationship and producing job.
+      // Exercise each retained-record consumer once; all four positive/event/cache paths remain below.
+      if (relationship === "equal" && job === "validate") for (const [label, change] of [
+        ["missing-sixth-field", (v) => { delete v.sixthCommitPaths; }],
+        ["extra-proof-field", (v) => { v.unreviewedTail = []; }],
+        ["mismatched-sixth-field", (v) => { v.sixthCommitPaths = [...CI_PREVIEW_FOURTH_PATHS]; }]
+      ]) {
+        const altered = JSON.parse(consumed.stdout); change(altered);
+        const { sourceProofSelfHash: oldHash, ...body } = altered; void oldHash;
+        altered.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
+        writeFileSync(retainedPath, `${canonicalJson(altered)}\n`);
+        for (const { project } of documents) writeFileSync(path.join(browserProofRoot, `${project}.json`), `${canonicalJson(altered)}\n`);
+        // The first wrapper produces this record from trusted source; the other three
+        // consume retained records and must reject missing/extra/substituted fields.
+        for (const wrapper of wrappers.filter((entry) => entry.result !== "readinessSource")) {
+          assert.notEqual(executeWrapper(wrapper, label).status, 0, wrapper.name);
+        }
+        writeFileSync(retainedPath, consumed.stdout);
+        for (const { project } of documents) writeFileSync(path.join(browserProofRoot, `${project}.json`), consumed.stdout);
+      }
       const browserWrapper = wrappers.find((entry) => entry.projectCode);
       const browserProofPath = path.join(browserProofRoot, "desktop-chromium.json");
       writeFileSync(browserProofPath, `${consumed.stdout} `);
@@ -5469,22 +5627,50 @@ test("readiness CI actual parsed workflow consumes a synthetic fifth candidate p
     }
     }
     assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
-    const sixthPath = path.join(checkout, ATTESTATION_REPAIR_PATHS[1]);
-    writeFileSync(sixthPath, `${readFileSync(sixthPath, "utf8")}\n// Disposable sixth-tail rejection fixture.\n`);
+    const seventhPath = path.join(checkout, ATTESTATION_REPAIR_PATHS[1]);
+    writeFileSync(seventhPath, `${readFileSync(seventhPath, "utf8")}\n// Disposable seventh-tail rejection fixture.\n`);
     run(["add", "--", ATTESTATION_REPAIR_PATHS[1]]);
-    run(["-c", "user.name=Synthetic fifth readiness fixture", "-c", "user.email=synthetic@example.invalid",
-      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic sixth-tail rejection fixture"]);
-    const sixthHead = run(["rev-parse", "HEAD"]);
-    const sixth = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
-      cwd: checkout, env: { ...lastEnvironment, CLOVER_TREE_HEAD: sixthHead, CLOVER_TREE_EXACT_PR_HEAD: sixthHead },
+    run(["-c", "user.name=Synthetic sixth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic seventh-tail rejection fixture"]);
+    const seventhHead = run(["rev-parse", "HEAD"]);
+    const seventh = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
+      cwd: checkout, env: { ...lastEnvironment, CLOVER_TREE_HEAD: seventhHead, CLOVER_TREE_EXACT_PR_HEAD: seventhHead },
       encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
     });
-    retainSyntheticCiDemonstration("actual-sixth-tail-rejected", { scenario: "actual-sixth-tail-rejected",
-      syntheticCandidate: { head: sixthHead, parent: head }, status: sixth.status, signal: sixth.signal,
-      stdout: sixth.stdout, stderr: sixth.stderr });
-    assert.equal(sixth.error, undefined); assert.equal(sixth.signal, null); assert.notEqual(sixth.status, 0);
-    assert.match(sixth.stderr, /CLOVER_READINESS_DEPTH_REJECTED/u);
+    retainSyntheticCiDemonstration("actual-seventh-tail-rejected", { scenario: "actual-seventh-tail-rejected",
+      syntheticCandidate: { head: seventhHead, parent: head }, status: seventh.status, signal: seventh.signal,
+      stdout: seventh.stdout, stderr: seventh.stderr });
+    assert.equal(seventh.error, undefined); assert.equal(seventh.signal, null); assert.notEqual(seventh.status, 0);
+    assert.match(seventh.stderr, /CLOVER_READINESS_DEPTH_REJECTED/u);
     assert.equal(readFileSync(lastEnvironment.SYNTHETIC_FETCH_TRACE, "utf8").trim().split("\n").length, 8);
+    const commitFixture = (label) => {
+      run(["add", "-A"]); run(["-c", "user.name=Synthetic sixth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", label]);
+    };
+    const populateTail = () => {
+      for (const entry of CI_PREVIEW_SIXTH_PATHS) writeFileSync(path.join(checkout, entry), readFileSync(path.join(repositoryRoot, entry)));
+    };
+    for (const [label, mutate, error] of [
+      ["changed-workflow", () => { const target = path.join(checkout, ATTESTATION_REPAIR_PATHS[0]); writeFileSync(target, `${readFileSync(target, "utf8")}\n# Synthetic prohibited tail.\n`); }, /DEPTH_REJECTED/u],
+      ["other-path", () => writeFileSync(path.join(checkout, "synthetic-unapproved-tail.txt"), "synthetic"), /PATH_REJECTED/u],
+      ["mode-change", () => chmodSync(path.join(checkout, CI_PREVIEW_SIXTH_PATHS[0]), 0o755), /BLOB_REJECTED/u],
+      ["missing-test-delta", () => writeFileSync(path.join(checkout, CI_PREVIEW_SIXTH_PATHS[1]), execFileSync("git", ["show", `${CI_PREVIEW_SIXTH_PARENT}:${CI_PREVIEW_SIXTH_PATHS[1]}`], { cwd: checkout })), /DEPTH_REJECTED/u],
+      ["deleted-test", () => unlinkSync(path.join(checkout, CI_PREVIEW_SIXTH_PATHS[1])), /PATH_REJECTED/u]
+    ]) {
+      run(["reset", "--hard", CI_PREVIEW_SIXTH_PARENT]); populateTail(); mutate(); commitFixture(`Synthetic prohibited ${label}`);
+      const changedHead = run(["rev-parse", "HEAD"]);
+      assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment }), error);
+      retainSyntheticCiDemonstration(`sixth-tail-${label}-rejected`, { scenario: label, actualDisposableHead: changedHead,
+        expectedParent: CI_PREVIEW_SIXTH_PARENT, rejected: true, sourceBranchChanged: false });
+    }
+    // A different fifth parent yields six commits but is not the approved fixed five-prefix.
+    run(["reset", "--hard", CI_PREVIEW_FIFTH_PARENT]); populateTail(); commitFixture("Synthetic substituted fifth parent");
+    const wrongParent = run(["rev-parse", "HEAD"]);
+    for (const entry of CI_PREVIEW_SIXTH_PATHS) { const target = path.join(checkout, entry); writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic substituted sixth tail.\n`); }
+    commitFixture("Synthetic sixth with wrong parent");
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment }), /DEPTH_REJECTED/u);
+    retainSyntheticCiDemonstration("sixth-substituted-prefix-rejected", { actualDisposableHead: run(["rev-parse", "HEAD"]),
+      actualParent: wrongParent, requiredParent: CI_PREVIEW_SIXTH_PARENT, rejected: true });
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
@@ -5528,7 +5714,7 @@ test("readiness source preserves frozen base, four-file scope, linear budget, lo
     // Historical generic LOCAL histories do not inherit the newly authorized fourth-tail CI proof path.
     assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED/u);
     ci.event.pull_request.base.sha = "d".repeat(40); writeFileSync(eventPath, JSON.stringify(ci.event));
-    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED:SOURCE_FIFTH_LINEAGE/u);
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED:SOURCE_SIXTH_LINEAGE/u);
     for (const flag of ["assume-unchanged", "skip-worktree"]) {
       run(["update-index", `--${flag}`, "--", sourcePath]); assert.throws(proof, /HIDDEN_INDEX_STATE_REJECTED/u);
       run(["update-index", `--no-${flag}`, "--", sourcePath]);
@@ -5571,14 +5757,14 @@ async function readinessPreviewFixture(verifiedEvidence, { sourceProof, ciSource
       .find((value) => value !== provenance.commit && value !== eventFixture.environment.GITHUB_SHA);
   }
   const providerFixture = syntheticCiProviderFixture({ fixture: eventFixture, tree: provenance.tree });
-  const proof = sourceProof ?? seal({ schemaVersion: "clover-ci-preview-readiness-source-v2", classification: "local-readiness-candidate",
+  const proof = sourceProof ?? seal({ schemaVersion: "clover-ci-preview-readiness-source-v3", classification: "local-readiness-candidate",
     taskId: CI_PREVIEW_READINESS_TASK, context: CI_PREVIEW_READINESS_CONTEXT, githubActions: false, pullRequestNumber: null,
     branch: CI_PREVIEW_READINESS_BRANCH, head: provenance.commit, tree: provenance.tree, ciExecution: null,
     fullMainPathCount: provenance.changedPathCount, fullMainPathListSha256: provenance.pathListSha256,
-    sourceManifestSha256: provenance.sourceManifestSha256, parent: provenance.parent, parentTree: CI_PREVIEW_FIFTH_PARENT_TREE,
+    sourceManifestSha256: provenance.sourceManifestSha256, parent: provenance.parent, parentTree: CI_PREVIEW_SIXTH_PARENT_TREE,
     base: CI_PREVIEW_READINESS_BASE, baseTree: CI_PREVIEW_READINESS_BASE_TREE,
-    commitIds: [...CI_PREVIEW_FIFTH_PREFIX, provenance.commit], localCommitCount: 5,
-    fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS],
+    commitIds: [...CI_PREVIEW_SIXTH_PREFIX, provenance.commit], localCommitCount: 6,
+    fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], sixthCommitPaths: [...CI_PREVIEW_SIXTH_PATHS],
     changedPathCount: 4, paths: [...ATTESTATION_REPAIR_PATHS], pathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`),
     allowedPathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`), diffSha256: hex64("c"),
     sourceFiles: ATTESTATION_REPAIR_PATHS.map((sourcePath) => ({ path: sourcePath, mode: "100644",
@@ -5643,7 +5829,7 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-readiness-preview-")));
   try {
     const output = path.join(root, "output");
-    const successorBuild = { ...build, parent: CI_PREVIEW_FIFTH_PARENT, changedPathCount: 75 };
+    const successorBuild = { ...build, parent: CI_PREVIEW_SIXTH_PARENT, changedPathCount: 75 };
     writeRawBuildOutput(output, root, { sourceProvenance: successorBuild });
     const sealed = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: path.join(root, "evidence"),
       frozenOutputRoot: path.join(root, "frozen-workspace"), sourceProvenance: successorBuild });
@@ -5728,9 +5914,11 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
     for (const change of [
       (p) => { p.base = DEPENDENCY_SUCCESSOR_BASE; }, (p) => { p.baseTree = hex40("e"); },
       (p) => { p.releaseAuthority = true; }, (p) => { p.paths[0] = "outside-allowlist"; },
-      (p) => { p.localCommitCount = 6; }, (p) => { p.lockfiles[0].sha256 = hex64("a"); },
+      (p) => { p.localCommitCount = 7; }, (p) => { p.lockfiles[0].sha256 = hex64("a"); },
       (p) => { p.parent = CI_PREVIEW_READINESS_BASE; }, (p) => { p.fourthCommitPaths = null; },
       (p) => { p.parentTree = hex40("e"); }, (p) => { p.fifthCommitPaths = null; },
+      (p) => { delete p.sixthCommitPaths; }, (p) => { p.sixthCommitPaths = [...CI_PREVIEW_FOURTH_PATHS]; },
+      (p) => { p.schemaVersion = "clover-ci-preview-readiness-source-v2"; },
       (p) => { p.providerAcceptance = true; }, (p) => { p.consequentialAuthorityGranted = true; },
       (p) => { p.unreviewedAuthority = true; }
     ]) {
