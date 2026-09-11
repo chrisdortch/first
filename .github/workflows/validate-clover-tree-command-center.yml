@@ -71,7 +71,8 @@ jobs:
           cache-dependency-path: apps/clover-launch-studio/package-lock.json
 
       # Original selected inputs are logged before acquisition; failure does not depend on artifact uploads.
-      # Seven public, unauthenticated GETs only. Retain one proof per job for deterministic downstream checks.
+      # Seven public GETs for equality; eight for a proved synchronize/immediate-predecessor merge.
+      # Retain both original identities in one versioned proof per job; cached consumers reverify without fetching.
       - name: Prove readiness CI identity and retain safe failure evidence
         id: readiness-ci-identity-proof
         if: env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness'
@@ -632,7 +633,8 @@ jobs:
           cache-dependency-path: apps/clover-launch-studio/package-lock.json
 
       # Original selected inputs are logged before acquisition; failure does not depend on artifact uploads.
-      # Seven public, unauthenticated GETs only. Retain one proof per job for deterministic downstream checks.
+      # Seven public GETs for equality; eight for a proved synchronize/immediate-predecessor merge.
+      # Retain both original identities in one versioned proof per job; cached consumers reverify without fetching.
       - name: Prove readiness CI identity and retain safe failure evidence
         id: readiness-ci-identity-proof
         if: env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT == 'ci-preview-readiness'

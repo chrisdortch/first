@@ -22,6 +22,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { load as loadYaml } from "js-yaml";
 import { getEnv } from "@vercel/functions";
 import {
@@ -77,6 +78,7 @@ import {
   deriveDependencySuccessorSource,
   deriveCiPreviewReadinessSource,
   deriveCiPreviewExecutionIdentity,
+  parseCiPreviewExecutionInputs,
   captureCiPreviewIdentitySnapshot,
   acquireCiPreviewProviderProof,
   verifyCiPreviewProviderProof,
@@ -90,6 +92,9 @@ import {
   CI_PREVIEW_FOURTH_PARENT,
   CI_PREVIEW_FOURTH_PREFIX,
   CI_PREVIEW_FOURTH_PATHS,
+  CI_PREVIEW_FIFTH_PARENT,
+  CI_PREVIEW_FIFTH_PARENT_TREE,
+  CI_PREVIEW_FIFTH_PREFIX,
   CI_PREVIEW_RECEIPT_PROFILE,
   validateCiPreviewExecutionContract,
   parseProviderFileTree,
@@ -4560,14 +4565,21 @@ function readinessEventFixture(head) {
   return { event, environment, head, workflowBlob: "b".repeat(40) };
 }
 
+function syntheticCiSourceBinding(head = hex40("c"), tree = hex40("d")) {
+  return { head, tree, parent: CI_PREVIEW_FIFTH_PARENT, parentTree: CI_PREVIEW_FIFTH_PARENT_TREE,
+    commitIds: [...CI_PREVIEW_FIFTH_PREFIX, head], fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS],
+    fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS] };
+}
+
 function syntheticCiProviderFixture({ fixture = readinessEventFixture(hex40("c")), tree = hex40("d"),
+  sourceBinding = syntheticCiSourceBinding(fixture.head, tree),
   workflowBytes = Buffer.from("# Synthetic reviewed workflow bytes; no real run.\n", "utf8") } = {}) {
   const workflowBlob = sha1(Buffer.concat([Buffer.from(`blob ${workflowBytes.length}\0`), workflowBytes]));
-  const input = { ...fixture, tree, workflowBytes, workflowBlob };
-  const execution = deriveCiPreviewExecutionIdentity(input);
+  const input = { ...fixture, tree, workflowBytes, workflowBlob, sourceBinding };
+  const execution = parseCiPreviewExecutionInputs(input);
   const prefix = "https://api.github.com/repos/chrisdortch/first";
   const repo = { id: 1231415392, full_name: "chrisdortch/first", private: false };
-  const head = input.head, merge = execution.mergeSha;
+  const head = input.head, merge = execution.runnerMergeSha;
   const workflow = { type: "file", encoding: "base64", content: workflowBytes.toString("base64"),
     size: workflowBytes.length, sha: workflowBlob, path: ATTESTATION_REPAIR_PATHS[0] };
   const entries = [
@@ -4577,9 +4589,13 @@ function syntheticCiProviderFixture({ fixture = readinessEventFixture(hex40("c")
       pull_requests: [{ number: 36, head: { sha: head, ref: CI_PREVIEW_READINESS_BRANCH, repo: { id: repo.id } },
         base: { sha: CI_PREVIEW_READINESS_BASE, ref: DEPENDENCY_SUCCESSOR_BRANCH, repo: { id: repo.id } } }] } },
     { kind: "HEAD_COMMIT", url: `${prefix}/git/commits/${head}`, body: { sha: head, tree: { sha: tree },
-      parents: [{ sha: "727fb0e4c569ff54db1be67c41616896f09b0aea" }] } },
+      parents: [{ sha: sourceBinding.parent }] } },
     { kind: "MERGE_COMMIT", url: `${prefix}/git/commits/${merge}`, body: { sha: merge, tree: { sha: tree },
       parents: [{ sha: CI_PREVIEW_READINESS_BASE }, { sha: head }] } },
+    ...(execution.eventMergeSha === merge ? [] : [{ kind: "EVENT_MERGE_COMMIT",
+      url: `${prefix}/git/commits/${execution.eventMergeSha}`,
+      body: { sha: execution.eventMergeSha, tree: { sha: sourceBinding.parentTree },
+        parents: [{ sha: CI_PREVIEW_READINESS_BASE }, { sha: sourceBinding.parent }] } }]),
     { kind: "HEAD_WORKFLOW", url: `${prefix}/contents/${ATTESTATION_REPAIR_PATHS[0]}?ref=${head}`, body: workflow },
     { kind: "MERGE_WORKFLOW", url: `${prefix}/contents/${ATTESTATION_REPAIR_PATHS[0]}?ref=${merge}`, body: workflow },
     { kind: "MERGE_REF", url: `${prefix}/git/ref/pull/36/merge`, body: { ref: "refs/pull/36/merge", object: { type: "commit", sha: merge } } },
@@ -4588,8 +4604,9 @@ function syntheticCiProviderFixture({ fixture = readinessEventFixture(hex40("c")
   ];
   const calls = [];
   const fetchImpl = async (url, options) => {
-    assert.equal(url, entries[calls.length]?.url, "only the seven ordered synthetic endpoints may be requested");
+    assert.equal(url, entries[calls.length]?.url, "only the seven/eight ordered synthetic endpoints may be requested");
     assert.equal(options.method, "GET"); assert.equal(options.redirect, "error");
+    assert.equal(options.credentials, "omit");
     assert.deepEqual(options.headers, { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" });
     assert.ok(options.signal instanceof AbortSignal);
     calls.push(url);
@@ -4621,11 +4638,24 @@ test("readiness CI provider proof binds seven public reads to the exact syntheti
   assert.equal(proof.authentication, "none-public");
   assert.equal(proof.originalEventReconstructed, false);
   assert.equal(proof.externalAuthenticationEstablished, false);
+  assert.equal(proof.schemaVersion, "clover-ci-provider-proof-v2");
+  assert.deepEqual(proof.originalInputs, fixture.execution);
+  assert.equal(fixture.execution.status, "provisional");
+  assert.throws(() => deriveCiPreviewExecutionIdentity(fixture.input), /CLOVER_/u, "provisional inputs alone cannot create acceptance");
+  const accepted = deriveCiPreviewExecutionIdentity({ ...fixture.input, proof, now: fixture.now() });
+  assert.equal(accepted.schemaVersion, "clover-ci-execution-identity-v2");
+  assert.equal(accepted.status, "proved-relationship");
+  assert.equal(accepted.mergeRelationship, "equal");
+  assert.equal(accepted.externalAuthenticationEstablished, false); assert.equal(accepted.releaseAuthority, false);
   assert.deepEqual(proof.records.map(({ kind }) => kind), fixture.entries.map(({ kind }) => kind));
-  assert.equal(verifyCiPreviewProviderProof({ proof, execution: fixture.execution, tree: fixture.input.tree,
+  assert.equal(verifyCiPreviewProviderProof({ proof, execution: fixture.execution, sourceBinding: fixture.input.sourceBinding, now: fixture.now(), tree: fixture.input.tree,
     workflowBytes: fixture.input.workflowBytes }), proof);
-  assert.equal(verifyCiPreviewProviderProof({ proof, execution: fixture.execution, tree: fixture.input.tree,
+  assert.equal(verifyCiPreviewProviderProof({ proof, execution: fixture.execution, sourceBinding: fixture.input.sourceBinding, now: fixture.now(), tree: fixture.input.tree,
     workflowSha256: sha256(fixture.input.workflowBytes) }), proof);
+  for (const now of [new Date("2026-09-10T20:30:00.001Z"), new Date("2026-09-10T19:59:54.999Z"), new Date(NaN)]) {
+    assert.throws(() => verifyCiPreviewProviderProof({ proof, execution: fixture.execution,
+      sourceBinding: fixture.input.sourceBinding, tree: fixture.input.tree, workflowBytes: fixture.input.workflowBytes, now }), /OBSERVATION_FRESHNESS/u);
+  }
   assert.equal(proof.records[0].binding, "attempt-addressed");
   assert.ok(proof.records.slice(1, 5).every(({ binding }) => binding === "sha-addressed"));
   assert.ok(proof.records.slice(5).every(({ binding }) => binding === "moving-ref"));
@@ -4634,6 +4664,11 @@ test("readiness CI provider proof binds seven public reads to the exact syntheti
     (p) => { p.authentication = "invented-authentication"; },
     (p) => { p.originalEventReconstructed = true; },
     (p) => { p.externalAuthenticationEstablished = true; },
+    (p) => { p.schemaVersion = "clover-ci-provider-proof-v1"; },
+    (p) => { p.originalInputs.eventMergeSha = hex40("e"); },
+    (p) => { p.originalInputs.originalSnapshot.fields.eventMergeSha.value = hex40("e"); },
+    (p) => { delete p.originalInputs.originalSnapshot; },
+    (p) => { p.originalInputs.status = "proved-relationship"; },
     (p) => { p.records[0].projection.id = "987654321"; },
     (p) => { p.records[0].projection.attempt = "2"; },
     (p) => { p.records[0].projection.repositoryId += 1; },
@@ -4650,9 +4685,168 @@ test("readiness CI provider proof binds seven public reads to the exact syntheti
     (p) => { p.records[1].startedAt = "2026-09-10T20:03:00.000Z"; p.records[1].observedAt = p.records[1].startedAt; }
   ]) {
     const changed = structuredClone(proof); change(changed);
-    assert.throws(() => verifyCiPreviewProviderProof({ proof: changed, execution: fixture.execution,
+    assert.throws(() => verifyCiPreviewProviderProof({ proof: changed, execution: fixture.execution, sourceBinding: fixture.input.sourceBinding, now: fixture.now(),
       tree: fixture.input.tree, workflowBytes: fixture.input.workflowBytes }), /CLOVER_/u);
   }
+});
+
+test("readiness CI acquisition enforces request and total deadlines before further mocked GETs", async (t) => {
+  const timeouts = [];
+  t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+    timeouts.push(milliseconds); return new AbortController().signal;
+  });
+  const epoch = Date.parse("2026-09-10T20:00:00.000Z");
+  const clock = (offsets) => {
+    let index = 0;
+    return () => { assert.ok(index < offsets.length, "acquisition must stop at the exhausted mocked deadline"); return new Date(epoch + offsets[index++]); };
+  };
+  for (const scenario of [
+    { label: "one response exceeds fifteen seconds", offsets: [0, 0, 15_001], expectedTimeout: 15_000 },
+    { label: "inter-request overhead exhausts the total window", offsets: [0, 0, 0, 120_001], expectedTimeout: 15_000 },
+    { label: "response arrives after the remaining total window", offsets: [0, 119_999, 120_001], expectedTimeout: 1 }
+  ]) {
+    const fixture = syntheticCiProviderFixture(); timeouts.length = 0;
+    await assert.rejects(acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: clock(scenario.offsets) }),
+      { message: "CLOVER_READINESS_CI_PROOF_REJECTED:ACQUISITION_WINDOW" }, scenario.label);
+    assert.equal(fixture.calls.length, 1, `${scenario.label}: no second GET, retry, or fallback`);
+    assert.deepEqual(timeouts, [scenario.expectedTimeout]);
+  }
+  const fixture = syntheticCiProviderFixture(); timeouts.length = 0;
+  const nearDeadline = [0, ...Array(12).fill(0), 119_500, 120_000, 120_000];
+  const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: clock(nearDeadline) });
+  assert.equal(fixture.calls.length, 7); assert.equal(proof.records.length, 7);
+  assert.deepEqual(timeouts, [...Array(6).fill(15_000), 500]);
+  assert.equal(Date.parse(proof.records.at(-1).observedAt) - epoch, 120_000);
+  assert.equal(proof.externalAuthenticationEstablished, false);
+});
+
+test("readiness CI synchronize mismatch requires an eighth immediate-predecessor object proof", async () => {
+  const event = readinessEventFixture(hex40("c"));
+  event.event.action = "synchronize"; event.event.pull_request.merge_commit_sha = hex40("f");
+  const fixture = syntheticCiProviderFixture({ fixture: event });
+  assert.equal(fixture.execution.eventMergeSha, hex40("f"));
+  assert.equal(fixture.execution.runnerMergeSha, hex40("a"));
+  assert.equal(fixture.execution.status, "provisional");
+  assert.throws(() => deriveCiPreviewExecutionIdentity(fixture.input), /CLOVER_/u);
+  const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: fixture.now });
+  const accepted = deriveCiPreviewExecutionIdentity({ ...fixture.input, proof, now: fixture.now() });
+  assert.equal(accepted.mergeRelationship, "synchronize-immediate-predecessor");
+  assert.equal(accepted.eventAction, "synchronize");
+  assert.equal(accepted.eventMergeSha, hex40("f")); assert.equal(accepted.runnerMergeSha, hex40("a"));
+  assert.equal(accepted.workflowSha, hex40("a")); assert.equal(accepted.externalAuthenticationEstablished, false);
+  assert.equal(accepted.releaseAuthority, false); assert.equal(proof.records.length, 8);
+  assert.deepEqual(fixture.calls, fixture.entries.map(({ url }) => url));
+  assert.equal(proof.records[3].kind, "EVENT_MERGE_COMMIT");
+  assert.equal(proof.records[3].url, `https://api.github.com/repos/chrisdortch/first/git/commits/${hex40("f")}`);
+  for (const change of [
+    (p) => { p.records.splice(3, 1); },
+    (p) => { p.records.push(p.records[3]); },
+    (p) => { p.records[3].projection.parents.reverse(); },
+    (p) => { p.records[3].projection.parents[1] = CI_PREVIEW_FOURTH_PARENT; },
+    (p) => { p.records[3].projection.parents[0] = hex40("e"); },
+    (p) => { p.records[3].projection.tree = hex40("e"); },
+    (p) => { p.records[3].projection.sha = hex40("e"); },
+    (p) => { p.records[3].url = p.records[2].url; },
+    (p) => { p.originalInputs.eventAction = "opened"; },
+    (p) => { p.originalInputs.originalSnapshot.fields.runnerMergeSha.value = hex40("e"); },
+    (p) => { p.records[3].startedAt = "2026-09-10T20:00:16.000Z"; p.records[3].observedAt = "2026-09-10T20:00:32.000Z"; },
+    (p) => { p.records.at(-1).startedAt = "2026-09-10T20:02:01.000Z"; p.records.at(-1).observedAt = "2026-09-10T20:02:01.000Z"; }
+  ]) {
+    const changed = structuredClone(proof); change(changed);
+    assert.throws(() => deriveCiPreviewExecutionIdentity({ ...fixture.input, proof: changed, now: fixture.now() }), /CLOVER_/u);
+  }
+  for (const change of [
+    (b) => { b.parent = CI_PREVIEW_FOURTH_PARENT; }, (b) => { b.parentTree = hex40("e"); },
+    (b) => { b.head = hex40("e"); }, (b) => { b.tree = hex40("e"); },
+    (b) => { b.commitIds[3] = hex40("e"); }, (b) => { b.fifthCommitPaths = null; }
+  ]) {
+    const sourceBinding = structuredClone(fixture.input.sourceBinding); change(sourceBinding);
+    assert.throws(() => deriveCiPreviewExecutionIdentity({ ...fixture.input, sourceBinding, proof, now: fixture.now() }), /CLOVER_/u);
+  }
+  for (const action of ["opened", "reopened", "edited", "closed"]) {
+    const changed = structuredClone(event); changed.event.action = action;
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
+  }
+  for (const change of [
+    (entry) => { entry.body.parents.reverse(); },
+    (entry) => { entry.body.parents[1].sha = CI_PREVIEW_FOURTH_PARENT; },
+    (entry) => { entry.body.tree.sha = hex40("e"); },
+    (entry) => { entry.status = 404; },
+    (entry) => { entry.redirected = true; },
+    (entry) => { entry.raw = Buffer.from('{"sha":"duplicate","sha":"duplicate"}'); }
+  ]) {
+    const changed = syntheticCiProviderFixture({ fixture: structuredClone(event) }); change(changed.entries[3]);
+    await assert.rejects(acquireCiPreviewProviderProof({ ...changed.input, fetchImpl: changed.fetchImpl, now: changed.now }), /CLOVER_/u);
+    assert.equal(changed.calls.length, 4, "unproved event object must stop acquisition without retry or fallback");
+  }
+});
+
+test("readiness CI replays the retained f059 source and c612 versus 373922 operands without inventing a fifth identity", async () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-historical-f059-replay-")));
+  const head = "f0591972971036fd4258429ed363b71f23b8516a", tree = "92f8efe9f72b927e35bd4dbefca0c7fd13ce936e";
+  const prior = "727fb0e4c569ff54db1be67c41616896f09b0aea", priorTree = "80f3c0014424f69aa6536ed30f941478c72ae179";
+  const eventMergeSha = "c612830ace665e2c6b447eff4164846b3895f22d", runnerMergeSha = "373922ed0f9343fdcc7627509880665b3af2fb2e";
+  try {
+    const gitBytes = (spec) => execFileSync("git", ["show", spec], { cwd: repositoryRoot });
+    const oldScriptBytes = gitBytes(`${head}:${ATTESTATION_REPAIR_PATHS[1]}`);
+    const oldScriptPath = path.join(temporary, "historical-f059-attestation.mjs"); writeFileSync(oldScriptPath, oldScriptBytes);
+    const old = await import(pathToFileURL(oldScriptPath).href);
+    const workflowBytes = gitBytes(`${head}:${ATTESTATION_REPAIR_PATHS[0]}`);
+    const observed = readinessEventFixture(head);
+    observed.event.action = "synchronize"; observed.event.pull_request.merge_commit_sha = eventMergeSha;
+    observed.environment.GITHUB_SHA = runnerMergeSha; observed.environment.GITHUB_WORKFLOW_SHA = runnerMergeSha;
+    observed.environment.GITHUB_RUN_ID = "34535718182";
+    observed.workflowBlob = sha1(Buffer.concat([Buffer.from(`blob ${workflowBytes.length}\0`), workflowBytes]));
+    assert.equal(observed.workflowBlob, "4c8f3883f2190b97a2b41a26bddc69c487b91a94");
+    assert.throws(() => old.deriveCiPreviewExecutionIdentity(observed), (error) => {
+      assert.equal(error.message, "CLOVER_READINESS_CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE");
+      assert.deepEqual(error.failedPredicates, ["GITHUB_SHA_MATCHES_MERGE", "WORKFLOW_SHA_MATCHES_MERGE"]); return true;
+    });
+    const sourceBinding = { head, tree, parent: prior, parentTree: priorTree, commitIds: [...CI_PREVIEW_FOURTH_PREFIX, head],
+      fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], fifthCommitPaths: null };
+    const fixture = syntheticCiProviderFixture({ fixture: observed, tree, workflowBytes, sourceBinding });
+    fixture.now = () => new Date("2026-09-10T22:06:18.000Z");
+    const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl,
+      now: () => new Date("2026-09-10T22:06:18.000Z") });
+    const accepted = deriveCiPreviewExecutionIdentity({ ...fixture.input, proof, now: fixture.now() });
+    assert.equal(accepted.headSha, head); assert.equal(accepted.eventMergeSha, eventMergeSha);
+    assert.equal(accepted.runnerMergeSha, runnerMergeSha); assert.equal(accepted.workflowSha, runnerMergeSha);
+    assert.equal(accepted.mergeRelationship, "synchronize-immediate-predecessor");
+    assert.equal(accepted.externalAuthenticationEstablished, false); assert.equal(accepted.releaseAuthority, false);
+    assert.equal(proof.records.length, 8);
+    assert.deepEqual(proof.records[3].projection.parents, [CI_PREVIEW_READINESS_BASE, prior]);
+    assert.equal(proof.records[3].projection.tree, priorTree);
+    // The actual historical checkout and workflow retain the old failure. No source bytes are rewritten.
+    const checkout = path.join(temporary, "historical-checkout");
+    execFileSync("git", ["clone", "--shared", "--no-checkout", "--quiet", repositoryRoot, checkout], { stdio: "pipe" });
+    execFileSync("git", ["switch", "--quiet", "--detach", head], { cwd: checkout, stdio: "pipe" });
+    const eventPath = path.join(temporary, "original-selected-event-fixture.json"); writeFileSync(eventPath, JSON.stringify(observed.event));
+    const bin = path.join(temporary, "bin"); mkdirSync(bin); symlinkSync(process.execPath, path.join(bin, "node"));
+    const guard = path.join(temporary, "deny-historical-acquisition.mjs");
+    writeFileSync(guard, 'globalThis.fetch = () => { throw new Error("HISTORICAL_REPLAY_MUST_NOT_ACQUIRE"); };\n');
+    const workflow = loadYaml(workflowBytes.toString("utf8"));
+    for (const [job, value] of Object.entries(workflow.jobs)) {
+      const step = value.steps.find((entry) => entry.id === "readiness-ci-identity-proof"); if (!step) continue;
+      const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+        cwd: checkout, env: { ...process.env, ...observed.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
+          RUNNER_TEMP: temporary, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(guard)}` },
+        encoding: "utf8", timeout: 20_000, maxBuffer: 128 * 1024
+      });
+      retainSyntheticCiDemonstration(`historical-f059-${job}`, { scenario: "historical-f059-actual-source-replay", job,
+        historicalSource: sourceBinding, historicalScriptSha256: sha256(oldScriptBytes), workflowSha256: sha256(workflowBytes),
+        selectedObservedInputs: { eventMergeSha, runnerMergeSha, runId: "34535718182", runAttempt: "1" },
+        oldPolicy: { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr },
+        proposedRelationship: { status: "proved-by-explicit-mocks-only", proof, identity: accepted },
+        currentCandidateSourceAcceptance: false, remoteRunResultUnchanged: "failure" });
+      assert.equal(result.error, undefined); assert.equal(result.signal, null); assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /CLOVER_READINESS_CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE/u);
+      assert.ok(result.stderr.includes(eventMergeSha) && result.stderr.includes(runnerMergeSha));
+      assert.doesNotMatch(result.stderr, /HISTORICAL_REPLAY_MUST_NOT_ACQUIRE/u);
+      assert.equal(existsSync(path.join(temporary, "clover-ci-provider-proof.json")), false);
+    }
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
 test("readiness CI provider acquisition rejects substituted or unavailable facts and never echoes provider errors", async () => {
@@ -4667,6 +4861,7 @@ test("readiness CI provider acquisition rejects substituted or unavailable facts
     ["RUN_ATTEMPT", (e) => { e.body.pull_requests[0].head.repo.id += 1; }],
     ["RUN_ATTEMPT", (e) => { e.body.pull_requests = []; }],
     ["HEAD_COMMIT", (e) => { e.body.parents = [{ sha: CI_PREVIEW_READINESS_BASE }]; }],
+    ["HEAD_COMMIT", (e) => { e.body.tree.sha = hex40("e"); }],
     ["MERGE_COMMIT", (e) => { e.body.parents.reverse(); }],
     ["MERGE_COMMIT", (e) => { e.body.tree.sha = hex40("e"); }],
     ["MERGE_COMMIT", (e) => { e.body.sha = hex40("e"); }],
@@ -4696,9 +4891,9 @@ test("readiness CI provider acquisition rejects substituted or unavailable facts
 
 test("readiness CI binds the actual event, exact stacked base/head, merge ref and run attempt without authority", () => {
   const fixture = readinessEventFixture("c".repeat(40));
-  const identity = deriveCiPreviewExecutionIdentity(fixture);
+  const identity = parseCiPreviewExecutionInputs(fixture);
   assert.equal(identity.baseSha, CI_PREVIEW_READINESS_BASE);
-  assert.notEqual(identity.headSha, identity.mergeSha);
+  assert.notEqual(identity.headSha, identity.runnerMergeSha);
   assert.equal(identity.artifactPrefix, `clover-ci-preview-readiness-${fixture.head}-123456789-1`);
   assert.equal(identity.nodeVersion, process.version);
   const changes = [
@@ -4732,7 +4927,7 @@ test("readiness CI binds the actual event, exact stacked base/head, merge ref an
   ];
   for (const change of changes) {
     const changed = structuredClone(fixture); change(changed);
-    assert.throws(() => deriveCiPreviewExecutionIdentity(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
   }
 });
 
@@ -4762,9 +4957,9 @@ test("readiness CI diagnostics identify fixed predicates without exposing suppli
     ["ENV_HEAD_SHA", (v) => { v.environment.CLOVER_TREE_HEAD = untrusted; }],
     ["ENV_EXACT_PR_HEAD", (v) => { v.environment.CLOVER_TREE_EXACT_PR_HEAD = untrusted; }],
     ["PAYLOAD_MERGE_SHA_FORMAT", (v) => { v.event.pull_request.merge_commit_sha = untrusted; }],
-    ["GITHUB_SHA_MATCHES_MERGE", (v) => { v.environment.GITHUB_SHA = untrusted; }],
+    ["GITHUB_SHA_FORMAT", (v) => { v.environment.GITHUB_SHA = untrusted; }],
     ["GITHUB_REF", (v) => { v.environment.GITHUB_REF = untrusted; }],
-    ["WORKFLOW_SHA_MATCHES_MERGE", (v) => { v.environment.GITHUB_WORKFLOW_SHA = untrusted; }],
+    ["WORKFLOW_SHA_MATCHES_RUNNER_MERGE", (v) => { v.environment.GITHUB_WORKFLOW_SHA = untrusted; }],
     ["GITHUB_WORKFLOW_REF", (v) => { v.environment.GITHUB_WORKFLOW_REF = untrusted; }],
     ["GITHUB_RUN_ID", (v) => { v.environment.GITHUB_RUN_ID = untrusted; }],
     ["GITHUB_RUN_ATTEMPT", (v) => { v.environment.GITHUB_RUN_ATTEMPT = untrusted; }],
@@ -4772,7 +4967,7 @@ test("readiness CI diagnostics identify fixed predicates without exposing suppli
   ];
   for (const [predicate, change] of cases) {
     const changed = structuredClone(fixture); change(changed);
-    assert.throws(() => deriveCiPreviewExecutionIdentity(changed), (error) => {
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), (error) => {
       assert.equal(error.message, `CLOVER_READINESS_CI_EVENT_REJECTED:${predicate}`);
       assert.equal(error.message.includes(untrusted), false);
       return true;
@@ -4780,7 +4975,7 @@ test("readiness CI diagnostics identify fixed predicates without exposing suppli
   }
   const multiple = structuredClone(fixture);
   multiple.event.action = untrusted; multiple.environment.GITHUB_RUN_ID = untrusted;
-  assert.throws(() => deriveCiPreviewExecutionIdentity(multiple), (error) => {
+  assert.throws(() => parseCiPreviewExecutionInputs(multiple), (error) => {
     assert.match(error.message, /CI_EVENT_REJECTED:EVENT_ACTION$/u);
     assert.deepEqual(error.failedPredicates, ["EVENT_ACTION", "GITHUB_RUN_ID"]);
     assert.equal(JSON.stringify(error.failedPredicates).includes(untrusted), false);
@@ -4789,27 +4984,27 @@ test("readiness CI diagnostics identify fixed predicates without exposing suppli
 });
 
 test("readiness CI retains unknown and conflicting merge/workflow rejection and downstream merge distinction", () => {
-  // Hypotheses only: the failed PR36 runner's original event/default identity values were not retained.
+  // Generic malformed-input negatives; earlier unlogged runs remain unknown and the f059 replay is separate.
   const fixture = readinessEventFixture("c".repeat(40));
   for (const merge of [undefined, null, "", "not-a-sha"]) {
     const changed = structuredClone(fixture); changed.event.pull_request.merge_commit_sha = merge;
-    assert.throws(() => deriveCiPreviewExecutionIdentity(changed), /CI_EVENT_REJECTED:PAYLOAD_MERGE_SHA_FORMAT$/u);
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), /CI_EVENT_REJECTED:PAYLOAD_MERGE_SHA_FORMAT$/u);
   }
   const sameHead = structuredClone(fixture);
   sameHead.event.pull_request.merge_commit_sha = sameHead.head;
   sameHead.environment.GITHUB_SHA = sameHead.head; sameHead.environment.GITHUB_WORKFLOW_SHA = sameHead.head;
-  assert.throws(() => deriveCiPreviewExecutionIdentity(sameHead), /CI_EVENT_REJECTED:MERGE_DISTINCT_FROM_HEAD$/u);
+  assert.throws(() => parseCiPreviewExecutionInputs(sameHead), /CI_EVENT_REJECTED:MERGE_DISTINCT_FROM_HEAD$/u);
   const staleMerge = structuredClone(fixture); staleMerge.event.pull_request.merge_commit_sha = "d".repeat(40);
-  assert.throws(() => deriveCiPreviewExecutionIdentity(staleMerge), /CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE$/u);
+  assert.throws(() => parseCiPreviewExecutionInputs(staleMerge), /CI_EVENT_REJECTED:DISTINCT_MERGE_REQUIRES_SYNCHRONIZE$/u);
   const alternateWorkflow = structuredClone(fixture); alternateWorkflow.environment.GITHUB_WORKFLOW_SHA = alternateWorkflow.head;
-  assert.throws(() => deriveCiPreviewExecutionIdentity(alternateWorkflow), /CI_EVENT_REJECTED:WORKFLOW_SHA_MATCHES_MERGE$/u);
+  assert.throws(() => parseCiPreviewExecutionInputs(alternateWorkflow), /CI_EVENT_REJECTED:WORKFLOW_SHA_MATCHES_RUNNER_MERGE$/u);
   const missingWorkflow = structuredClone(fixture); delete missingWorkflow.environment.GITHUB_WORKFLOW_REF;
-  assert.throws(() => deriveCiPreviewExecutionIdentity(missingWorkflow), /CI_EVENT_REJECTED:GITHUB_WORKFLOW_REF$/u);
+  assert.throws(() => parseCiPreviewExecutionInputs(missingWorkflow), /CI_EVENT_REJECTED:GITHUB_WORKFLOW_REF$/u);
   // Dynamic run IDs/attempts and supported actions are allowed input, not evidence of execution approval.
   for (const action of ["opened", "synchronize", "reopened"]) {
     const changed = structuredClone(fixture); changed.event.action = action;
     changed.environment.GITHUB_RUN_ID = "987654321"; changed.environment.GITHUB_RUN_ATTEMPT = "2";
-    const result = deriveCiPreviewExecutionIdentity(changed);
+    const result = parseCiPreviewExecutionInputs(changed);
     assert.equal(Object.isFrozen(result), true);
     assert.equal(result.runId, "987654321"); assert.equal(result.runAttempt, "2");
     assert.equal(result.artifactPrefix, `clover-ci-preview-readiness-${changed.head}-987654321-2`);
@@ -4821,9 +5016,9 @@ test("readiness CI snapshot keeps original public operands and classifies unsafe
   const fixture = readinessEventFixture(hex40("c"));
   fixture.environment.GITHUB_SHA = hex40("d");
   const snapshot = captureCiPreviewIdentitySnapshot(fixture);
-  assert.equal(snapshot.schemaVersion, "clover-ci-identity-observation-v1");
+  assert.equal(snapshot.schemaVersion, "clover-ci-identity-observation-v2");
   assert.equal(snapshot.origin, "runner-input-before-provider-acquisition");
-  assert.deepEqual(snapshot.fields.runnerSha, { present: true, type: "string", format: "valid", value: hex40("d") });
+  assert.deepEqual(snapshot.fields.runnerMergeSha, { present: true, type: "string", format: "valid", value: hex40("d") });
   assert.deepEqual(snapshot.fields.eventMergeSha, { present: true, type: "string", format: "valid", value: hex40("a") });
   assert.equal(snapshot.fields.checkoutHead.value, fixture.head);
   assert.equal(snapshot.fields.eventHeadSha.value, fixture.head);
@@ -4834,7 +5029,7 @@ test("readiness CI snapshot keeps original public operands and classifies unsafe
   assert.equal(snapshot.fields.runAttempt.value, fixture.environment.GITHUB_RUN_ATTEMPT);
   // Capturing a record must neither validate an inequality nor rewrite its original event operand.
   assert.equal(fixture.event.pull_request.merge_commit_sha, hex40("a"));
-  assert.throws(() => deriveCiPreviewExecutionIdentity(fixture), /CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE$/u);
+  assert.throws(() => parseCiPreviewExecutionInputs(fixture), /CI_EVENT_REJECTED:DISTINCT_MERGE_REQUIRES_SYNCHRONIZE$/u);
   const canary = "synthetic-secret-canary\n::error::DO_NOT_ECHO";
   for (const [value, expected] of [
     [undefined, { present: false, type: "missing", format: "absent", value: null }],
@@ -4862,7 +5057,7 @@ test("readiness CI snapshot keeps original public operands and classifies unsafe
   }
 });
 
-test("readiness source permits only the exact authorized fourth tail and rejects fifth or substituted histories", () => {
+test("readiness source preserves fourth histories and permits only the anchored fifth while rejecting sixth or substituted histories", () => {
   const prefix = [
     "7c1f817e973c260266e937ff3328e21b715db7c6",
     "337816e15d29f66a2ac0011b6413d688e752a01d",
@@ -4891,6 +5086,16 @@ test("readiness source permits only the exact authorized fourth tail and rejects
     const changed = structuredClone(fourth); change(changed);
     assert.equal(isAllowedCiPreviewReadinessLineage(changed), false);
   }
+  const fifth = syntheticCiSourceBinding();
+  assert.equal(isAllowedCiPreviewReadinessLineage(fifth), true);
+  for (const change of [
+    (v) => { v.parent = CI_PREVIEW_FOURTH_PARENT; }, (v) => { v.parentTree = hex40("e"); },
+    (v) => { v.commitIds[3] = hex40("e"); }, (v) => { v.fifthCommitPaths = null; },
+    (v) => { v.fifthCommitPaths = []; }, (v) => { v.fifthCommitPaths.reverse(); },
+    (v) => { v.fifthCommitPaths.push(v.fifthCommitPaths[0]); },
+    (v) => { v.fifthCommitPaths.push("apps/clover-launch-studio/package-lock.json"); },
+    (v) => { v.commitIds.push(hex40("e")); v.parent = v.head; v.head = hex40("e"); }
+  ]) { const changed = structuredClone(fifth); change(changed); assert.equal(isAllowedCiPreviewReadinessLineage(changed), false); }
 });
 
 test("readiness CI actual parsed workflow preserves complete sanitized failure records through the CLI offline", () => {
@@ -4920,9 +5125,8 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
     ].join("\n"));
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
     const cases = [
-      { name: "distinct-valid-operands", change: (v) => { v.environment.GITHUB_SHA = hex40("f"); },
-        predicate: "GITHUB_SHA_MATCHES_MERGE", eventFormat: "valid", calls: 0 },
-      { name: "acquisition-failure", change: () => {}, predicate: null, eventFormat: "valid", calls: 1 },
+      { name: "distinct-valid-operands", change: (v) => { v.environment.GITHUB_SHA = hex40("f"); v.environment.GITHUB_WORKFLOW_SHA = hex40("f"); },
+        predicate: "DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", eventFormat: "valid", calls: 0 },
       { name: "absent-event-merge", change: (v) => { delete v.event.pull_request.merge_commit_sha; },
         predicate: "PAYLOAD_MERGE_SHA_FORMAT", eventFormat: "absent", calls: 0 },
       { name: "null-event-merge", change: (v) => { v.event.pull_request.merge_commit_sha = null; },
@@ -4930,15 +5134,15 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
       { name: "malformed-event-merge", change: (v) => { v.event.pull_request.merge_commit_sha = canary; },
         predicate: "PAYLOAD_MERGE_SHA_FORMAT", eventFormat: "invalid", calls: 0 },
       { name: "malformed-runner-sha", change: (v) => { v.environment.GITHUB_SHA = canary; },
-        predicate: "GITHUB_SHA_MATCHES_MERGE", eventFormat: "valid", runnerFormat: "invalid", calls: 0 },
+        predicate: "GITHUB_SHA_FORMAT", eventFormat: "valid", runnerFormat: "invalid", calls: 0 },
       { name: "missing-run-id", change: (v) => { delete v.environment.GITHUB_RUN_ID; },
         predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "absent", calls: 0 },
       { name: "malformed-workflow-ref", change: (v) => { v.environment.GITHUB_WORKFLOW_REF = canary; },
         predicate: "GITHUB_WORKFLOW_REF", eventFormat: "valid", field: "workflowRef", format: "invalid", calls: 0 },
       { name: "adjacent-identity-failures", change: (v) => { v.environment.GITHUB_SHA = hex40("f");
-        v.environment.GITHUB_WORKFLOW_REF = canary; delete v.environment.GITHUB_RUN_ID; },
-        predicate: "GITHUB_SHA_MATCHES_MERGE", eventFormat: "valid", calls: 0,
-        failedPredicates: ["GITHUB_SHA_MATCHES_MERGE", "GITHUB_WORKFLOW_REF", "GITHUB_RUN_ID"] }
+        v.environment.GITHUB_WORKFLOW_SHA = hex40("f"); v.environment.GITHUB_WORKFLOW_REF = canary; delete v.environment.GITHUB_RUN_ID; },
+        predicate: "DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", eventFormat: "valid", calls: 0,
+        failedPredicates: ["DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", "GITHUB_WORKFLOW_REF", "GITHUB_RUN_ID"] }
     ];
     for (const { job, step } of steps) {
       assert.match(step.if, /ci-preview-readiness/u);
@@ -4974,15 +5178,15 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
         assert.equal(combined.includes("DO_NOT_ECHO"), false);
         const observations = result.stderr.split("\n").flatMap((line) => {
           const start = line.indexOf("{"); if (start < 0) return [];
-          try { const record = JSON.parse(line.slice(start)); return record.schemaVersion === "clover-ci-identity-observation-v1" ? [record] : []; }
+          try { const record = JSON.parse(line.slice(start)); return record.schemaVersion === "clover-ci-identity-observation-v2" ? [record] : []; }
           catch { return []; }
         });
         assert.equal(observations.length, 1, `${job}/${scenario.name} must preserve the actual CLI observation on failure`);
         const original = observations[0];
         assert.equal(original.origin, "runner-input-before-provider-acquisition");
         assert.equal(original.fields.checkoutHead.value, head);
-        assert.equal(original.fields.runnerSha.format, scenario.runnerFormat ?? "valid");
-        assert.equal(original.fields.runnerSha.value, scenario.runnerFormat === "invalid" ? null : fixture.environment.GITHUB_SHA);
+        assert.equal(original.fields.runnerMergeSha.format, scenario.runnerFormat ?? "valid");
+        assert.equal(original.fields.runnerMergeSha.value, scenario.runnerFormat === "invalid" ? null : fixture.environment.GITHUB_SHA);
         assert.equal(original.fields.eventMergeSha.format, scenario.eventFormat);
         if (scenario.eventFormat === "valid") assert.equal(original.fields.eventMergeSha.value, fixture.event.pull_request.merge_commit_sha);
         else assert.equal(original.fields.eventMergeSha.value, null);
@@ -4994,7 +5198,7 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
         else assert.match(result.stderr, /CLOVER_READINESS_CI_PROOF_REJECTED:RUN_ATTEMPT_ACQUISITION/u);
         if (scenario.failedPredicates) {
           const failures = result.stderr.split("\n").flatMap((line) => {
-            try { const record = JSON.parse(line); return record.schemaVersion === "clover-ci-identity-failure-v1" ? [record] : []; }
+            try { const record = JSON.parse(line); return record.schemaVersion === "clover-ci-identity-failure-v2" ? [record] : []; }
             catch { return []; }
           });
           assert.equal(failures.length, 1);
@@ -5007,22 +5211,27 @@ test("readiness CI actual parsed workflow preserves complete sanitized failure r
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
-test("readiness CI actual parsed workflow consumes a synthetic fourth candidate proof offline in both lanes", () => {
+test("readiness CI actual parsed workflow consumes a synthetic fifth candidate proof offline in both lanes", async () => {
   const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-synthetic-fourth-ci-")));
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-synthetic-fifth-ci-")));
   const checkout = path.join(temporary, "repository");
   const run = (args) => execFileSync("git", args, { cwd: checkout, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   try {
     // Disposable offline fixture: shared immutable object reads avoid copying the entire historical object store.
     execFileSync("git", ["clone", "--shared", "--no-checkout", "--quiet", repositoryRoot, checkout], { stdio: "pipe" });
-    run(["switch", "--quiet", "--detach", CI_PREVIEW_FOURTH_PARENT]);
+    run(["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, CI_PREVIEW_FIFTH_PARENT]);
     for (const entry of CI_PREVIEW_FOURTH_PATHS) writeFileSync(path.join(checkout, entry), readFileSync(path.join(repositoryRoot, entry)));
     run(["add", "--", ...CI_PREVIEW_FOURTH_PATHS]);
-    run(["-c", "user.name=Synthetic fourth readiness fixture", "-c", "user.email=synthetic@example.invalid",
-      "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Synthetic fourth identity-proof fixture"]);
+    run(["-c", "user.name=Synthetic fifth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic fifth identity-proof fixture"]);
     const head = run(["rev-parse", "HEAD"]), tree = run(["rev-parse", "HEAD^{tree}"]);
-    assert.equal(run(["show", "-s", "--format=%P", "HEAD"]), CI_PREVIEW_FOURTH_PARENT);
+    assert.equal(run(["show", "-s", "--format=%P", "HEAD"]), CI_PREVIEW_FIFTH_PARENT);
     assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
+    const localProof = deriveCiPreviewReadinessSource({ repositoryRoot: checkout,
+      environment: { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT } });
+    assert.equal(localProof.localCommitCount, 5); assert.equal(localProof.parent, CI_PREVIEW_FIFTH_PARENT);
+    assert.equal(localProof.parentTree, CI_PREVIEW_FIFTH_PARENT_TREE); assert.equal(localProof.ciExecution, null);
+    assert.equal(localProof.releaseAuthority, false);
     const workflowBytes = readFileSync(path.join(checkout, ATTESTATION_REPAIR_PATHS[0]));
     const workflow = loadYaml(workflowBytes.toString("utf8"));
     const steps = Object.entries(workflow.jobs).flatMap(([job, value]) => value.steps
@@ -5044,21 +5253,29 @@ test("readiness CI actual parsed workflow consumes a synthetic fourth candidate 
           assert.ok(end >= start + retainedEnd.length);
         } else {
           assert.ok(step.run.includes("const readinessSourceRoot ="));
-          start = step.run.indexOf("const expectedBytes = execFileSync", context);
-          end = step.run.indexOf("const rootStat = fs.lstatSync(readinessSourceRoot);", start); result = "expected";
+          start = context;
+          end = step.run.indexOf("const dependencySuccessorContext =", start); result = "readinessSourceBindings[0]";
         }
         assert.ok(start >= 0 && end > start);
         const code = step.run.slice(start, end);
         assert.match(code, /stdio: \['ignore', 'pipe', 'inherit'\]/u);
-        return { id: `${job}-${index}`, name: step.name, code, result };
+        const projectsStart = step.run.indexOf("const exactProjects =");
+        const projectCode = projectsStart < 0 ? "" : step.run.slice(projectsStart, step.run.indexOf("const exactViews =", projectsStart));
+        return { id: `${job}-${index}`, name: step.name, code, result, projectCode };
       }));
     assert.equal(wrappers.length, 4);
-    const provider = syntheticCiProviderFixture({ fixture: readinessEventFixture(head), tree, workflowBytes });
-    const replies = path.join(temporary, "synthetic-provider-replies.json");
+    let lastEnvironment;
+    for (const relationship of ["equal", "synchronize-immediate-predecessor"]) {
+    const scenarioRoot = path.join(temporary, relationship); mkdirSync(scenarioRoot);
+    const eventFixture = readinessEventFixture(head);
+    if (relationship !== "equal") { eventFixture.event.action = "synchronize"; eventFixture.event.pull_request.merge_commit_sha = hex40("f"); }
+    const provider = syntheticCiProviderFixture({ fixture: eventFixture, tree, workflowBytes });
+    const expectedRequests = relationship === "equal" ? 7 : 8;
+    const replies = path.join(scenarioRoot, "synthetic-provider-replies.json");
     writeFileSync(replies, JSON.stringify(provider.entries));
-    const eventPath = path.join(temporary, "synthetic-event.json"); writeFileSync(eventPath, JSON.stringify(provider.input.event));
-    const bin = path.join(temporary, "bin"); mkdirSync(bin); symlinkSync(process.execPath, path.join(bin, "node"));
-    const preload = path.join(temporary, "synthetic-seven-get-provider.mjs");
+    const eventPath = path.join(scenarioRoot, "synthetic-event.json"); writeFileSync(eventPath, JSON.stringify(provider.input.event));
+    const bin = path.join(scenarioRoot, "bin"); mkdirSync(bin); symlinkSync(process.execPath, path.join(bin, "node"));
+    const preload = path.join(scenarioRoot, "synthetic-seven-get-provider.mjs");
     writeFileSync(preload, [
       'import fs from "node:fs";',
       'import http from "node:http"; import https from "node:https";',
@@ -5072,14 +5289,14 @@ test("readiness CI actual parsed workflow consumes a synthetic fourth candidate 
       'const entries = JSON.parse(fs.readFileSync(process.env.SYNTHETIC_PROVIDER_REPLIES, "utf8"));',
       'globalThis.fetch = async (url, options) => {',
       '  const entry = entries.find((item) => item.url === url);',
-      '  if (!entry || options.method !== "GET" || options.redirect !== "error" || Object.keys(options.headers).some((key) => key.toLowerCase() === "authorization")) throw new Error("SYNTHETIC_UNEXPECTED_PROVIDER_REQUEST");',
-      '  fs.appendFileSync(process.env.SYNTHETIC_FETCH_TRACE, JSON.stringify({ url, method: options.method }) + "\\n");',
+      '  if (!entry || options.method !== "GET" || options.redirect !== "error" || options.credentials !== "omit" || !(options.signal instanceof AbortSignal) || JSON.stringify(options.headers) !== JSON.stringify({Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10"})) throw new Error("SYNTHETIC_UNEXPECTED_PROVIDER_REQUEST");',
+      '  fs.appendFileSync(process.env.SYNTHETIC_FETCH_TRACE, JSON.stringify({ url, method: options.method, credentials: options.credentials, redirect: options.redirect, headers: options.headers }) + "\\n");',
+      '  if (entry.kind === process.env.SYNTHETIC_PROVIDER_FAIL_KIND) throw new Error("synthetic-secret-canary\\n::error::DO_NOT_ECHO");',
       '  return { status: 200, redirected: false, url, body: (async function* () { yield Buffer.from(JSON.stringify(entry.body)); })() };',
       '};'
     ].join("\n"));
-    let lastEnvironment;
     for (const { job, step } of steps) {
-      const caseRoot = path.join(temporary, job); mkdirSync(caseRoot);
+      const caseRoot = path.join(scenarioRoot, job); mkdirSync(caseRoot);
       const trace = path.join(caseRoot, "synthetic-fetch.trace");
       const environment = { ...process.env, ...provider.input.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
         RUNNER_TEMP: caseRoot, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
@@ -5092,39 +5309,108 @@ test("readiness CI actual parsed workflow consumes a synthetic fourth candidate 
         env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
       });
       const requests = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
-      retainSyntheticCiDemonstration(`${job}-proof-success`, { job, scenario: "proof-success", startedAt,
+      retainSyntheticCiDemonstration(`${relationship}-${job}-proof-success`, { job, scenario: "proof-success", startedAt,
         endedAt: new Date().toISOString(), status: result.status, signal: result.signal,
         stdout: result.stdout, stderr: result.stderr, syntheticRequests: requests, command: step.run,
-        commandSha256: sha256(step.run), syntheticCandidate: { head, tree, parent: CI_PREVIEW_FOURTH_PARENT },
+        commandSha256: sha256(step.run), syntheticCandidate: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT },
         sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(checkout, entry)))])) });
       assert.equal(result.error, undefined); assert.equal(result.signal, null);
       assert.equal(result.status, 0, `${job}: ${result.stderr}`);
       assert.deepEqual(requests.map(({ url }) => url), provider.entries.map(({ url }) => url));
       const resultRecord = JSON.parse(result.stdout.trim());
-      assert.equal(resultRecord.schemaVersion, "clover-ci-identity-proof-result-v1");
+      assert.equal(resultRecord.schemaVersion, "clover-ci-identity-proof-result-v2");
       assert.equal(resultRecord.head, head); assert.equal(resultRecord.tree, tree);
       assert.equal(resultRecord.releaseAuthority, false); assert.equal(resultRecord.externalAuthenticationEstablished, false);
+      for (const failKind of relationship === "equal" ? ["RUN_ATTEMPT"] : ["RUN_ATTEMPT", "EVENT_MERGE_COMMIT"]) {
+        const failureRoot = path.join(caseRoot, failKind); mkdirSync(failureRoot);
+        const failureTrace = path.join(failureRoot, "calls.jsonl");
+        const failed = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+          cwd: checkout, env: { ...environment, RUNNER_TEMP: failureRoot, SYNTHETIC_FETCH_TRACE: failureTrace,
+            SYNTHETIC_PROVIDER_FAIL_KIND: failKind }, encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
+        });
+        retainSyntheticCiDemonstration(`${relationship}-${job}-${failKind}-acquisition-failure`, {
+          scenario: "actual-workflow-acquisition-failure", relationship, job, failKind, status: failed.status,
+          signal: failed.signal, stdout: failed.stdout, stderr: failed.stderr, workflowSha256: sha256(workflowBytes),
+          command: step.run, syntheticCandidate: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT }
+        });
+        assert.equal(failed.error, undefined); assert.equal(failed.signal, null); assert.notEqual(failed.status, 0);
+        assert.ok(failed.stderr.includes(`CLOVER_READINESS_CI_PROOF_REJECTED:${failKind}_ACQUISITION`));
+        assert.ok(failed.stderr.includes(eventFixture.event.pull_request.merge_commit_sha));
+        assert.ok(failed.stderr.includes(eventFixture.environment.GITHUB_SHA));
+        assert.doesNotMatch(`${failed.stdout}\n${failed.stderr}`, /synthetic-secret-canary|DO_NOT_ECHO/u);
+        assert.equal(readFileSync(failureTrace, "utf8").trim().split("\n").length, failKind === "RUN_ATTEMPT" ? 1 : 4);
+        assert.equal(existsSync(path.join(failureRoot, "clover-ci-provider-proof.json")), false);
+      }
       const consumed = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
         cwd: checkout, env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 256 * 1024
       });
       assert.equal(consumed.error, undefined); assert.equal(consumed.status, 0, consumed.stderr);
       const proof = JSON.parse(consumed.stdout);
-      assert.deepEqual(proof.commitIds, [...CI_PREVIEW_FOURTH_PREFIX, head]);
-      assert.equal(proof.localCommitCount, 4); assert.deepEqual(proof.fourthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]);
-      assert.equal(proof.parent, CI_PREVIEW_FOURTH_PARENT); assert.equal(proof.sourceProofSelfHash, resultRecord.sourceProofSelfHash);
-      assert.equal(proof.ciExecution.providerProof.records.length, 7);
+      assert.equal(proof.schemaVersion, "clover-ci-preview-readiness-source-v2");
+      assert.equal(proof.ciExecution.mergeRelationship, relationship);
+      assert.equal(proof.ciExecution.eventMergeSha, eventFixture.event.pull_request.merge_commit_sha);
+      assert.equal(proof.ciExecution.runnerMergeSha, eventFixture.environment.GITHUB_SHA);
+      assert.equal(proof.ciExecution.externalAuthenticationEstablished, false);
+      const snapshot = result.stderr.split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((entry) => entry.schemaVersion === "clover-ci-identity-observation-v2");
+      assert.equal(snapshot.fields.eventMergeSha.value, proof.ciExecution.eventMergeSha);
+      assert.equal(snapshot.fields.runnerMergeSha.value, proof.ciExecution.runnerMergeSha);
+      assert.deepEqual(snapshot, proof.ciExecution.originalSnapshot);
+      assert.deepEqual(proof.commitIds, [...CI_PREVIEW_FIFTH_PREFIX, head]);
+      assert.equal(proof.localCommitCount, 5); assert.equal(proof.parentTree, CI_PREVIEW_FIFTH_PARENT_TREE); assert.deepEqual(proof.fifthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]); assert.deepEqual(proof.fourthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]);
+      assert.equal(proof.parent, CI_PREVIEW_FIFTH_PARENT); assert.equal(proof.sourceProofSelfHash, resultRecord.sourceProofSelfHash);
+      assert.equal(proof.ciExecution.providerProof.records.length, expectedRequests);
       assert.equal(proof.releaseAuthority, false); assert.equal(proof.providerAcceptance, false);
-      assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, 7, "cached source validation must not reacquire provider facts");
+      assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, expectedRequests, "cached source validation must not reacquire provider facts");
+      if (job === "validate") {
+        const syntheticBuild = buildWith({ commit: head, tree, parent: CI_PREVIEW_FIFTH_PARENT, runtimeDeploymentKey: `clover-${head.slice(0, 24)}`,
+          changedPathCount: proof.fullMainPathCount, pathListSha256: proof.fullMainPathListSha256,
+          sourceManifestSha256: proof.sourceManifestSha256 });
+        const outputRoot = path.join(caseRoot, "synthetic-sealed-output");
+        writeRawBuildOutput(outputRoot, caseRoot, { sourceProvenance: syntheticBuild });
+        const sealed = createDeploymentAttestation({ outputRoot, repositoryRoot: caseRoot,
+          evidenceDirectory: path.join(caseRoot, "synthetic-sealed-evidence"),
+          frozenOutputRoot: path.join(caseRoot, "synthetic-frozen-workspace"), sourceProvenance: syntheticBuild });
+        const verifiedEvidence = { sourceProvenance: syntheticBuild, payloadManifest: sealed.outputManifest,
+          attestation: sealed.attestation, deploymentInputManifest: sealed.deploymentInputManifest, archiveManifest: sealed.archiveManifest };
+        const downstream = await readinessPreviewFixture(verifiedEvidence, { sourceProof: localProof, ciSourceProof: proof });
+        let downstreamResult;
+        if (process.version === "v24.16.0") {
+          downstreamResult = validateCiPreviewExecutionContract(downstream);
+          assert.equal(downstreamResult.suppliedRecordsConsistent, true);
+          assert.equal(downstreamResult.externalAuthenticationEstablished, false);
+          assert.equal(downstreamResult.releaseAuthority, false);
+          assert.equal(downstreamResult.deploymentAllowanceGranted, false);
+        } else {
+          assert.throws(() => validateCiPreviewExecutionContract(downstream), /CI_EXECUTION/u);
+          downstreamResult = { expectedRejection: "Node22 proof does not substitute for the required Node24 sealed-input producer" };
+        }
+        retainSyntheticCiDemonstration(`${relationship}-actual-source-to-downstream`, {
+          scenario: "actual-cli-cache-proof-to-downstream-contract", sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(checkout, entry)))])),
+          sourceProofSelfHash: proof.sourceProofSelfHash, sourceIdentity: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT },
+          ciExecution: proof.ciExecution, independentReadbackFixture: downstream.contract.ci.identityReadback,
+          independentReadbackIsSynthetic: true, outcome: downstreamResult
+        });
+      }
       const provenance = { commit: proof.head, tree: proof.tree, nodeVersion: process.version,
         changedPathCount: proof.fullMainPathCount, pathListSha256: proof.fullMainPathListSha256,
         sourceManifestSha256: proof.sourceManifestSha256 };
       writeFileSync(path.join(caseRoot, "clover-tree-browser-source-provenance.json"), JSON.stringify(provenance));
+      const browserRoot = path.join(caseRoot, "browser-artifacts");
+      const browserProofRoot = path.join(browserRoot, "clover-ci-preview-readiness-source");
+      mkdirSync(browserProofRoot, { recursive: true, mode: 0o755 });
+      const documents = ["desktop-chromium", "mobile-chromium"].map((project) => ({ project, document: {
+        source: { readiness: { sourceProofSelfHash: proof.sourceProofSelfHash, ciExecution: proof.ciExecution } }
+      } }));
+      for (const { project } of documents) writeFileSync(path.join(browserProofRoot, `${project}.json`), consumed.stdout, { mode: 0o644 });
       const executeWrapper = (wrapper, scenario) => {
         const program = [
           'const cp = require("node:child_process"), fs = require("node:fs"), path = require("node:path");',
           'const { execFileSync } = cp;',
           `const repositoryRoot = ${JSON.stringify(checkout)}, p = ${JSON.stringify(provenance)};`,
           'const requireCondition = (condition, message) => { if (!condition) throw new Error(message); };',
+          'const exactJson = (actual, expected, message) => requireCondition(JSON.stringify(actual) === JSON.stringify(expected), message);',
+          `const root = ${JSON.stringify(browserRoot)}, documents = ${JSON.stringify(documents)};`,
+          wrapper.projectCode,
           wrapper.code,
           `process.stdout.write(JSON.stringify({sourceProofSelfHash: ${wrapper.result}.sourceProofSelfHash, ciExecution: ${wrapper.result}.ciExecution}));`
         ].join("\n");
@@ -5132,14 +5418,14 @@ test("readiness CI actual parsed workflow consumes a synthetic fourth candidate 
         const observed = spawnSync(process.execPath, ["-e", program], {
           cwd: checkout, env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 256 * 1024
         });
-        retainSyntheticCiDemonstration(`${job}-${wrapper.id}-${scenario}`, {
+        retainSyntheticCiDemonstration(`${relationship}-${job}-${wrapper.id}-${scenario}`, {
           job, scenario, wrapper: wrapper.name, startedAt: started, endedAt: new Date().toISOString(),
           status: observed.status, signal: observed.signal, stdout: observed.stdout, stderr: observed.stderr,
           exactWorkflowSnippet: wrapper.code, snippetSha256: sha256(wrapper.code),
-          workflowSha256: sha256(workflowBytes), syntheticCandidate: { head, tree, parent: CI_PREVIEW_FOURTH_PARENT }
+          workflowSha256: sha256(workflowBytes), syntheticCandidate: { head, tree, parent: CI_PREVIEW_FIFTH_PARENT }
         });
         assert.equal(observed.error, undefined); assert.equal(observed.signal, null);
-        assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, 7, "embedded source wrappers must reuse the frozen provider cache");
+        assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, expectedRequests, "embedded source wrappers must reuse the frozen provider cache");
         return observed;
       };
       for (const wrapper of wrappers) {
@@ -5149,13 +5435,21 @@ test("readiness CI actual parsed workflow consumes a synthetic fourth candidate 
       }
       const retainedPath = path.join(caseRoot, "clover-ci-preview-readiness-source.json");
       assert.equal(readFileSync(retainedPath, "utf8"), consumed.stdout);
+      const browserWrapper = wrappers.find((entry) => entry.projectCode);
+      const browserProofPath = path.join(browserProofRoot, "desktop-chromium.json");
+      writeFileSync(browserProofPath, `${consumed.stdout} `);
+      assert.notEqual(executeWrapper(browserWrapper, "browser-proof-bytes-rejected").status, 0);
+      writeFileSync(browserProofPath, consumed.stdout);
+      documents[0].document.source.readiness.ciExecution = { ...proof.ciExecution, eventMergeSha: hex40("e") };
+      assert.notEqual(executeWrapper(browserWrapper, "browser-document-identity-rejected").status, 0);
+      documents[0].document.source.readiness.ciExecution = proof.ciExecution;
       const originalEventBytes = readFileSync(eventPath);
-      const changedEvent = structuredClone(provider.input.event); changedEvent.pull_request.merge_commit_sha = "f".repeat(40);
+      const changedEvent = structuredClone(provider.input.event); changedEvent.pull_request.merge_commit_sha = "e".repeat(40);
       writeFileSync(eventPath, JSON.stringify(changedEvent));
       for (const wrapper of wrappers) {
         const observed = executeWrapper(wrapper, "changed-event-rejected");
         assert.notEqual(observed.status, 0);
-        assert.match(observed.stderr, /CLOVER_READINESS_CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE/u);
+        assert.match(observed.stderr, /CLOVER_READINESS_CI_(?:EVENT|PROOF)_REJECTED/u);
       }
       writeFileSync(eventPath, originalEventBytes);
       const cachePath = path.join(caseRoot, "clover-ci-provider-proof.json"), cacheBytes = readFileSync(cachePath);
@@ -5166,25 +5460,31 @@ test("readiness CI actual parsed workflow consumes a synthetic fourth candidate 
         assert.notEqual(observed.status, 0); assert.match(observed.stderr, /CLOVER_READINESS_CI_PROOF_REJECTED/u);
       }
       writeFileSync(cachePath, cacheBytes);
+      const snapshotCache = JSON.parse(cacheBytes);
+      snapshotCache.originalInputs.originalSnapshot.fields.eventMergeSha.value = hex40("e");
+      writeFileSync(cachePath, JSON.stringify(snapshotCache));
+      assert.notEqual(executeWrapper(browserWrapper, "changed-cached-original-snapshot-rejected").status, 0);
+      writeFileSync(cachePath, cacheBytes);
       assert.equal(readFileSync(retainedPath, "utf8"), consumed.stdout, "failed wrappers must preserve the completed retained proof");
     }
+    }
     assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
-    const fifthPath = path.join(checkout, ATTESTATION_REPAIR_PATHS[1]);
-    writeFileSync(fifthPath, `${readFileSync(fifthPath, "utf8")}\n// Disposable fifth-tail rejection fixture.\n`);
+    const sixthPath = path.join(checkout, ATTESTATION_REPAIR_PATHS[1]);
+    writeFileSync(sixthPath, `${readFileSync(sixthPath, "utf8")}\n// Disposable sixth-tail rejection fixture.\n`);
     run(["add", "--", ATTESTATION_REPAIR_PATHS[1]]);
-    run(["-c", "user.name=Synthetic fourth readiness fixture", "-c", "user.email=synthetic@example.invalid",
-      "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Synthetic fifth-tail rejection fixture"]);
-    const fifthHead = run(["rev-parse", "HEAD"]);
-    const fifth = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
-      cwd: checkout, env: { ...lastEnvironment, CLOVER_TREE_HEAD: fifthHead, CLOVER_TREE_EXACT_PR_HEAD: fifthHead },
+    run(["-c", "user.name=Synthetic fifth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic sixth-tail rejection fixture"]);
+    const sixthHead = run(["rev-parse", "HEAD"]);
+    const sixth = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
+      cwd: checkout, env: { ...lastEnvironment, CLOVER_TREE_HEAD: sixthHead, CLOVER_TREE_EXACT_PR_HEAD: sixthHead },
       encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
     });
-    retainSyntheticCiDemonstration("actual-fifth-tail-rejected", { scenario: "actual-fifth-tail-rejected",
-      syntheticCandidate: { head: fifthHead, parent: head }, status: fifth.status, signal: fifth.signal,
-      stdout: fifth.stdout, stderr: fifth.stderr });
-    assert.equal(fifth.error, undefined); assert.equal(fifth.signal, null); assert.notEqual(fifth.status, 0);
-    assert.match(fifth.stderr, /CLOVER_READINESS_DEPTH_REJECTED/u);
-    assert.equal(readFileSync(lastEnvironment.SYNTHETIC_FETCH_TRACE, "utf8").trim().split("\n").length, 7);
+    retainSyntheticCiDemonstration("actual-sixth-tail-rejected", { scenario: "actual-sixth-tail-rejected",
+      syntheticCandidate: { head: sixthHead, parent: head }, status: sixth.status, signal: sixth.signal,
+      stdout: sixth.stdout, stderr: sixth.stderr });
+    assert.equal(sixth.error, undefined); assert.equal(sixth.signal, null); assert.notEqual(sixth.status, 0);
+    assert.match(sixth.stderr, /CLOVER_READINESS_DEPTH_REJECTED/u);
+    assert.equal(readFileSync(lastEnvironment.SYNTHETIC_FETCH_TRACE, "utf8").trim().split("\n").length, 8);
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
@@ -5228,7 +5528,7 @@ test("readiness source preserves frozen base, four-file scope, linear budget, lo
     // Historical generic LOCAL histories do not inherit the newly authorized fourth-tail CI proof path.
     assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED/u);
     ci.event.pull_request.base.sha = "d".repeat(40); writeFileSync(eventPath, JSON.stringify(ci.event));
-    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CI_EVENT_REJECTED/u);
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED:SOURCE_FIFTH_LINEAGE/u);
     for (const flag of ["assume-unchanged", "skip-worktree"]) {
       run(["update-index", `--${flag}`, "--", sourcePath]); assert.throws(proof, /HIDDEN_INDEX_STATE_REJECTED/u);
       run(["update-index", `--no-${flag}`, "--", sourcePath]);
@@ -5245,7 +5545,7 @@ test("readiness source preserves frozen base, four-file scope, linear budget, lo
       run(["reset", "--hard", clean]);
     }
     run(["commit", "--allow-empty", "--quiet", "-m", "Synthetic empty tail"]); assert.throws(proof, /PATH_REJECTED/u); run(["reset", "--hard", clean]);
-    for (let count = 2; count <= 4; count += 1) {
+    for (let count = 2; count <= 5; count += 1) {
       writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic tail ${count}.\n`); addCommit(`Synthetic tail ${count}`);
       if (count < 4) assert.equal(proof().localCommitCount, count); else assert.throws(proof, /DEPTH_REJECTED/u);
     }
@@ -5260,18 +5560,25 @@ test("readiness source preserves frozen base, four-file scope, linear budget, lo
 });
 
 
-async function readinessPreviewFixture(verifiedEvidence) {
+async function readinessPreviewFixture(verifiedEvidence, { sourceProof, ciSourceProof, relationship = "equal" } = {}) {
   // Synthetic consistency inputs only: these hashes/IDs do not represent approvals, CI or provider operations.
   const seal = (body) => ({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
   const provenance = verifiedEvidence.sourceProvenance;
-  const providerFixture = syntheticCiProviderFixture({ fixture: readinessEventFixture(provenance.commit), tree: provenance.tree });
-  const proof = seal({ schemaVersion: "clover-ci-preview-readiness-source-v1", classification: "local-readiness-candidate",
+  const eventFixture = readinessEventFixture(provenance.commit);
+  if (relationship !== "equal") {
+    eventFixture.event.action = "synchronize";
+    eventFixture.event.pull_request.merge_commit_sha = [hex40("f"), hex40("e"), hex40("d")]
+      .find((value) => value !== provenance.commit && value !== eventFixture.environment.GITHUB_SHA);
+  }
+  const providerFixture = syntheticCiProviderFixture({ fixture: eventFixture, tree: provenance.tree });
+  const proof = sourceProof ?? seal({ schemaVersion: "clover-ci-preview-readiness-source-v2", classification: "local-readiness-candidate",
     taskId: CI_PREVIEW_READINESS_TASK, context: CI_PREVIEW_READINESS_CONTEXT, githubActions: false, pullRequestNumber: null,
     branch: CI_PREVIEW_READINESS_BRANCH, head: provenance.commit, tree: provenance.tree, ciExecution: null,
     fullMainPathCount: provenance.changedPathCount, fullMainPathListSha256: provenance.pathListSha256,
-    sourceManifestSha256: provenance.sourceManifestSha256, parent: provenance.parent,
+    sourceManifestSha256: provenance.sourceManifestSha256, parent: provenance.parent, parentTree: CI_PREVIEW_FIFTH_PARENT_TREE,
     base: CI_PREVIEW_READINESS_BASE, baseTree: CI_PREVIEW_READINESS_BASE_TREE,
-    commitIds: [...CI_PREVIEW_FOURTH_PREFIX, provenance.commit], localCommitCount: 4, fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS],
+    commitIds: [...CI_PREVIEW_FIFTH_PREFIX, provenance.commit], localCommitCount: 5,
+    fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS],
     changedPathCount: 4, paths: [...ATTESTATION_REPAIR_PATHS], pathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`),
     allowedPathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`), diffSha256: hex64("c"),
     sourceFiles: ATTESTATION_REPAIR_PATHS.map((sourcePath) => ({ path: sourcePath, mode: "100644",
@@ -5281,13 +5588,23 @@ async function readinessPreviewFixture(verifiedEvidence) {
     lockfiles: DEPENDENCY_SUCCESSOR_LOCKS.map((entry) => ({ path: entry.path, mode: "100644", blob: hex40("e"), bytes: 100, sha256: entry.sha256, baseSha256: entry.sha256 })),
     cleanWorktree: true, linearFirstParent: true, exactPrHeadAcceptance: false, releaseAuthority: false, providerAcceptance: false,
     consequentialAuthorityGranted: false, deploymentAllowanceGranted: false });
-  const execution = { ...providerFixture.execution, nodeVersion: "v24.16.0",
-    providerProof: await acquireCiPreviewProviderProof({ ...providerFixture.input, fetchImpl: providerFixture.fetchImpl,
-      now: () => new Date("2026-08-29T19:57:00.000Z") }) };
+  let execution = ciSourceProof?.ciExecution;
+  if (!execution) {
+    const providerProof = await acquireCiPreviewProviderProof({ ...providerFixture.input, fetchImpl: providerFixture.fetchImpl,
+      now: () => new Date("2026-08-29T19:57:00.000Z") });
+    const accepted = deriveCiPreviewExecutionIdentity({ ...providerFixture.input, proof: providerProof, now: new Date("2026-08-29T19:57:00.000Z") });
+    // Explicit synthetic Node24 receipt input, also exercised when the test runner itself is Node22.
+    execution = { ...accepted, nodeVersion: "v24.16.0", providerProof: { ...providerProof,
+      originalInputs: { ...providerProof.originalInputs, nodeVersion: "v24.16.0" } } };
+  }
   const { sourceProofSelfHash: _ignoredHash, ...ciBody } = proof;
   void _ignoredHash;
-  const ciProof = seal({ ...ciBody, classification: "ci-readiness-candidate", context: CI_PREVIEW_READINESS_CI_CONTEXT,
+  const ciProof = ciSourceProof ?? seal({ ...ciBody, classification: "ci-readiness-candidate", context: CI_PREVIEW_READINESS_CI_CONTEXT,
     githubActions: true, pullRequestNumber: execution.pullRequestNumber, ciExecution: execution });
+  const firstObservation = Date.parse(execution.providerProof.records[0].startedAt);
+  const lastObservation = Date.parse(execution.providerProof.records.at(-1).observedAt);
+  const now = ciSourceProof ? new Date(lastObservation + 124_000) : providerReceiptNow;
+  const date = (value) => new Date(value).toISOString();
   const sealedInput = { deploymentInputRootSha256: verifiedEvidence.deploymentInputManifest.deploymentInputRootSha256,
     deploymentInputManifestSelfHash: verifiedEvidence.deploymentInputManifest.manifestSelfHash,
     payloadManifestRootSha256: verifiedEvidence.payloadManifest.rootSha256,
@@ -5296,31 +5613,37 @@ async function readinessPreviewFixture(verifiedEvidence) {
   const source = { repository: "chrisdortch/first", ref: `refs/heads/${proof.branch}`, head: proof.head, tree: proof.tree,
     base: proof.base, baseTree: proof.baseTree, sourceProofSelfHash: proof.sourceProofSelfHash,
     sourceManifestSha256: proof.sourceManifestSha256, fullMainPathCount: proof.fullMainPathCount };
-  const contract = { schemaVersion: "clover-ci-preview-execution-contract-v1", taskId: CI_PREVIEW_READINESS_TASK, source, sealedInput,
+  const contract = { schemaVersion: "clover-ci-preview-execution-contract-v2", taskId: CI_PREVIEW_READINESS_TASK, source, sealedInput,
     ci: { sourceProof: ciProof, run: { id: execution.runId, runAttempt: execution.runAttempt, event: "pull_request", repository: source.repository,
       headSha: source.head, headBranch: proof.branch, workflowPath: execution.workflowPath, status: "completed", conclusion: "success",
-      completedAt: "2026-08-29T19:58:00.000Z", observedAt: "2026-08-29T19:59:00.000Z" },
+      createdAt: date(firstObservation - 2_000), completedAt: date(lastObservation + 60_000), observedAt: date(now.getTime() - 30_000) },
+      identityReadback: { schemaVersion: "clover-ci-independent-execution-observation-v1",
+        provenance: "external-github-attempt-jobs-log-readback", runId: execution.runId, runAttempt: execution.runAttempt,
+        jobId: 987654321, jobRunId: execution.runId, jobRunAttempt: execution.runAttempt, headSha: proof.head,
+        nodeVersion: execution.nodeVersion, jobConclusion: "success", jobStartedAt: date(firstObservation - 1_000),
+        jobCompletedAt: date(lastObservation + 1_000), workflowPath: execution.workflowPath, logSha256: hex64("b"),
+        originalInputs: structuredClone(execution.providerProof.originalInputs), observedAt: date(now.getTime() - 30_000) },
       artifacts: ["validation-node-22", "validation-node-24", "sealed-input-node-24", "browser"].map((role, index) => ({
         role, id: 123450 + index, name: `${execution.artifactPrefix}-${role}`, runId: execution.runId, runAttempt: execution.runAttempt,
         headSha: proof.head, sizeInBytes: 100, providerDigest: `sha256:${hex64("d")}`, downloadSha256: hex64("d"), expired: false,
         sourceManifestSha256: proof.sourceManifestSha256, archiveSha256: role === "sealed-input-node-24" ? sealedInput.archiveSha256 : null })),
       artifactValidationReceiptSha256: hex64("e") },
-    ownerApproval: { taskId: CI_PREVIEW_READINESS_TASK, recordSha256: hex64("f"), approvedAt: "2026-08-29T19:50:00.000Z", expiresAt: "2026-08-29T20:20:00.000Z",
+    ownerApproval: { taskId: CI_PREVIEW_READINESS_TASK, recordSha256: hex64("f"), approvedAt: date(now.getTime() - 10 * 60_000), expiresAt: date(now.getTime() + 20 * 60_000),
       repository: source.repository, ref: source.ref, head: source.head, tree: source.tree, projectId: VERCEL_PROJECT_ID, teamId: VERCEL_TEAM_ID,
       target: "preview", dataClass: "synthetic-only", ciPolicy: "successful-exact-source-stacked-pr-run-with-verified-artifacts",
       maximumDeployments: 1, maximumBypassCreates: 1, maximumBypassRevocations: 1, publication: false, merge: false,
       production: false, settingsChanges: false, privateData: false },
     allowance: { taskId: CI_PREVIEW_READINESS_TASK, id: "synthetic-allowance-not-authority", ownerApprovalRecordSha256: hex64("f"), head: source.head, tree: source.tree,
       projectId: VERCEL_PROJECT_ID, teamId: VERCEL_TEAM_ID, state: "unconsumed", executionsConsumed: 0,
-      observedAt: "2026-08-29T19:59:30.000Z", observationReceiptSha256: hex64("c") } };
-  return { contract, sourceProof: proof, verifiedEvidence, now: providerReceiptNow };
+      observedAt: date(now.getTime() - 30_000), observationReceiptSha256: hex64("c") } };
+  return { contract, sourceProof: proof, verifiedEvidence, now };
 }
 
 test("readiness preview contract rejects source, CI, artifact and authority substitutions and preserves native receipt guards", async () => {
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-readiness-preview-")));
   try {
     const output = path.join(root, "output");
-    const successorBuild = { ...build, parent: CI_PREVIEW_FOURTH_PARENT, changedPathCount: 75 };
+    const successorBuild = { ...build, parent: CI_PREVIEW_FIFTH_PARENT, changedPathCount: 75 };
     writeRawBuildOutput(output, root, { sourceProvenance: successorBuild });
     const sealed = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: path.join(root, "evidence"),
       frozenOutputRoot: path.join(root, "frozen-workspace"), sourceProvenance: successorBuild });
@@ -5331,6 +5654,53 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
     assert.equal(validation.suppliedRecordsConsistent, true); assert.equal(validation.releaseAuthority, false);
     assert.equal(validation.deploymentAllowanceGranted, false);
     assert.equal(validation.ownerApprovalAuthentication, "external-procedural-verification-required");
+    assert.equal(validation.externalAuthenticationEstablished, false);
+    assert.equal(validation.executionAuthentication, "external-exact-attempt-jobs-log-verification-required");
+    const mismatch = await readinessPreviewFixture(verifiedEvidence, { relationship: "synchronize-immediate-predecessor" });
+    assert.equal(validateCiPreviewExecutionContract(mismatch).suppliedRecordsConsistent, true);
+    assert.equal(mismatch.contract.ci.sourceProof.ciExecution.providerProof.records.length, 8);
+    for (const [index, change] of [
+      (c) => { delete c.ci.identityReadback; },
+      (c) => { c.ci.identityReadback.provenance = "self-generated-cache"; },
+      (c) => { c.ci.identityReadback.runId = "987654321"; },
+      (c) => { c.ci.identityReadback.runAttempt = "2"; },
+      (c) => { c.ci.identityReadback.jobId = 0; },
+      (c) => { c.ci.identityReadback.jobRunId = "987654321"; },
+      (c) => { c.ci.identityReadback.jobRunAttempt = "2"; },
+      (c) => { c.ci.identityReadback.headSha = hex40("e"); },
+      (c) => { c.ci.identityReadback.nodeVersion = "v22.23.2"; },
+      (c) => { c.ci.identityReadback.jobConclusion = "failure"; },
+      (c) => { c.ci.identityReadback.workflowPath = "unrelated-workflow"; },
+      (c) => { c.ci.identityReadback.logSha256 = "missing"; },
+      (c) => { const original = c.ci.identityReadback.originalInputs.eventMergeSha;
+        c.ci.identityReadback.originalInputs.eventMergeSha = original === hex40("e") ? hex40("d") : hex40("e"); },
+      (c) => { c.ci.identityReadback.originalInputs.originalSnapshot.fields.runnerMergeSha.value = hex40("e"); },
+      (c) => { c.ci.identityReadback.observedAt = c.ci.identityReadback.jobCompletedAt; },
+      (c) => { c.ci.identityReadback.observedAt = new Date(Date.parse(c.allowance.observedAt) + 1).toISOString(); },
+      (c) => { c.ci.identityReadback.jobStartedAt = "2026-08-29T19:57:00.001Z"; },
+      (c) => { c.ci.identityReadback.jobCompletedAt = "2026-08-29T19:56:59.999Z"; },
+      (c) => { c.ci.identityReadback.jobStartedAt = "2026-08-29T18:57:00.000Z"; c.ci.run.createdAt = "2026-08-29T18:56:59.000Z"; },
+      (c) => { c.ci.run.createdAt = "2026-08-29T19:58:00.000Z"; }
+    ].entries()) {
+      const contract = structuredClone(mismatch.contract), original = canonicalJson(contract); change(contract);
+      assert.notEqual(canonicalJson(contract), original, `readback mutation ${index} must change its input`);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...mismatch, contract }), /CLOVER_/u, `readback mutation ${index} must reject`);
+    }
+    const longWorkflow = structuredClone(mismatch.contract);
+    const longNow = new Date(mismatch.now.getTime() + 60 * 60_000);
+    longWorkflow.ci.run.completedAt = new Date(longNow.getTime() - 60_000).toISOString();
+    longWorkflow.ci.run.observedAt = new Date(longNow.getTime() - 30_000).toISOString();
+    longWorkflow.ci.identityReadback.observedAt = longWorkflow.ci.run.observedAt;
+    longWorkflow.allowance.observedAt = longWorkflow.ci.run.observedAt;
+    longWorkflow.ownerApproval.expiresAt = new Date(longNow.getTime() + 60_000).toISOString();
+    assert.equal(validateCiPreviewExecutionContract({ ...mismatch, contract: longWorkflow, now: longNow }).suppliedRecordsConsistent, true,
+      "later browser jobs may extend total workflow duration while the producing Node24 job remains bounded");
+    const afterStart = structuredClone(mismatch.contract);
+    const started = new Date(mismatch.now.getTime() - 30_001);
+    afterStart.ci.run.observedAt = new Date(started.getTime() - 1).toISOString();
+    afterStart.allowance.observedAt = afterStart.ci.run.observedAt;
+    assert.throws(() => validateCiPreviewExecutionContract({ ...mismatch, contract: afterStart,
+      executionStartedAt: started.toISOString(), executionCompletedAt: mismatch.now.toISOString() }), /CLOVER_/u);
     const changes = [
       (c) => { c.taskId = "historical-task"; }, (c) => { c.source.base = DEPENDENCY_SUCCESSOR_BASE; },
       (c) => { c.source.tree = hex40("e"); }, (c) => { c.source.ref = `refs/heads/${DEPENDENCY_SUCCESSOR_BRANCH}`; },
@@ -5358,8 +5728,9 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
     for (const change of [
       (p) => { p.base = DEPENDENCY_SUCCESSOR_BASE; }, (p) => { p.baseTree = hex40("e"); },
       (p) => { p.releaseAuthority = true; }, (p) => { p.paths[0] = "outside-allowlist"; },
-      (p) => { p.localCommitCount = 5; }, (p) => { p.lockfiles[0].sha256 = hex64("a"); },
+      (p) => { p.localCommitCount = 6; }, (p) => { p.lockfiles[0].sha256 = hex64("a"); },
       (p) => { p.parent = CI_PREVIEW_READINESS_BASE; }, (p) => { p.fourthCommitPaths = null; },
+      (p) => { p.parentTree = hex40("e"); }, (p) => { p.fifthCommitPaths = null; },
       (p) => { p.providerAcceptance = true; }, (p) => { p.consequentialAuthorityGranted = true; },
       (p) => { p.unreviewedAuthority = true; }
     ]) {
@@ -5372,7 +5743,9 @@ test("readiness preview contract rejects source, CI, artifact and authority subs
       (e) => { e.baseSha = hex40("d"); }, (e) => { e.headRef = DEPENDENCY_SUCCESSOR_BRANCH; },
       (e) => { e.nodeVersion = "v22.23.2"; }, (e) => { e.workflowSha = hex40("e"); },
       (e) => { e.workflowRef = "unrelated-workflow"; }, (e) => { e.artifactPrefix = "old-run"; },
-      (e) => { e.mergeSha = e.headSha; e.workflowSha = e.headSha; }
+      (e) => { e.runnerMergeSha = e.headSha; e.workflowSha = e.headSha; },
+      (e) => { e.eventMergeSha = hex40("e"); }, (e) => { e.mergeRelationship = "arbitrary-mismatch"; },
+      (e) => { e.originalSnapshot.fields.eventMergeSha.value = hex40("e"); }
     ]) {
       const contract = structuredClone(fixture.contract); const proof = contract.ci.sourceProof; change(proof.ciExecution);
       const { sourceProofSelfHash: _hash, ...body } = proof; void _hash; proof.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
