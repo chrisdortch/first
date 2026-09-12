@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import childProcess, { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -20,8 +20,11 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { load as loadYaml } from "js-yaml";
 import { getEnv } from "@vercel/functions";
 import {
   EXPECTED_MAIN_COMMIT,
@@ -74,6 +77,38 @@ import {
   DEPENDENCY_SUCCESSOR_LOCKS,
   DEPENDENCY_SUCCESSOR_REQUIRED_PATHS,
   deriveDependencySuccessorSource,
+  deriveCiPreviewReadinessSource,
+  deriveCiPreviewExecutionIdentity,
+  parseCiPreviewExecutionInputs,
+  captureCiPreviewIdentitySnapshot,
+  acquireCiPreviewProviderProof,
+  verifyCiPreviewProviderProof,
+  isAllowedCiPreviewReadinessLineage,
+  isAllowedCiPreviewSuccessorLineage,
+  validateCiPreviewSuccessorSourceProof,
+  CI_PREVIEW_SUCCESSOR_ANCHOR,
+  CI_PREVIEW_SUCCESSOR_ANCHOR_TREE,
+  CI_PREVIEW_SUCCESSOR_PREFIX,
+  CI_PREVIEW_SUCCESSOR_PATHS,
+  CI_PREVIEW_SUCCESSOR_ADDED_PATHS,
+  CI_PREVIEW_READINESS_TASK,
+  CI_PREVIEW_READINESS_BASE,
+  CI_PREVIEW_READINESS_BASE_TREE,
+  CI_PREVIEW_READINESS_BRANCH,
+  CI_PREVIEW_READINESS_CONTEXT,
+  CI_PREVIEW_READINESS_CI_CONTEXT,
+  CI_PREVIEW_FOURTH_PARENT,
+  CI_PREVIEW_FOURTH_PREFIX,
+  CI_PREVIEW_FOURTH_PATHS,
+  CI_PREVIEW_FIFTH_PARENT,
+  CI_PREVIEW_FIFTH_PARENT_TREE,
+  CI_PREVIEW_FIFTH_PREFIX,
+  CI_PREVIEW_SIXTH_PARENT,
+  CI_PREVIEW_SIXTH_PARENT_TREE,
+  CI_PREVIEW_SIXTH_PREFIX,
+  CI_PREVIEW_SIXTH_PATHS,
+  CI_PREVIEW_RECEIPT_PROFILE,
+  validateCiPreviewExecutionContract,
   parseProviderFileTree,
   verifyNativeProviderContent,
   loadNativeProviderContentBodies,
@@ -96,8 +131,10 @@ import {
   createProviderDeploymentReceipt,
   deterministicOutputArchive,
   deriveSourceManifestEntries,
+  deriveSourceManifestDocument,
   parseSourceChanges,
   deriveSourceProvenance,
+  requireStackAAncestry,
   normalizeGeneratedOutput,
   restoreDeterministicOutputArchive,
   requireExactVercelCliInvocation,
@@ -2530,7 +2567,17 @@ test("live reconciliation binds merged Stack A and integrated Stack B provenance
   const repositoryRoot = path.resolve(import.meta.dirname, "../../..");
   const provenance = deriveSourceProvenance({ repositoryRoot });
   assert.equal(provenance.stackABase, mergedStackABase);
-  if (process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === DEPENDENCY_SUCCESSOR_CONTEXT) {
+  if (["local-ci-preview-readiness", "ci-preview-readiness"].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT)) {
+    const successor = deriveCiPreviewReadinessSource({ repositoryRoot });
+    assert.equal(provenance.commit, successor.head);
+    assert.equal(provenance.tree, successor.tree);
+    assert.equal(provenance.changedPathCount, successor.fullMainPathCount);
+    assert.equal(provenance.pathListSha256, successor.fullMainPathListSha256);
+    assert.equal(provenance.sourceManifestSha256, successor.sourceManifestSha256);
+    assert.equal(successor.releaseAuthority, false);
+    assert.equal(successor.exactPrHeadAcceptance, false);
+    assert.equal(successor.providerAcceptance, false);
+  } else if (process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT === DEPENDENCY_SUCCESSOR_CONTEXT) {
     const successor = deriveDependencySuccessorSource({ repositoryRoot });
     const historicalPaths = deriveSourceManifestEntries({ repositoryRoot, stackABase: mergedStackABase,
       candidateCommit: DEPENDENCY_SUCCESSOR_BASE }).map(({ path: sourcePath }) => sourcePath);
@@ -2572,6 +2619,173 @@ test("deployment attestation rejects every exact source identity substitution", 
   const deploymentKeyComparison = await compareDeploymentAttestation(build, substitutedDeploymentKey);
   assert.equal(deploymentKeyComparison.status, "invalid");
   assert.deepEqual(deploymentKeyComparison.differences, ["attestation-structure-invalid"]);
+});
+
+test("ancestry diagnostic preserves real Git acceptance and non-ancestor rejection without writes", () => {
+  const root = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
+  assert.equal(requireStackAAncestry(root, STACK_A_BASE, CI_PREVIEW_SIXTH_PARENT), undefined);
+  assert.throws(() => requireStackAAncestry(root, CI_PREVIEW_SIXTH_PARENT, STACK_A_BASE), (error) => {
+    assert.equal(error.message, "CLOVER_STACK_A_ANCESTRY_REJECTED");
+    assert.equal(error.cause.status, 1);
+    assert.equal(error.cause.signal, null);
+    assert.equal(error.cause.spawnCode, null);
+    assert.equal(error.cause.stderr, "");
+    return true;
+  });
+});
+
+test("ancestry diagnostic preserves a real missing-object Git failure", () => {
+  const root = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
+  assert.throws(() => requireStackAAncestry(root, hex40("f"), CI_PREVIEW_SIXTH_PARENT), (error) => {
+    assert.equal(error.message, "CLOVER_STACK_A_ANCESTRY_REJECTED");
+    assert.equal(error.cause.status, 128);
+    assert.equal(error.cause.spawnCode, null);
+    assert.match(error.cause.stderr, /fatal: Not a valid (?:commit|object) name f{40}/u);
+    return true;
+  });
+});
+
+test("ancestry diagnostic preserves Git arguments and distinguishes synthetic process failures", (t) => {
+  const root = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
+  let failure;
+  const invocation = t.mock.method(childProcess, "execFileSync", (file, args, options) => {
+    assert.equal(file, "git");
+    assert.deepEqual(args, ["merge-base", "--is-ancestor", STACK_A_BASE, CI_PREVIEW_SIXTH_PARENT]);
+    assert.deepEqual(options, { cwd: root, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, stdio: "pipe" });
+    throw failure;
+  });
+  syncBuiltinESMExports();
+  try {
+    for (const fields of [
+      { status: 1, signal: null }, { status: 128, signal: null },
+      { status: null, signal: "SIGTERM" }, { status: null, code: "ENOENT" },
+      { status: null, code: "EACCES" }, { status: 0, signal: null }
+    ]) {
+      failure = Object.assign(new Error("raw-error-must-not-survive"), fields, { stderr: Buffer.alloc(0) });
+      assert.throws(() => requireStackAAncestry(root, STACK_A_BASE, CI_PREVIEW_SIXTH_PARENT), (error) => {
+        assert.equal(error.message, "CLOVER_STACK_A_ANCESTRY_REJECTED");
+        assert.notEqual(error.cause, failure);
+        assert.equal(error.cause instanceof Error, false);
+        assert.equal(error.cause.status, fields.status);
+        assert.equal(error.cause.signal, fields.signal ?? null);
+        assert.equal(error.cause.spawnCode, fields.code ?? null);
+        assert.equal(error.cause.workingDirectory, "repository-root");
+        assert.equal(Object.isFrozen(error.cause), true);
+        assert.equal(Object.isFrozen(error.cause.arguments), true);
+        return true;
+      });
+    }
+    assert.equal(invocation.mock.callCount(), 6);
+  } finally {
+    invocation.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test("ancestry diagnostic retains source ordering and existing dirty-source rejection", (t) => {
+  const root = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
+  const calls = [];
+  let dirty = false;
+  let rejectAncestry = true;
+  const afterAncestry = new Error("synthetic-later-source-check");
+  const invocation = t.mock.method(childProcess, "execFileSync", (file, args) => {
+    assert.equal(file, "git"); calls.push(args);
+    if (args[0] === "status") return dirty ? " M synthetic\n" : "";
+    if (args[0] === "rev-parse" && args[1] === "HEAD") return `${CI_PREVIEW_SIXTH_PARENT}\n`;
+    if (args[0] === "merge-base") {
+      if (rejectAncestry) throw Object.assign(new Error("synthetic failure"), { status: 128, stderr: "" });
+      return "";
+    }
+    throw afterAncestry;
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => deriveSourceProvenance({ repositoryRoot: root }), /CLOVER_STACK_A_ANCESTRY_REJECTED/u);
+    assert.deepEqual(calls, [["status", "--porcelain=v1", "--untracked-files=all"], ["rev-parse", "HEAD"], ["merge-base", "--is-ancestor", STACK_A_BASE, CI_PREVIEW_SIXTH_PARENT]]);
+    calls.length = 0; dirty = true;
+    assert.throws(() => deriveSourceProvenance({ repositoryRoot: root }), /CLOVER_DIRTY_SOURCE_REJECTED/u);
+    assert.equal(calls.length, 1);
+    dirty = false; rejectAncestry = false;
+    assert.throws(() => deriveSourceProvenance({ repositoryRoot: root }), (error) => error === afterAncestry);
+  } finally {
+    invocation.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test("ancestry diagnostic redacts unknown stderr and never copies raw child error fields", (t) => {
+  const root = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
+  const secret = "synthetic-private-token-unsafe";
+  const raw = Object.assign(new Error(secret), {
+    status: 128, signal: secret, code: secret, path: `/private/${secret}`,
+    stdout: Buffer.from(secret), output: [null, secret, secret], env: { TOKEN: secret },
+    stderr: Buffer.from(`fatal: Not a valid commit name ${STACK_A_BASE}\nhttps://user:${secret}@example.invalid/path\nTOKEN=${secret}\n\x1b[31m${secret}\x00\n${secret.repeat(500)}`)
+  });
+  const invocation = t.mock.method(childProcess, "execFileSync", () => { throw raw; });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => requireStackAAncestry(root, STACK_A_BASE, CI_PREVIEW_SIXTH_PARENT), (error) => {
+      const text = JSON.stringify(error.cause);
+      assert.equal(error.message, "CLOVER_STACK_A_ANCESTRY_REJECTED");
+      assert.equal(text.includes(secret), false);
+      assert.equal(text.includes("example.invalid"), false);
+      assert.equal(text.includes(root), false);
+      assert.equal(text.includes("\\u001b"), false);
+      assert.equal(text.includes("\\u0000"), false);
+      assert.equal(Buffer.byteLength(text) < 1600, true);
+      assert.equal(error.cause.stderrTruncated, true);
+      assert.equal(error.cause.stderrBytes, raw.stderr.length);
+      assert.equal(error.cause.signal, null);
+      assert.equal(error.cause.spawnCode, null);
+      assert.equal(error.cause.stderr.split("\n").length, 4);
+      assert.match(error.cause.stderr, /unrecognized stderr redacted/u);
+      assert.match(error.cause.stderr, /fatal: Not a valid commit name/u);
+      assert.deepEqual(Object.keys(error.cause).sort(), ["arguments", "executable", "schemaVersion", "signal", "spawnCode", "status", "stderr", "stderrBytes", "stderrPolicy", "stderrTruncated", "workingDirectory"].sort());
+      return true;
+    });
+  } finally {
+    invocation.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test("ancestry diagnostic survives the installed Next terminal printer without raw subprocess leakage", () => {
+  const require = createRequire(import.meta.url);
+  const nextBuild = readFileSync(require.resolve("next/dist/cli/next-build"), "utf8");
+  assert.match(nextBuild, /printAndExit\)\(err\)/u);
+  const syntheticProgram = 'process.stderr.write("https://user:synthetic-render-secret@example.invalid/\\n"); process.stdout.write("synthetic-render-stdout"); process.exit(128)';
+  const script = [
+    'import cp from "node:child_process";',
+    'import { createRequire, syncBuiltinESMExports } from "node:module";',
+    `const require = createRequire(${JSON.stringify(import.meta.url)});`,
+    'require("next/dist/server/node-environment-baseline");',
+    'require("next/dist/server/patch-error-inspect").patchErrorInspectNodeJS(Error);',
+    'const realExecFileSync = cp.execFileSync;',
+    'cp.execFileSync = (file, args, options) => {',
+    '  if (file !== "git" || args[0] !== "merge-base") throw Error("unexpected process double invocation");',
+    `  return realExecFileSync(process.execPath, ["-e", ${JSON.stringify(syntheticProgram)}], options);`,
+    '};',
+    'syncBuiltinESMExports();',
+    `const { requireStackAAncestry } = await import(${JSON.stringify(new URL("../scripts/clover-deployment-attestation.mjs", import.meta.url).href)});`,
+    `try { requireStackAAncestry(process.cwd(), ${JSON.stringify(STACK_A_BASE)}, ${JSON.stringify(CI_PREVIEW_SIXTH_PARENT)}); }`,
+    'catch (error) { require("next/dist/server/lib/utils").printAndExit(error); }'
+  ].join("\n");
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: path.resolve(fileURLToPath(new URL("../", import.meta.url))),
+    encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024,
+    env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }
+  });
+  assert.equal(result.error, undefined);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /CLOVER_STACK_A_ANCESTRY_REJECTED/u);
+  assert.match(result.stderr, /clover-ancestry-command-diagnostic-v1/u);
+  assert.match(result.stderr, /status: 128/u);
+  assert.match(result.stderr, /unrecognized stderr redacted/u);
+  assert.equal(result.stderr.includes("synthetic-render-secret"), false);
+  assert.equal(result.stderr.includes("synthetic-render-stdout"), false);
+  assert.equal(result.stderr.includes("example.invalid"), false);
 });
 
 function initializeSourceRepository(root) {
@@ -4513,6 +4727,1430 @@ test("dependency successor source is local, exact-lock-bound and separate from b
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 });
 
+
+// Subprocess fixtures own their complete CI identity/context. Only operational settings
+// cross the boundary; fixture omissions must not be repaired by the real runner.
+const readinessOperationalKeys = new Set([
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+  "NODE_OPTIONS", "NODE_V8_COVERAGE", "NEXT_TELEMETRY_DISABLED", "VERCEL_TELEMETRY_DISABLED",
+  "npm_config_ignore_scripts", "npm_config_audit", "npm_config_fund", "npm_config_offline", "npm_config_update_notifier",
+  "CLOVER_OFFLINE_GUARD_LOG", "CLOVER_IDENTITY_DEMO_OUTPUT", "CLOVER_FIXTURE_OPERATIONAL_SENTINEL"
+]);
+function readinessFixtureEnvironment(values) {
+  const operational = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+    !/^(?:GITHUB_|RUNNER_|CLOVER_TREE_|CLOVER_READINESS_|SYNTHETIC_)/u.test(key) && readinessOperationalKeys.has(key)));
+  return { ...operational, ...values,
+    NODE_OPTIONS: [operational.NODE_OPTIONS, values.NODE_OPTIONS].filter((value) => value !== undefined && value !== "").join(" ") };
+}
+
+const syntheticParentCiEnvironment = Object.freeze({
+  "GITHUB_ACTIONS": "true",
+  "GITHUB_REPOSITORY": "synthetic-owner/synthetic-repo",
+  "GITHUB_WORKSPACE": "/synthetic/parent/workspace",
+  "GITHUB_EVENT_PATH": "/synthetic/parent/event.json",
+  "GITHUB_EVENT_NAME": "pull_request",
+  "GITHUB_HEAD_REF": "synthetic-parent",
+  "GITHUB_BASE_REF": "synthetic-base",
+  "GITHUB_RUN_ID": "987654321",
+  "GITHUB_RUN_ATTEMPT": "9",
+  "GITHUB_SHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "GITHUB_REF": "refs/pull/999/merge",
+  "GITHUB_WORKFLOW_REF": "synthetic-owner/synthetic-repo/.github/workflows/synthetic.yml@refs/pull/999/merge",
+  "GITHUB_WORKFLOW_SHA": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "CLOVER_TREE_HEAD": "cccccccccccccccccccccccccccccccccccccccc",
+  "CLOVER_TREE_EXACT_PR_HEAD": "dddddddddddddddddddddddddddddddddddddddd",
+  "CLOVER_TREE_PR_NUMBER": "999",
+  "CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT": "synthetic-parent-context",
+  "CLOVER_TREE_BROWSER_EVIDENCE_MODE": "synthetic-parent-mode",
+  "CLOVER_TREE_PROTECTED_PREVIEW_PARENT_CANARY": "synthetic-parent-only",
+  "CLOVER_READINESS_RELEASE_AUTHORITY": "true",
+  "RUNNER_TEMP": "/synthetic/parent/temp"
+});
+
+// Each affected family runs in an actual test process with populated synthetic parent
+// identities. No test mutates the shared parent process environment, including in CI.
+function readinessSubprocessTest(name, callback) {
+  test(name, async () => {
+    if (process.env.CLOVER_FIXTURE_POPULATED_TEST === name) {
+      for (const [key, value] of Object.entries(syntheticParentCiEnvironment)) assert.equal(process.env[key], value, key);
+      assert.equal(globalThis[Symbol.for("clover.fixture.operational-preload")], process.version);
+      return callback();
+    }
+    const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-populated-parent-")));
+    try {
+      const sentinel = path.join(temporary, "operational-preload.jsonl");
+      const preload = path.join(temporary, "operational-network-denial.cjs");
+      writeFileSync(preload, [
+        'const fs = require("node:fs");',
+        'const deny = () => { throw new Error("SYNTHETIC_PARENT_NETWORK_DENIED"); };',
+        'for (const name of ["node:http", "node:https"]) { const m = require(name); m.request = m.get = deny; }',
+        'const net = require("node:net"); net.connect = net.createConnection = net.Socket.prototype.connect = deny;',
+        'require("node:tls").connect = deny; require("node:dgram").createSocket = deny;',
+        'const dns = require("node:dns"); for (const key of ["lookup", "resolve", "resolve4", "resolve6", "reverse"]) dns[key] = deny;',
+        'globalThis.fetch = deny; require("node:module").syncBuiltinESMExports();',
+        'let rejected = false; try { require("node:https").get("https://example.invalid/"); } catch (error) { rejected = error.message === "SYNTHETIC_PARENT_NETWORK_DENIED"; }',
+        'if (!rejected) throw new Error("SYNTHETIC_PARENT_DENIAL_SENTINEL_FAILED");',
+        'globalThis[Symbol.for("clover.fixture.operational-preload")] = process.version;',
+        'fs.appendFileSync(process.env.CLOVER_FIXTURE_OPERATIONAL_SENTINEL, JSON.stringify({ marker: "operational-preload-and-denial-active", runtime: process.version }) + "\\n");'
+      ].join("\n"));
+      const environment = readinessFixtureEnvironment({ ...syntheticParentCiEnvironment,
+        CLOVER_FIXTURE_POPULATED_TEST: name, CLOVER_FIXTURE_OPERATIONAL_SENTINEL: sentinel,
+        NODE_OPTIONS: `--require=${JSON.stringify(preload)}` });
+      const pattern = `^${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}$`;
+      const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", `--test-name-pattern=${pattern}`, fileURLToPath(import.meta.url)], {
+        env: environment, encoding: "utf8", timeout: 2_400_000, maxBuffer: 1024 * 1024
+      });
+      const markers = existsSync(sentinel) ? readFileSync(sentinel, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
+      retainSyntheticCiDemonstration(`populated-parent-${name.includes("replays") ? "historical" : name.includes("preserves complete") ? "failure" : "source-consumers"}`, {
+        scenario: "actual-populated-parent-test-process", runtime: process.version, status: result.status, signal: result.signal,
+        parentIdentitySha256: sha256(canonicalJson(syntheticParentCiEnvironment)), parentKeys: Object.keys(syntheticParentCiEnvironment),
+        inheritedOperationalOptionsPreserved: !process.env.NODE_OPTIONS || environment.NODE_OPTIONS.startsWith(process.env.NODE_OPTIONS),
+        sentinelMarkers: markers, stdout: result.stdout, stderr: result.stderr
+      });
+      assert.equal(result.error, undefined); assert.equal(result.signal, null);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.ok(markers.length >= 3, "operational denial preload must reach actual children, not just the parent");
+      assert.ok(markers.every((entry) => entry.marker === "operational-preload-and-denial-active" && entry.runtime === process.version));
+    } finally { rmSync(temporary, { recursive: true, force: true }); }
+  });
+}
+
+function readinessEventFixture(head) {
+  // All IDs here are explicitly synthetic fixtures, never observations or owner approvals.
+  const number = 36;
+  const event = { action: "opened", number, repository: { full_name: "chrisdortch/first" }, pull_request: {
+    number, state: "open", head: { sha: head, ref: CI_PREVIEW_READINESS_BRANCH, repo: { full_name: "chrisdortch/first" } },
+    base: { sha: CI_PREVIEW_READINESS_BASE, ref: DEPENDENCY_SUCCESSOR_BRANCH, repo: { full_name: "chrisdortch/first" } },
+    merge_commit_sha: head === "a".repeat(40) ? "f".repeat(40) : "a".repeat(40)
+  } };
+  const environment = { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_REPOSITORY: "chrisdortch/first",
+    CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CI_CONTEXT, CLOVER_TREE_PR_NUMBER: String(number),
+    GITHUB_HEAD_REF: CI_PREVIEW_READINESS_BRANCH, GITHUB_BASE_REF: DEPENDENCY_SUCCESSOR_BRANCH,
+    CLOVER_TREE_HEAD: head, CLOVER_TREE_EXACT_PR_HEAD: head, GITHUB_SHA: event.pull_request.merge_commit_sha,
+    GITHUB_WORKFLOW_REF: `chrisdortch/first/${ATTESTATION_REPAIR_PATHS[0]}@refs/pull/${number}/merge`,
+    GITHUB_WORKFLOW_SHA: event.pull_request.merge_commit_sha,
+    GITHUB_REF: `refs/pull/${number}/merge`, GITHUB_RUN_ID: "123456789", GITHUB_RUN_ATTEMPT: "1" };
+  return { event, environment, head, workflowBlob: "b".repeat(40) };
+}
+
+function syntheticFifthCiSourceBinding(head = hex40("c"), tree = hex40("d")) {
+  return { head, tree, parent: CI_PREVIEW_FIFTH_PARENT, parentTree: CI_PREVIEW_FIFTH_PARENT_TREE,
+    commitIds: [...CI_PREVIEW_FIFTH_PREFIX, head], fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS],
+    fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS] };
+}
+
+function syntheticCiSourceBinding(head = hex40("c"), tree = hex40("d")) {
+  return { ...syntheticFifthCiSourceBinding(head, tree), parent: CI_PREVIEW_SIXTH_PARENT, parentTree: CI_PREVIEW_SIXTH_PARENT_TREE,
+    commitIds: [...CI_PREVIEW_SIXTH_PREFIX, head], sixthCommitPaths: [...CI_PREVIEW_SIXTH_PATHS] };
+}
+
+function syntheticCiProviderFixture({ fixture = readinessEventFixture(hex40("c")), tree = hex40("d"),
+  sourceBinding = syntheticCiSourceBinding(fixture.head, tree),
+  workflowBytes = Buffer.from("# Synthetic reviewed workflow bytes; no real run.\n", "utf8") } = {}) {
+  const workflowBlob = sha1(Buffer.concat([Buffer.from(`blob ${workflowBytes.length}\0`), workflowBytes]));
+  const input = { ...fixture, tree, workflowBytes, workflowBlob, sourceBinding };
+  const execution = parseCiPreviewExecutionInputs(input);
+  const prefix = "https://api.github.com/repos/chrisdortch/first";
+  const repo = { id: 1231415392, full_name: "chrisdortch/first", private: false };
+  const head = input.head, merge = execution.runnerMergeSha;
+  const workflow = { type: "file", encoding: "base64", content: workflowBytes.toString("base64"),
+    size: workflowBytes.length, sha: workflowBlob, path: ATTESTATION_REPAIR_PATHS[0] };
+  const entries = [
+    { kind: "RUN_ATTEMPT", url: `${prefix}/actions/runs/${execution.runId}/attempts/${execution.runAttempt}`, body: {
+      id: Number(execution.runId), run_attempt: Number(execution.runAttempt), event: "pull_request", head_sha: head,
+      head_branch: CI_PREVIEW_READINESS_BRANCH, path: ATTESTATION_REPAIR_PATHS[0], repository: repo, head_repository: repo,
+      pull_requests: [{ number: 36, head: { sha: head, ref: CI_PREVIEW_READINESS_BRANCH, repo: { id: repo.id } },
+        base: { sha: CI_PREVIEW_READINESS_BASE, ref: DEPENDENCY_SUCCESSOR_BRANCH, repo: { id: repo.id } } }] } },
+    { kind: "HEAD_COMMIT", url: `${prefix}/git/commits/${head}`, body: { sha: head, tree: { sha: tree },
+      parents: [{ sha: sourceBinding.parent }] } },
+    { kind: "MERGE_COMMIT", url: `${prefix}/git/commits/${merge}`, body: { sha: merge, tree: { sha: tree },
+      parents: [{ sha: CI_PREVIEW_READINESS_BASE }, { sha: head }] } },
+    ...(execution.eventMergeSha === merge ? [] : [{ kind: "EVENT_MERGE_COMMIT",
+      url: `${prefix}/git/commits/${execution.eventMergeSha}`,
+      body: { sha: execution.eventMergeSha, tree: { sha: sourceBinding.parentTree },
+        parents: [{ sha: CI_PREVIEW_READINESS_BASE }, { sha: sourceBinding.parent }] } }]),
+    { kind: "HEAD_WORKFLOW", url: `${prefix}/contents/${ATTESTATION_REPAIR_PATHS[0]}?ref=${head}`, body: workflow },
+    { kind: "MERGE_WORKFLOW", url: `${prefix}/contents/${ATTESTATION_REPAIR_PATHS[0]}?ref=${merge}`, body: workflow },
+    { kind: "MERGE_REF", url: `${prefix}/git/ref/pull/36/merge`, body: { ref: "refs/pull/36/merge", object: { type: "commit", sha: merge } } },
+    { kind: "HEAD_REF", url: `${prefix}/git/ref/heads/${CI_PREVIEW_READINESS_BRANCH}`,
+      body: { ref: `refs/heads/${CI_PREVIEW_READINESS_BRANCH}`, object: { type: "commit", sha: head } } }
+  ];
+  const calls = [];
+  const fetchImpl = async (url, options) => {
+    assert.equal(url, entries[calls.length]?.url, "only the seven/eight ordered synthetic endpoints may be requested");
+    assert.equal(options.method, "GET"); assert.equal(options.redirect, "error");
+    assert.equal(options.credentials, "omit");
+    assert.deepEqual(options.headers, { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" });
+    assert.ok(options.signal instanceof AbortSignal);
+    calls.push(url);
+    const entry = entries.find((value) => value.url === url);
+    const raw = entry.raw ?? Buffer.from(JSON.stringify(entry.body));
+    return { status: entry.status ?? 200, redirected: entry.redirected ?? false, url: entry.responseUrl ?? url,
+      body: (async function* () { yield raw; })() };
+  };
+  return { input, execution, entries, calls, fetchImpl, now: () => new Date("2026-09-10T20:00:00.000Z") };
+}
+
+function retainSyntheticCiDemonstration(label, record) {
+  const output = process.env.CLOVER_IDENTITY_DEMO_OUTPUT;
+  if (output === undefined) return;
+  assert.ok(path.isAbsolute(output), "an explicitly requested demonstration directory must be absolute");
+  mkdirSync(output, { recursive: true });
+  writeFileSync(path.join(output, `${process.version}-${label}.json`), `${JSON.stringify({
+    schemaVersion: "clover-synthetic-ci-workflow-demonstration-v1", syntheticFixturesOnly: true,
+    runtime: process.version, runtimePath: process.execPath, ...record
+  }, null, 2)}\n`, { flag: "wx" });
+}
+
+test("readiness CI provider proof binds seven public reads to the exact synthetic source without granting authority", async () => {
+  const fixture = syntheticCiProviderFixture();
+  const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: fixture.now });
+  assert.deepEqual(fixture.calls, fixture.entries.map(({ url }) => url));
+  assert.equal(proof.records.length, 7);
+  assert.equal(proof.provenance, "public-github-rest-observation");
+  assert.equal(proof.authentication, "none-public");
+  assert.equal(proof.originalEventReconstructed, false);
+  assert.equal(proof.externalAuthenticationEstablished, false);
+  assert.equal(proof.schemaVersion, "clover-ci-provider-proof-v2");
+  assert.deepEqual(proof.originalInputs, fixture.execution);
+  assert.equal(fixture.execution.status, "provisional");
+  assert.throws(() => deriveCiPreviewExecutionIdentity(fixture.input), /CLOVER_/u, "provisional inputs alone cannot create acceptance");
+  const accepted = deriveCiPreviewExecutionIdentity({ ...fixture.input, proof, now: fixture.now() });
+  assert.equal(accepted.schemaVersion, "clover-ci-execution-identity-v2");
+  assert.equal(accepted.status, "proved-relationship");
+  assert.equal(accepted.mergeRelationship, "equal");
+  assert.equal(accepted.externalAuthenticationEstablished, false); assert.equal(accepted.releaseAuthority, false);
+  assert.deepEqual(proof.records.map(({ kind }) => kind), fixture.entries.map(({ kind }) => kind));
+  assert.equal(verifyCiPreviewProviderProof({ proof, execution: fixture.execution, sourceBinding: fixture.input.sourceBinding, now: fixture.now(), tree: fixture.input.tree,
+    workflowBytes: fixture.input.workflowBytes }), proof);
+  assert.equal(verifyCiPreviewProviderProof({ proof, execution: fixture.execution, sourceBinding: fixture.input.sourceBinding, now: fixture.now(), tree: fixture.input.tree,
+    workflowSha256: sha256(fixture.input.workflowBytes) }), proof);
+  for (const now of [new Date("2026-09-10T20:30:00.001Z"), new Date("2026-09-10T19:59:54.999Z"), new Date(NaN)]) {
+    assert.throws(() => verifyCiPreviewProviderProof({ proof, execution: fixture.execution,
+      sourceBinding: fixture.input.sourceBinding, tree: fixture.input.tree, workflowBytes: fixture.input.workflowBytes, now }), /OBSERVATION_FRESHNESS/u);
+  }
+  assert.equal(proof.records[0].binding, "attempt-addressed");
+  assert.ok(proof.records.slice(1, 5).every(({ binding }) => binding === "sha-addressed"));
+  assert.ok(proof.records.slice(5).every(({ binding }) => binding === "moving-ref"));
+  for (const change of [
+    (p) => { p.records.pop(); },
+    (p) => { p.authentication = "invented-authentication"; },
+    (p) => { p.originalEventReconstructed = true; },
+    (p) => { p.externalAuthenticationEstablished = true; },
+    (p) => { p.schemaVersion = "clover-ci-provider-proof-v1"; },
+    (p) => { p.originalInputs.eventMergeSha = hex40("e"); },
+    (p) => { p.originalInputs.originalSnapshot.fields.eventMergeSha.value = hex40("e"); },
+    (p) => { delete p.originalInputs.originalSnapshot; },
+    (p) => { p.originalInputs.status = "proved-relationship"; },
+    (p) => { p.records[0].projection.id = "987654321"; },
+    (p) => { p.records[0].projection.attempt = "2"; },
+    (p) => { p.records[0].projection.repositoryId += 1; },
+    (p) => { p.records[0].projection.prNumber = 37; },
+    (p) => { p.records[1].projection.parents = [CI_PREVIEW_READINESS_BASE]; },
+    (p) => { p.records[2].projection.parents.reverse(); },
+    (p) => { p.records[2].projection.tree = hex40("e"); },
+    (p) => { p.records[3].projection.sha256 = hex64("e"); },
+    (p) => { p.records[4].projection.blob = hex40("e"); },
+    (p) => { p.records[5].projection.sha = hex40("e"); },
+    (p) => { p.records[6].projection.sha = hex40("e"); },
+    (p) => { p.records[0].url += "?unapproved=1"; },
+    (p) => { p.records[0].observedAt = "2026-09-10T19:59:59.000Z"; },
+    (p) => { p.records[1].startedAt = "2026-09-10T20:03:00.000Z"; p.records[1].observedAt = p.records[1].startedAt; }
+  ]) {
+    const changed = structuredClone(proof); change(changed);
+    assert.throws(() => verifyCiPreviewProviderProof({ proof: changed, execution: fixture.execution, sourceBinding: fixture.input.sourceBinding, now: fixture.now(),
+      tree: fixture.input.tree, workflowBytes: fixture.input.workflowBytes }), /CLOVER_/u);
+  }
+});
+
+test("readiness CI acquisition enforces request and total deadlines before further mocked GETs", async (t) => {
+  const timeouts = [];
+  t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+    timeouts.push(milliseconds); return new AbortController().signal;
+  });
+  const epoch = Date.parse("2026-09-10T20:00:00.000Z");
+  const clock = (offsets) => {
+    let index = 0;
+    return () => { assert.ok(index < offsets.length, "acquisition must stop at the exhausted mocked deadline"); return new Date(epoch + offsets[index++]); };
+  };
+  for (const scenario of [
+    { label: "one response exceeds fifteen seconds", offsets: [0, 0, 15_001], expectedTimeout: 15_000 },
+    { label: "inter-request overhead exhausts the total window", offsets: [0, 0, 0, 120_001], expectedTimeout: 15_000 },
+    { label: "response arrives after the remaining total window", offsets: [0, 119_999, 120_001], expectedTimeout: 1 }
+  ]) {
+    const fixture = syntheticCiProviderFixture(); timeouts.length = 0;
+    await assert.rejects(acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: clock(scenario.offsets) }),
+      { message: "CLOVER_READINESS_CI_PROOF_REJECTED:ACQUISITION_WINDOW" }, scenario.label);
+    assert.equal(fixture.calls.length, 1, `${scenario.label}: no second GET, retry, or fallback`);
+    assert.deepEqual(timeouts, [scenario.expectedTimeout]);
+  }
+  const fixture = syntheticCiProviderFixture(); timeouts.length = 0;
+  const nearDeadline = [0, ...Array(12).fill(0), 119_500, 120_000, 120_000];
+  const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: clock(nearDeadline) });
+  assert.equal(fixture.calls.length, 7); assert.equal(proof.records.length, 7);
+  assert.deepEqual(timeouts, [...Array(6).fill(15_000), 500]);
+  assert.equal(Date.parse(proof.records.at(-1).observedAt) - epoch, 120_000);
+  assert.equal(proof.externalAuthenticationEstablished, false);
+});
+
+test("readiness CI synchronize mismatch requires an eighth immediate-predecessor object proof", async () => {
+  const event = readinessEventFixture(hex40("c"));
+  event.event.action = "synchronize"; event.event.pull_request.merge_commit_sha = hex40("f");
+  const fixture = syntheticCiProviderFixture({ fixture: event });
+  assert.equal(fixture.execution.eventMergeSha, hex40("f"));
+  assert.equal(fixture.execution.runnerMergeSha, hex40("a"));
+  assert.equal(fixture.execution.status, "provisional");
+  assert.throws(() => deriveCiPreviewExecutionIdentity(fixture.input), /CLOVER_/u);
+  const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: fixture.now });
+  const accepted = deriveCiPreviewExecutionIdentity({ ...fixture.input, proof, now: fixture.now() });
+  assert.equal(accepted.mergeRelationship, "synchronize-immediate-predecessor");
+  assert.equal(accepted.eventAction, "synchronize");
+  assert.equal(accepted.eventMergeSha, hex40("f")); assert.equal(accepted.runnerMergeSha, hex40("a"));
+  assert.equal(accepted.workflowSha, hex40("a")); assert.equal(accepted.externalAuthenticationEstablished, false);
+  assert.equal(accepted.releaseAuthority, false); assert.equal(proof.records.length, 8);
+  assert.deepEqual(fixture.calls, fixture.entries.map(({ url }) => url));
+  assert.equal(proof.records[3].kind, "EVENT_MERGE_COMMIT");
+  assert.equal(proof.records[3].url, `https://api.github.com/repos/chrisdortch/first/git/commits/${hex40("f")}`);
+  for (const change of [
+    (p) => { p.records.splice(3, 1); },
+    (p) => { p.records.push(p.records[3]); },
+    (p) => { p.records[3].projection.parents.reverse(); },
+    (p) => { p.records[3].projection.parents[1] = CI_PREVIEW_FOURTH_PARENT; },
+    (p) => { p.records[3].projection.parents[0] = hex40("e"); },
+    (p) => { p.records[3].projection.tree = hex40("e"); },
+    (p) => { p.records[3].projection.sha = hex40("e"); },
+    (p) => { p.records[3].url = p.records[2].url; },
+    (p) => { p.originalInputs.eventAction = "opened"; },
+    (p) => { p.originalInputs.originalSnapshot.fields.runnerMergeSha.value = hex40("e"); },
+    (p) => { p.records[3].startedAt = "2026-09-10T20:00:16.000Z"; p.records[3].observedAt = "2026-09-10T20:00:32.000Z"; },
+    (p) => { p.records.at(-1).startedAt = "2026-09-10T20:02:01.000Z"; p.records.at(-1).observedAt = "2026-09-10T20:02:01.000Z"; }
+  ]) {
+    const changed = structuredClone(proof); change(changed);
+    assert.throws(() => deriveCiPreviewExecutionIdentity({ ...fixture.input, proof: changed, now: fixture.now() }), /CLOVER_/u);
+  }
+  for (const change of [
+    (b) => { b.parent = CI_PREVIEW_FOURTH_PARENT; }, (b) => { b.parentTree = hex40("e"); },
+    (b) => { b.head = hex40("e"); }, (b) => { b.tree = hex40("e"); },
+    (b) => { b.commitIds[3] = hex40("e"); }, (b) => { b.fifthCommitPaths = null; }
+  ]) {
+    const sourceBinding = structuredClone(fixture.input.sourceBinding); change(sourceBinding);
+    assert.throws(() => deriveCiPreviewExecutionIdentity({ ...fixture.input, sourceBinding, proof, now: fixture.now() }), /CLOVER_/u);
+  }
+  for (const action of ["opened", "reopened", "edited", "closed"]) {
+    const changed = structuredClone(event); changed.event.action = action;
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
+  }
+  for (const change of [
+    (entry) => { entry.body.parents.reverse(); },
+    (entry) => { entry.body.parents[1].sha = CI_PREVIEW_FOURTH_PARENT; },
+    (entry) => { entry.body.tree.sha = hex40("e"); },
+    (entry) => { entry.status = 404; },
+    (entry) => { entry.redirected = true; },
+    (entry) => { entry.raw = Buffer.from('{"sha":"duplicate","sha":"duplicate"}'); }
+  ]) {
+    const changed = syntheticCiProviderFixture({ fixture: structuredClone(event) }); change(changed.entries[3]);
+    await assert.rejects(acquireCiPreviewProviderProof({ ...changed.input, fetchImpl: changed.fetchImpl, now: changed.now }), /CLOVER_/u);
+    assert.equal(changed.calls.length, 4, "unproved event object must stop acquisition without retry or fallback");
+  }
+});
+
+readinessSubprocessTest("readiness CI replays the retained f059 source and c612 versus 373922 operands without inventing a fifth identity", async () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-historical-f059-replay-")));
+  const head = "f0591972971036fd4258429ed363b71f23b8516a", tree = "92f8efe9f72b927e35bd4dbefca0c7fd13ce936e";
+  const prior = "727fb0e4c569ff54db1be67c41616896f09b0aea", priorTree = "80f3c0014424f69aa6536ed30f941478c72ae179";
+  const eventMergeSha = "c612830ace665e2c6b447eff4164846b3895f22d", runnerMergeSha = "373922ed0f9343fdcc7627509880665b3af2fb2e";
+  try {
+    const gitBytes = (spec) => execFileSync("git", ["show", spec], { cwd: repositoryRoot });
+    const oldScriptBytes = gitBytes(`${head}:${ATTESTATION_REPAIR_PATHS[1]}`);
+    const oldScriptPath = path.join(temporary, "historical-f059-attestation.mjs"); writeFileSync(oldScriptPath, oldScriptBytes);
+    const old = await import(pathToFileURL(oldScriptPath).href);
+    const workflowBytes = gitBytes(`${head}:${ATTESTATION_REPAIR_PATHS[0]}`);
+    const observed = readinessEventFixture(head);
+    observed.event.action = "synchronize"; observed.event.pull_request.merge_commit_sha = eventMergeSha;
+    observed.environment.GITHUB_SHA = runnerMergeSha; observed.environment.GITHUB_WORKFLOW_SHA = runnerMergeSha;
+    observed.environment.GITHUB_RUN_ID = "34535718182";
+    observed.workflowBlob = sha1(Buffer.concat([Buffer.from(`blob ${workflowBytes.length}\0`), workflowBytes]));
+    assert.equal(observed.workflowBlob, "4c8f3883f2190b97a2b41a26bddc69c487b91a94");
+    assert.throws(() => old.deriveCiPreviewExecutionIdentity(observed), (error) => {
+      assert.equal(error.message, "CLOVER_READINESS_CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE");
+      assert.deepEqual(error.failedPredicates, ["GITHUB_SHA_MATCHES_MERGE", "WORKFLOW_SHA_MATCHES_MERGE"]); return true;
+    });
+    const sourceBinding = { head, tree, parent: prior, parentTree: priorTree, commitIds: [...CI_PREVIEW_FOURTH_PREFIX, head],
+      fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], fifthCommitPaths: null };
+    const fixture = syntheticCiProviderFixture({ fixture: observed, tree, workflowBytes, sourceBinding });
+    fixture.now = () => new Date("2026-09-10T22:06:18.000Z");
+    const proof = await acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl,
+      now: () => new Date("2026-09-10T22:06:18.000Z") });
+    const accepted = deriveCiPreviewExecutionIdentity({ ...fixture.input, proof, now: fixture.now() });
+    assert.equal(accepted.headSha, head); assert.equal(accepted.eventMergeSha, eventMergeSha);
+    assert.equal(accepted.runnerMergeSha, runnerMergeSha); assert.equal(accepted.workflowSha, runnerMergeSha);
+    assert.equal(accepted.mergeRelationship, "synchronize-immediate-predecessor");
+    assert.equal(accepted.externalAuthenticationEstablished, false); assert.equal(accepted.releaseAuthority, false);
+    assert.equal(proof.records.length, 8);
+    assert.deepEqual(proof.records[3].projection.parents, [CI_PREVIEW_READINESS_BASE, prior]);
+    assert.equal(proof.records[3].projection.tree, priorTree);
+    // The actual historical checkout and workflow retain the old failure. No source bytes are rewritten.
+    const checkout = path.join(temporary, "historical-checkout");
+    execFileSync("git", ["clone", "--shared", "--no-checkout", "--quiet", repositoryRoot, checkout], { stdio: "pipe" });
+    execFileSync("git", ["switch", "--quiet", "--detach", head], { cwd: checkout, stdio: "pipe" });
+    const eventPath = path.join(temporary, "original-selected-event-fixture.json"); writeFileSync(eventPath, JSON.stringify(observed.event));
+    const bin = path.join(temporary, "bin"); mkdirSync(bin); symlinkSync(process.execPath, path.join(bin, "node"));
+    const guard = path.join(temporary, "deny-historical-acquisition.mjs");
+    writeFileSync(guard, 'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");\nglobalThis.fetch = () => { throw new Error("HISTORICAL_REPLAY_MUST_NOT_ACQUIRE"); };\n');
+    const workflow = loadYaml(workflowBytes.toString("utf8"));
+    for (const [job, value] of Object.entries(workflow.jobs)) {
+      const step = value.steps.find((entry) => entry.id === "readiness-ci-identity-proof"); if (!step) continue;
+      const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+        cwd: checkout, env: readinessFixtureEnvironment({ ...observed.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
+          RUNNER_TEMP: temporary, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          NODE_OPTIONS: `--import=${JSON.stringify(guard)}` }),
+        encoding: "utf8", timeout: 20_000, maxBuffer: 128 * 1024
+      });
+      retainSyntheticCiDemonstration(`historical-f059-${job}`, { scenario: "historical-f059-actual-source-replay", job,
+        historicalSource: sourceBinding, historicalScriptSha256: sha256(oldScriptBytes), workflowSha256: sha256(workflowBytes),
+        selectedObservedInputs: { eventMergeSha, runnerMergeSha, runId: "34535718182", runAttempt: "1" },
+        oldPolicy: { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr },
+        proposedRelationship: { status: "proved-by-explicit-mocks-only", proof, identity: accepted },
+        currentCandidateSourceAcceptance: false, remoteRunResultUnchanged: "failure" });
+      assert.equal(result.error, undefined); assert.equal(result.signal, null); assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /CLOVER_READINESS_CI_EVENT_REJECTED:GITHUB_SHA_MATCHES_MERGE/u);
+      assert.ok(result.stderr.includes(eventMergeSha) && result.stderr.includes(runnerMergeSha));
+      assert.doesNotMatch(result.stderr, /HISTORICAL_REPLAY_MUST_NOT_ACQUIRE/u);
+      assert.equal(existsSync(path.join(temporary, "clover-ci-provider-proof.json")), false);
+    }
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("readiness CI provider acquisition rejects substituted or unavailable facts and never echoes provider errors", async () => {
+  const cases = [
+    ["RUN_ATTEMPT", (e) => { e.body.id += 1; }],
+    ["RUN_ATTEMPT", (e) => { e.body.run_attempt += 1; }],
+    ["RUN_ATTEMPT", (e) => { e.body.repository = { ...e.body.repository, full_name: "other/repository" }; }],
+    ["RUN_ATTEMPT", (e) => { e.body.head_sha = hex40("e"); }],
+    ["RUN_ATTEMPT", (e) => { e.body.head_branch = "main"; }],
+    ["RUN_ATTEMPT", (e) => { e.body.pull_requests[0].number = 37; }],
+    ["RUN_ATTEMPT", (e) => { e.body.pull_requests[0].base.sha = hex40("e"); }],
+    ["RUN_ATTEMPT", (e) => { e.body.pull_requests[0].head.repo.id += 1; }],
+    ["RUN_ATTEMPT", (e) => { e.body.pull_requests = []; }],
+    ["HEAD_COMMIT", (e) => { e.body.parents = [{ sha: CI_PREVIEW_READINESS_BASE }]; }],
+    ["HEAD_COMMIT", (e) => { e.body.tree.sha = hex40("e"); }],
+    ["MERGE_COMMIT", (e) => { e.body.parents.reverse(); }],
+    ["MERGE_COMMIT", (e) => { e.body.tree.sha = hex40("e"); }],
+    ["MERGE_COMMIT", (e) => { e.body.sha = hex40("e"); }],
+    ["HEAD_WORKFLOW", (e) => { e.body = { ...e.body, path: "unrelated-workflow" }; }],
+    ["MERGE_WORKFLOW", (e) => { e.body = { ...e.body, sha: hex40("e") }; }],
+    ["MERGE_WORKFLOW", (e) => { e.body = { ...e.body, content: Buffer.from("substituted bytes").toString("base64") }; }],
+    ["MERGE_REF", (e) => { e.body.object.sha = hex40("e"); }],
+    ["HEAD_REF", (e) => { e.body.ref = "refs/heads/main"; }],
+    ["RUN_ATTEMPT", (e) => { e.status = 403; }],
+    ["RUN_ATTEMPT", (e) => { e.redirected = true; }],
+    ["RUN_ATTEMPT", (e) => { e.responseUrl = "https://unapproved.invalid/"; }],
+    ["RUN_ATTEMPT", (e) => { e.raw = Buffer.from('{"id":1,"id":2}'); }],
+    ["RUN_ATTEMPT", (e) => { e.raw = Buffer.alloc(2 * 1024 * 1024 + 1, 0x20); }]
+  ];
+  for (const [kind, change] of cases) {
+    const fixture = syntheticCiProviderFixture();
+    const index = fixture.entries.findIndex((entry) => entry.kind === kind);
+    change(fixture.entries[index]);
+    await assert.rejects(acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: fixture.fetchImpl, now: fixture.now }), /CLOVER_READINESS_CI_PROOF_REJECTED:/u);
+    assert.equal(fixture.calls.length, index + 1, "failure must not fall back to unrelated endpoints or continue acquisition");
+  }
+  const fixture = syntheticCiProviderFixture();
+  const canary = "synthetic-provider-secret-canary\n::error::DO_NOT_ECHO";
+  await assert.rejects(acquireCiPreviewProviderProof({ ...fixture.input, fetchImpl: async () => { throw new Error(canary); }, now: fixture.now }),
+    (error) => { assert.equal(error.message, "CLOVER_READINESS_CI_PROOF_REJECTED:RUN_ATTEMPT_ACQUISITION"); return true; });
+});
+
+test("readiness CI binds the actual event, exact stacked base/head, merge ref and run attempt without authority", () => {
+  const fixture = readinessEventFixture("c".repeat(40));
+  const identity = parseCiPreviewExecutionInputs(fixture);
+  assert.equal(identity.baseSha, CI_PREVIEW_READINESS_BASE);
+  assert.notEqual(identity.headSha, identity.runnerMergeSha);
+  assert.equal(identity.artifactPrefix, `clover-ci-preview-readiness-${fixture.head}-123456789-1`);
+  assert.equal(identity.nodeVersion, process.version);
+  const changes = [
+    (v) => { v.environment.GITHUB_ACTIONS = "false"; },
+    (v) => { v.environment.GITHUB_EVENT_NAME = "push"; },
+    (v) => { v.environment.GITHUB_EVENT_NAME = "pull_request_target"; },
+    (v) => { v.event.action = "closed"; },
+    (v) => { v.event.number = 35; },
+    (v) => { v.event.pull_request.number += 1; },
+    (v) => { v.event.pull_request.state = "closed"; },
+    (v) => { v.event.repository.full_name = "other/repo"; },
+    (v) => { v.event.pull_request.head.repo.full_name = "other/first"; },
+    (v) => { v.event.pull_request.base.repo.full_name = "other/first"; },
+    (v) => { v.event.pull_request.base.sha = "d".repeat(40); },
+    (v) => { v.event.pull_request.base.ref = "main"; },
+    (v) => { v.event.pull_request.head.sha = "d".repeat(40); },
+    (v) => { v.event.pull_request.head.ref = DEPENDENCY_SUCCESSOR_BRANCH; },
+    (v) => { v.environment.CLOVER_TREE_EXACT_PR_HEAD = "d".repeat(40); },
+    (v) => { v.environment.CLOVER_TREE_HEAD = "d".repeat(40); },
+    (v) => { v.environment.GITHUB_SHA = v.head; },
+    (v) => { v.environment.GITHUB_REF = `refs/heads/${CI_PREVIEW_READINESS_BRANCH}`; },
+    (v) => { v.environment.GITHUB_HEAD_REF = "wrong"; },
+    (v) => { v.environment.GITHUB_BASE_REF = "main"; },
+    (v) => { v.environment.GITHUB_REPOSITORY = "other/first"; },
+    (v) => { v.environment.GITHUB_RUN_ID = ""; },
+    (v) => { v.environment.GITHUB_RUN_ATTEMPT = "0"; },
+    (v) => { v.environment.GITHUB_RUN_ATTEMPT = "9007199254740992"; },
+    (v) => { v.environment.GITHUB_WORKFLOW_REF = "unrelated-workflow"; },
+    (v) => { v.environment.GITHUB_WORKFLOW_SHA = v.head; },
+    (v) => { v.workflowBlob = "not-a-blob"; }
+  ];
+  for (const change of changes) {
+    const changed = structuredClone(fixture); change(changed);
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), /CLOVER_READINESS_CI_EVENT_REJECTED/u);
+  }
+});
+
+test("readiness CI diagnostics identify fixed predicates without exposing supplied values", () => {
+  const fixture = readinessEventFixture("c".repeat(40));
+  const untrusted = "synthetic-secret-canary\n::error::untrusted";
+  const cases = [
+    ["GITHUB_ACTIONS", (v) => { v.environment.GITHUB_ACTIONS = untrusted; }],
+    ["GITHUB_EVENT_NAME", (v) => { v.environment.GITHUB_EVENT_NAME = untrusted; }],
+    ["SOURCE_CONTEXT", (v) => { v.environment.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT = untrusted; }],
+    ["EVENT_ACTION", (v) => { v.event.action = untrusted; }],
+    ["EVENT_PR_NUMBER", (v) => { v.event.number = untrusted; }],
+    ["PAYLOAD_PR_NUMBER", (v) => { v.event.pull_request.number = untrusted; }],
+    ["ENV_PR_NUMBER", (v) => { v.environment.CLOVER_TREE_PR_NUMBER = untrusted; }],
+    ["PR_STATE", (v) => { v.event.pull_request.state = untrusted; }],
+    ["EVENT_REPOSITORY", (v) => { v.event.repository.full_name = untrusted; }],
+    ["HEAD_REPOSITORY", (v) => { v.event.pull_request.head.repo.full_name = untrusted; }],
+    ["BASE_REPOSITORY", (v) => { v.event.pull_request.base.repo.full_name = untrusted; }],
+    ["GITHUB_REPOSITORY", (v) => { v.environment.GITHUB_REPOSITORY = untrusted; }],
+    ["PAYLOAD_HEAD_REF", (v) => { v.event.pull_request.head.ref = untrusted; }],
+    ["GITHUB_HEAD_REF", (v) => { v.environment.GITHUB_HEAD_REF = untrusted; }],
+    ["PAYLOAD_BASE_REF", (v) => { v.event.pull_request.base.ref = untrusted; }],
+    ["GITHUB_BASE_REF", (v) => { v.environment.GITHUB_BASE_REF = untrusted; }],
+    ["PAYLOAD_BASE_SHA", (v) => { v.event.pull_request.base.sha = untrusted; }],
+    ["CHECKOUT_HEAD_FORMAT", (v) => { v.head = untrusted; }],
+    ["PAYLOAD_HEAD_SHA", (v) => { v.event.pull_request.head.sha = untrusted; }],
+    ["ENV_HEAD_SHA", (v) => { v.environment.CLOVER_TREE_HEAD = untrusted; }],
+    ["ENV_EXACT_PR_HEAD", (v) => { v.environment.CLOVER_TREE_EXACT_PR_HEAD = untrusted; }],
+    ["PAYLOAD_MERGE_SHA_FORMAT", (v) => { v.event.pull_request.merge_commit_sha = untrusted; }],
+    ["GITHUB_SHA_FORMAT", (v) => { v.environment.GITHUB_SHA = untrusted; }],
+    ["GITHUB_REF", (v) => { v.environment.GITHUB_REF = untrusted; }],
+    ["WORKFLOW_SHA_MATCHES_RUNNER_MERGE", (v) => { v.environment.GITHUB_WORKFLOW_SHA = untrusted; }],
+    ["GITHUB_WORKFLOW_REF", (v) => { v.environment.GITHUB_WORKFLOW_REF = untrusted; }],
+    ["GITHUB_RUN_ID", (v) => { v.environment.GITHUB_RUN_ID = untrusted; }],
+    ["GITHUB_RUN_ATTEMPT", (v) => { v.environment.GITHUB_RUN_ATTEMPT = untrusted; }],
+    ["WORKFLOW_BLOB", (v) => { v.workflowBlob = untrusted; }]
+  ];
+  for (const [predicate, change] of cases) {
+    const changed = structuredClone(fixture); change(changed);
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), (error) => {
+      assert.equal(error.message, `CLOVER_READINESS_CI_EVENT_REJECTED:${predicate}`);
+      assert.equal(error.message.includes(untrusted), false);
+      return true;
+    });
+  }
+  const multiple = structuredClone(fixture);
+  multiple.event.action = untrusted; multiple.environment.GITHUB_RUN_ID = untrusted;
+  assert.throws(() => parseCiPreviewExecutionInputs(multiple), (error) => {
+    assert.match(error.message, /CI_EVENT_REJECTED:EVENT_ACTION$/u);
+    assert.deepEqual(error.failedPredicates, ["EVENT_ACTION", "GITHUB_RUN_ID"]);
+    assert.equal(JSON.stringify(error.failedPredicates).includes(untrusted), false);
+    return true;
+  });
+});
+
+test("readiness CI retains unknown and conflicting merge/workflow rejection and downstream merge distinction", () => {
+  // Generic malformed-input negatives; earlier unlogged runs remain unknown and the f059 replay is separate.
+  const fixture = readinessEventFixture("c".repeat(40));
+  for (const merge of [undefined, null, "", "not-a-sha"]) {
+    const changed = structuredClone(fixture); changed.event.pull_request.merge_commit_sha = merge;
+    assert.throws(() => parseCiPreviewExecutionInputs(changed), /CI_EVENT_REJECTED:PAYLOAD_MERGE_SHA_FORMAT$/u);
+  }
+  const sameHead = structuredClone(fixture);
+  sameHead.event.pull_request.merge_commit_sha = sameHead.head;
+  sameHead.environment.GITHUB_SHA = sameHead.head; sameHead.environment.GITHUB_WORKFLOW_SHA = sameHead.head;
+  assert.throws(() => parseCiPreviewExecutionInputs(sameHead), /CI_EVENT_REJECTED:MERGE_DISTINCT_FROM_HEAD$/u);
+  const staleMerge = structuredClone(fixture); staleMerge.event.pull_request.merge_commit_sha = "d".repeat(40);
+  assert.throws(() => parseCiPreviewExecutionInputs(staleMerge), /CI_EVENT_REJECTED:DISTINCT_MERGE_REQUIRES_SYNCHRONIZE$/u);
+  const alternateWorkflow = structuredClone(fixture); alternateWorkflow.environment.GITHUB_WORKFLOW_SHA = alternateWorkflow.head;
+  assert.throws(() => parseCiPreviewExecutionInputs(alternateWorkflow), /CI_EVENT_REJECTED:WORKFLOW_SHA_MATCHES_RUNNER_MERGE$/u);
+  const missingWorkflow = structuredClone(fixture); delete missingWorkflow.environment.GITHUB_WORKFLOW_REF;
+  assert.throws(() => parseCiPreviewExecutionInputs(missingWorkflow), /CI_EVENT_REJECTED:GITHUB_WORKFLOW_REF$/u);
+  // Dynamic run IDs/attempts and supported actions are allowed input, not evidence of execution approval.
+  for (const action of ["opened", "synchronize", "reopened"]) {
+    const changed = structuredClone(fixture); changed.event.action = action;
+    changed.environment.GITHUB_RUN_ID = "987654321"; changed.environment.GITHUB_RUN_ATTEMPT = "2";
+    const result = parseCiPreviewExecutionInputs(changed);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(result.runId, "987654321"); assert.equal(result.runAttempt, "2");
+    assert.equal(result.artifactPrefix, `clover-ci-preview-readiness-${changed.head}-987654321-2`);
+    assert.equal(Object.hasOwn(result, "releaseAuthority"), false);
+  }
+});
+
+test("readiness CI snapshot keeps original public operands and classifies unsafe values without echoing them", () => {
+  const fixture = readinessEventFixture(hex40("c"));
+  fixture.environment.GITHUB_SHA = hex40("d");
+  const snapshot = captureCiPreviewIdentitySnapshot(fixture);
+  assert.equal(snapshot.schemaVersion, "clover-ci-identity-observation-v2");
+  assert.equal(snapshot.origin, "runner-input-before-provider-acquisition");
+  assert.deepEqual(snapshot.fields.runnerMergeSha, { present: true, type: "string", format: "valid", value: hex40("d") });
+  assert.deepEqual(snapshot.fields.eventMergeSha, { present: true, type: "string", format: "valid", value: hex40("a") });
+  assert.equal(snapshot.fields.checkoutHead.value, fixture.head);
+  assert.equal(snapshot.fields.eventHeadSha.value, fixture.head);
+  assert.equal(snapshot.fields.eventBaseSha.value, CI_PREVIEW_READINESS_BASE);
+  assert.equal(snapshot.fields.workflowSha.value, hex40("a"));
+  assert.equal(snapshot.fields.workflowRef.value, fixture.environment.GITHUB_WORKFLOW_REF);
+  assert.equal(snapshot.fields.runId.value, fixture.environment.GITHUB_RUN_ID);
+  assert.equal(snapshot.fields.runAttempt.value, fixture.environment.GITHUB_RUN_ATTEMPT);
+  // Capturing a record must neither validate an inequality nor rewrite its original event operand.
+  assert.equal(fixture.event.pull_request.merge_commit_sha, hex40("a"));
+  assert.throws(() => parseCiPreviewExecutionInputs(fixture), /CI_EVENT_REJECTED:DISTINCT_MERGE_REQUIRES_SYNCHRONIZE$/u);
+  const canary = "synthetic-secret-canary\n::error::DO_NOT_ECHO";
+  for (const [value, expected] of [
+    [undefined, { present: false, type: "missing", format: "absent", value: null }],
+    [null, { present: true, type: "null", format: "null", value: null }],
+    [canary, { present: true, type: "string", format: "invalid", value: null }],
+    [42, { present: true, type: "number", format: "invalid", value: null }],
+    [{ secret: canary }, { present: true, type: "object", format: "invalid", value: null }]
+  ]) {
+    const changed = structuredClone(fixture);
+    if (value === undefined) delete changed.event.pull_request.merge_commit_sha;
+    else changed.event.pull_request.merge_commit_sha = value;
+    changed.environment.GITHUB_WORKFLOW_REF = canary;
+    changed.environment.GITHUB_RUN_ID = canary;
+    changed.environment.UNRELATED_SECRET = canary;
+    changed.event.unrelatedPrivateValue = canary;
+    const actual = captureCiPreviewIdentitySnapshot(changed);
+    assert.deepEqual(actual.fields.eventMergeSha, expected);
+    assert.equal(actual.fields.workflowRef.format, "invalid");
+    assert.equal(actual.fields.workflowRef.value, null);
+    assert.equal(actual.fields.runId.format, "invalid");
+    assert.equal(actual.fields.runId.value, null);
+    assert.equal(JSON.stringify(actual).includes(canary), false);
+    assert.equal(JSON.stringify(actual).includes("DO_NOT_ECHO"), false);
+    assert.ok(Buffer.byteLength(JSON.stringify(actual)) < 16 * 1024);
+  }
+});
+
+test("readiness source preserves fourth and fifth histories and admits only the anchored two-path sixth", () => {
+  const prefix = [
+    "7c1f817e973c260266e937ff3328e21b715db7c6",
+    "337816e15d29f66a2ac0011b6413d688e752a01d",
+    "727fb0e4c569ff54db1be67c41616896f09b0aea"
+  ];
+  const fourthCommitPaths = [
+    ".github/workflows/validate-clover-tree-command-center.yml",
+    "apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs",
+    "apps/clover-launch-studio/test/live-truth-attestation.test.mjs"
+  ];
+  const fourth = { commitIds: [...prefix, hex40("c")], head: hex40("c"), parent: prefix.at(-1), fourthCommitPaths };
+  assert.equal(isAllowedCiPreviewReadinessLineage(fourth), true);
+  assert.equal(isAllowedCiPreviewReadinessLineage({ commitIds: prefix, head: prefix.at(-1), parent: prefix.at(-2), fourthCommitPaths: null }), true);
+  assert.equal(isAllowedCiPreviewReadinessLineage({ commitIds: [hex40("c")], head: hex40("c"), parent: CI_PREVIEW_READINESS_BASE, fourthCommitPaths: null }), true);
+  for (const change of [
+    (v) => { v.commitIds[0] = hex40("d"); },
+    (v) => { [v.commitIds[0], v.commitIds[1]] = [v.commitIds[1], v.commitIds[0]]; },
+    (v) => { v.parent = hex40("d"); },
+    (v) => { v.head = hex40("d"); },
+    (v) => { v.fourthCommitPaths = null; },
+    (v) => { v.fourthCommitPaths = []; },
+    (v) => { v.fourthCommitPaths.push("apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"); },
+    (v) => { v.fourthCommitPaths.push(v.fourthCommitPaths[0]); },
+    (v) => { v.commitIds.push(hex40("d")); v.parent = v.head; v.head = hex40("d"); }
+  ]) {
+    const changed = structuredClone(fourth); change(changed);
+    assert.equal(isAllowedCiPreviewReadinessLineage(changed), false);
+  }
+  const fifth = syntheticFifthCiSourceBinding();
+  assert.equal(isAllowedCiPreviewReadinessLineage(fifth), true);
+  for (const change of [
+    (v) => { v.parent = CI_PREVIEW_FOURTH_PARENT; }, (v) => { v.parentTree = hex40("e"); },
+    (v) => { v.commitIds[3] = hex40("e"); }, (v) => { v.fifthCommitPaths = null; },
+    (v) => { v.fifthCommitPaths = []; }, (v) => { v.fifthCommitPaths.reverse(); },
+    (v) => { v.fifthCommitPaths.push(v.fifthCommitPaths[0]); },
+    (v) => { v.fifthCommitPaths.push("apps/clover-launch-studio/package-lock.json"); },
+    (v) => { v.commitIds.push(hex40("e")); v.parent = v.head; v.head = hex40("e"); }
+  ]) { const changed = structuredClone(fifth); change(changed); assert.equal(isAllowedCiPreviewReadinessLineage(changed), false); }
+  const sixth = syntheticCiSourceBinding();
+  assert.equal(isAllowedCiPreviewReadinessLineage(sixth), true);
+  for (const change of [
+    (v) => { v.commitIds[4] = hex40("e"); v.parent = hex40("e"); },
+    (v) => { v.parent = CI_PREVIEW_FIFTH_PARENT; }, (v) => { v.parentTree = hex40("e"); },
+    (v) => { delete v.sixthCommitPaths; }, (v) => { v.sixthCommitPaths = null; },
+    (v) => { v.sixthCommitPaths.pop(); }, (v) => { v.sixthCommitPaths.reverse(); },
+    (v) => { v.sixthCommitPaths.push(CI_PREVIEW_FOURTH_PATHS[0]); },
+    (v) => { v.sixthCommitPaths.push(v.sixthCommitPaths[0]); },
+    (v) => { v.commitIds.push(hex40("e")); v.parent = v.head; v.head = hex40("e"); }
+  ]) { const changed = structuredClone(sixth); change(changed); assert.equal(isAllowedCiPreviewReadinessLineage(changed), false); }
+  assert.equal(isAllowedCiPreviewReadinessLineage({ ...fifth, sixthCommitPaths: null }), false);
+});
+
+readinessSubprocessTest("readiness CI actual parsed workflow preserves complete sanitized failure records through the CLI offline", () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const workflow = loadYaml(readFileSync(path.join(repositoryRoot, ATTESTATION_REPAIR_PATHS[0]), "utf8"));
+  const steps = Object.entries(workflow.jobs).flatMap(([job, value]) => value.steps
+    .filter((step) => step.id === "readiness-ci-identity-proof").map((step) => ({ job, step })));
+  assert.equal(steps.length, 2, "both actual CI lanes must invoke the reviewed proof command");
+  assert.equal(new Set(steps.map(({ job }) => job)).size, 2);
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-synthetic-workflow-identity-")));
+  const canary = "synthetic-secret-canary\n::error::DO_NOT_ECHO";
+  try {
+    const bin = path.join(temporary, "bin"); mkdirSync(bin);
+    symlinkSync(process.execPath, path.join(bin, "node"));
+    const preload = path.join(temporary, "synthetic-offline-acquisition.mjs");
+    writeFileSync(preload, [
+      'import fs from "node:fs";',
+      'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");',
+      'import http from "node:http"; import https from "node:https";',
+      'import net from "node:net"; import tls from "node:tls"; import dns from "node:dns";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'const deny = () => { throw new Error("SYNTHETIC_OFFLINE_NETWORK_DENIED"); };',
+      'http.request = http.get = https.request = https.get = deny;',
+      'net.connect = net.createConnection = net.Socket.prototype.connect = tls.connect = deny;',
+      'for (const key of ["lookup", "resolve", "resolve4", "resolve6", "reverse"]) dns[key] = deny;',
+      'syncBuiltinESMExports();',
+      'globalThis.fetch = async () => { fs.appendFileSync(process.env.SYNTHETIC_FETCH_TRACE, "called\\n"); throw new Error(process.env.SYNTHETIC_ACQUISITION_CANARY); };'
+    ].join("\n"));
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot, encoding: "utf8" }).trim();
+    const cases = [
+      { name: "distinct-valid-operands", change: (v) => { v.environment.GITHUB_SHA = hex40("f"); v.environment.GITHUB_WORKFLOW_SHA = hex40("f"); },
+        predicate: "DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", eventFormat: "valid", calls: 0 },
+      { name: "absent-event-merge", change: (v) => { delete v.event.pull_request.merge_commit_sha; },
+        predicate: "PAYLOAD_MERGE_SHA_FORMAT", eventFormat: "absent", calls: 0 },
+      { name: "null-event-merge", change: (v) => { v.event.pull_request.merge_commit_sha = null; },
+        predicate: "PAYLOAD_MERGE_SHA_FORMAT", eventFormat: "null", calls: 0 },
+      { name: "malformed-event-merge", change: (v) => { v.event.pull_request.merge_commit_sha = canary; },
+        predicate: "PAYLOAD_MERGE_SHA_FORMAT", eventFormat: "invalid", calls: 0 },
+      { name: "malformed-runner-sha", change: (v) => { v.environment.GITHUB_SHA = canary; },
+        predicate: "GITHUB_SHA_FORMAT", eventFormat: "valid", runnerFormat: "invalid", calls: 0 },
+      { name: "missing-run-id", change: (v) => { delete v.environment.GITHUB_RUN_ID; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "absent", calls: 0 },
+      { name: "empty-run-id", change: (v) => { v.environment.GITHUB_RUN_ID = ""; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "invalid", calls: 0 },
+      { name: "null-run-id", change: (v) => { v.environment.GITHUB_RUN_ID = null; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "invalid", calls: 0 },
+      { name: "malformed-run-id", change: (v) => { v.environment.GITHUB_RUN_ID = "synthetic-invalid-id"; },
+        predicate: "GITHUB_RUN_ID", eventFormat: "valid", field: "runId", format: "invalid", calls: 0 },
+      { name: "missing-run-attempt", change: (v) => { delete v.environment.GITHUB_RUN_ATTEMPT; },
+        predicate: "GITHUB_RUN_ATTEMPT", eventFormat: "valid", field: "runAttempt", format: "absent", calls: 0 },
+      { name: "missing-workflow-sha", change: (v) => { delete v.environment.GITHUB_WORKFLOW_SHA; },
+        predicate: "WORKFLOW_SHA_MATCHES_RUNNER_MERGE", eventFormat: "valid", field: "workflowSha", format: "absent", calls: 0 },
+      { name: "malformed-workflow-ref", change: (v) => { v.environment.GITHUB_WORKFLOW_REF = canary; },
+        predicate: "GITHUB_WORKFLOW_REF", eventFormat: "valid", field: "workflowRef", format: "invalid", calls: 0 },
+      { name: "adjacent-identity-failures", change: (v) => { v.environment.GITHUB_SHA = hex40("f");
+        v.environment.GITHUB_WORKFLOW_SHA = hex40("f"); v.environment.GITHUB_WORKFLOW_REF = canary; delete v.environment.GITHUB_RUN_ID; },
+        predicate: "DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", eventFormat: "valid", calls: 0, field: "runId", format: "absent",
+        failedPredicates: ["DISTINCT_MERGE_REQUIRES_SYNCHRONIZE", "GITHUB_WORKFLOW_REF", "GITHUB_RUN_ID"] }
+    ];
+    for (const { job, step } of steps) {
+      assert.match(step.if, /ci-preview-readiness/u);
+      assert.equal(step["continue-on-error"], undefined);
+      assert.match(step.run, /readiness-ci-proof/u);
+      assert.doesNotMatch(step.run, /\|\|\s*(?:true|:)|continue-on-error/u);
+      for (const scenario of cases) {
+        const caseRoot = path.join(temporary, `${job}-${scenario.name}`); mkdirSync(caseRoot);
+        const eventPath = path.join(caseRoot, "synthetic-event.json");
+        const trace = path.join(caseRoot, "synthetic-fetch.trace");
+        const fixture = readinessEventFixture(head); scenario.change(fixture);
+        const fixtureBefore = structuredClone(fixture);
+        const isolatedProbe = readinessFixtureEnvironment(fixture.environment);
+        for (const key of Object.keys(syntheticParentCiEnvironment)) {
+          if (!Object.hasOwn(fixture.environment, key)) assert.equal(Object.hasOwn(isolatedProbe, key), false, key);
+        }
+        assert.deepEqual(fixture, fixtureBefore);
+        assert.deepEqual(Object.fromEntries(Object.keys(syntheticParentCiEnvironment).map((key) => [key, process.env[key]])), syntheticParentCiEnvironment);
+        writeFileSync(eventPath, JSON.stringify(fixture.event));
+        const startedAt = new Date().toISOString();
+        const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+          cwd: step["working-directory"] ? path.resolve(repositoryRoot, step["working-directory"]) : repositoryRoot,
+          env: readinessFixtureEnvironment({ ...fixture.environment, GITHUB_WORKSPACE: repositoryRoot, GITHUB_EVENT_PATH: eventPath,
+            RUNNER_TEMP: caseRoot, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+            NODE_OPTIONS: `--import=${JSON.stringify(preload)}`,
+            SYNTHETIC_FETCH_TRACE: trace, SYNTHETIC_ACQUISITION_CANARY: canary }),
+          encoding: "utf8", timeout: 20_000, maxBuffer: 128 * 1024
+        });
+        const calls = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n").length : 0;
+        retainSyntheticCiDemonstration(`${job}-${scenario.name}`, { job, scenario: scenario.name, startedAt,
+          endedAt: new Date().toISOString(), status: result.status, signal: result.signal,
+          stdout: result.stdout, stderr: result.stderr, syntheticFetchCalls: calls, command: step.run,
+          commandSha256: sha256(step.run), checkoutAtTest: head,
+          sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(repositoryRoot, entry)))])) });
+        assert.equal(result.error, undefined, `${job}/${scenario.name} must complete without a harness timeout`);
+        assert.equal(result.signal, null);
+        assert.notEqual(result.status, 0, `${job}/${scenario.name} must retain its failing exit`);
+        const combined = `${result.stdout}\n${result.stderr}`;
+        assert.equal(combined.includes(canary), false);
+        assert.equal(combined.includes("DO_NOT_ECHO"), false);
+        const observations = result.stderr.split("\n").flatMap((line) => {
+          const start = line.indexOf("{"); if (start < 0) return [];
+          try { const record = JSON.parse(line.slice(start)); return record.schemaVersion === "clover-ci-identity-observation-v2" ? [record] : []; }
+          catch { return []; }
+        });
+        assert.equal(observations.length, 1, `${job}/${scenario.name} must preserve the actual CLI observation on failure`);
+        const original = observations[0];
+        assert.equal(original.origin, "runner-input-before-provider-acquisition");
+        assert.equal(original.fields.checkoutHead.value, head);
+        assert.equal(original.fields.runnerMergeSha.format, scenario.runnerFormat ?? "valid");
+        assert.equal(original.fields.runnerMergeSha.value, scenario.runnerFormat === "invalid" ? null : fixture.environment.GITHUB_SHA);
+        assert.equal(original.fields.eventMergeSha.format, scenario.eventFormat);
+        if (scenario.eventFormat === "valid") assert.equal(original.fields.eventMergeSha.value, fixture.event.pull_request.merge_commit_sha);
+        else assert.equal(original.fields.eventMergeSha.value, null);
+        if (scenario.field) {
+          assert.equal(original.fields[scenario.field].format, scenario.format);
+          assert.equal(original.fields[scenario.field].value, null);
+        }
+        if (scenario.predicate) assert.match(result.stderr, new RegExp(`CLOVER_READINESS_CI_EVENT_REJECTED:${scenario.predicate}`, "u"));
+        else assert.match(result.stderr, /CLOVER_READINESS_CI_PROOF_REJECTED:RUN_ATTEMPT_ACQUISITION/u);
+        if (scenario.failedPredicates) {
+          const failures = result.stderr.split("\n").flatMap((line) => {
+            try { const record = JSON.parse(line); return record.schemaVersion === "clover-ci-identity-failure-v2" ? [record] : []; }
+            catch { return []; }
+          });
+          assert.equal(failures.length, 1);
+          assert.deepEqual(failures[0].failedPredicates, scenario.failedPredicates);
+        }
+        assert.equal(calls, scenario.calls);
+        assert.equal(existsSync(path.join(caseRoot, "clover-ci-provider-proof.json")), false, "failed cases must not leave a usable provider proof");
+      }
+    }
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+readinessSubprocessTest("readiness CI actual parsed workflow consumes a synthetic sixth candidate proof offline in both lanes", async () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-synthetic-sixth-ci-")));
+  const checkout = path.join(temporary, "repository");
+  const run = (args) => execFileSync("git", args, { cwd: checkout, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    // Disposable offline fixture: shared immutable object reads avoid copying the entire historical object store.
+    execFileSync("git", ["clone", "--shared", "--no-checkout", "--quiet", repositoryRoot, checkout], { stdio: "pipe" });
+    run(["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, CI_PREVIEW_SIXTH_PARENT]);
+    const localEnvironment = { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT };
+    const retainedScript = path.join(temporary, "retained-fifth-script.mjs");
+    writeFileSync(retainedScript, readFileSync(path.join(checkout, ATTESTATION_REPAIR_PATHS[1])));
+    const retainedModule = await import(pathToFileURL(retainedScript).href);
+    const historicalLocal = retainedModule.deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment });
+    assert.deepEqual(deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment }), historicalLocal);
+    assert.equal(historicalLocal.schemaVersion, "clover-ci-preview-readiness-source-v2");
+    assert.equal(Object.hasOwn(historicalLocal, "sixthCommitPaths"), false);
+    retainSyntheticCiDemonstration("retained-fifth-source-shape", { historicalHead: CI_PREVIEW_SIXTH_PARENT,
+      originalScriptSha256: sha256(readFileSync(retainedScript)), unchangedProof: historicalLocal, currentSourceAcceptance: false });
+    for (const entry of CI_PREVIEW_SIXTH_PATHS) writeFileSync(path.join(checkout, entry),
+      execFileSync("git", ["show", `${CI_PREVIEW_SUCCESSOR_ANCHOR}:${entry}`], { cwd: repositoryRoot, stdio: "pipe" }));
+    run(["add", "--", ...CI_PREVIEW_SIXTH_PATHS]);
+    run(["-c", "user.name=Synthetic sixth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic sixth identity-proof fixture"]);
+    const head = run(["rev-parse", "HEAD"]), tree = run(["rev-parse", "HEAD^{tree}"]);
+    assert.equal(run(["show", "-s", "--format=%P", "HEAD"]), CI_PREVIEW_SIXTH_PARENT);
+    assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
+    const localProof = deriveCiPreviewReadinessSource({ repositoryRoot: checkout,
+      environment: { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT } });
+    assert.equal(localProof.localCommitCount, 6); assert.equal(localProof.parent, CI_PREVIEW_SIXTH_PARENT);
+    assert.equal(localProof.parentTree, CI_PREVIEW_SIXTH_PARENT_TREE); assert.equal(localProof.ciExecution, null);
+    assert.equal(localProof.releaseAuthority, false);
+    const workflowBytes = readFileSync(path.join(checkout, ATTESTATION_REPAIR_PATHS[0]));
+    const workflow = loadYaml(workflowBytes.toString("utf8"));
+    const steps = Object.entries(workflow.jobs).flatMap(([job, value]) => value.steps
+      .filter((step) => step.id === "readiness-ci-identity-proof").map((step) => ({ job, step })));
+    assert.equal(steps.length, 2);
+    // Run only the actual embedded source invocation and its adjacent identity/proof checks;
+    // the rest of these jobs would run unapproved install, browser, or upload campaigns.
+    const contextStart = "const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);";
+    const retainedEnd = "} else if (fs.existsSync(readinessProofPath)) throw new Error('readiness source proof outside explicit successor context');";
+    const wrappers = Object.entries(workflow.jobs).flatMap(([job, value]) => value.steps
+      .filter((step) => typeof step.run === "string" && step.run.includes("'readiness-source'"))
+      .map((step, index) => {
+        const context = step.run.indexOf(contextStart); assert.notEqual(context, -1);
+        let start = context, end, result;
+        if (step.run.includes("let readinessSource = null;")) {
+          end = step.run.indexOf("const expectedMainPathCount =", start); result = "readinessSource";
+        } else if (step.run.includes("let readinessBinding = null;")) {
+          end = step.run.indexOf(retainedEnd, start) + retainedEnd.length; result = "readinessBinding";
+          assert.ok(end >= start + retainedEnd.length);
+        } else {
+          assert.ok(step.run.includes("const readinessSourceRoot ="));
+          start = context;
+          end = step.run.indexOf("const dependencySuccessorContext =", start); result = "readinessSourceBindings[0]";
+        }
+        assert.ok(start >= 0 && end > start);
+        const code = step.run.slice(start, end);
+        assert.match(code, /stdio: \['ignore', 'pipe', 'inherit'\]/u);
+        const projectsStart = step.run.indexOf("const exactProjects =");
+        const projectCode = projectsStart < 0 ? "" : step.run.slice(projectsStart, step.run.indexOf("const exactViews =", projectsStart));
+        return { id: `${job}-${index}`, name: step.name, code, result, projectCode };
+      }));
+    assert.equal(wrappers.length, 4);
+    let lastEnvironment;
+    for (const relationship of ["equal", "synchronize-immediate-predecessor"]) {
+    const scenarioRoot = path.join(temporary, relationship); mkdirSync(scenarioRoot);
+    const eventFixture = readinessEventFixture(head);
+    if (relationship !== "equal") { eventFixture.event.action = "synchronize"; eventFixture.event.pull_request.merge_commit_sha = hex40("f"); }
+    const provider = syntheticCiProviderFixture({ fixture: eventFixture, tree, workflowBytes });
+    const expectedRequests = relationship === "equal" ? 7 : 8;
+    const replies = path.join(scenarioRoot, "synthetic-provider-replies.json");
+    writeFileSync(replies, JSON.stringify(provider.entries));
+    const eventPath = path.join(scenarioRoot, "synthetic-event.json"); writeFileSync(eventPath, JSON.stringify(provider.input.event));
+    const bin = path.join(scenarioRoot, "bin"); mkdirSync(bin); symlinkSync(process.execPath, path.join(bin, "node"));
+    const preload = path.join(scenarioRoot, "synthetic-seven-get-provider.mjs");
+    writeFileSync(preload, [
+      'import fs from "node:fs";',
+      'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");',
+      'import http from "node:http"; import https from "node:https";',
+      'import net from "node:net"; import tls from "node:tls"; import dns from "node:dns";',
+      'import { syncBuiltinESMExports } from "node:module";',
+      'const deny = () => { throw new Error("SYNTHETIC_OFFLINE_NETWORK_DENIED"); };',
+      'http.request = http.get = https.request = https.get = deny;',
+      'net.connect = net.createConnection = net.Socket.prototype.connect = tls.connect = deny;',
+      'for (const key of ["lookup", "resolve", "resolve4", "resolve6", "reverse"]) dns[key] = deny;',
+      'syncBuiltinESMExports();',
+      'const entries = JSON.parse(fs.readFileSync(process.env.SYNTHETIC_PROVIDER_REPLIES, "utf8"));',
+      'globalThis.fetch = async (url, options) => {',
+      '  const entry = entries.find((item) => item.url === url);',
+      '  if (!entry || options.method !== "GET" || options.redirect !== "error" || options.credentials !== "omit" || !(options.signal instanceof AbortSignal) || JSON.stringify(options.headers) !== JSON.stringify({Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10"})) throw new Error("SYNTHETIC_UNEXPECTED_PROVIDER_REQUEST");',
+      '  fs.appendFileSync(process.env.SYNTHETIC_FETCH_TRACE, JSON.stringify({ url, method: options.method, credentials: options.credentials, redirect: options.redirect, headers: options.headers }) + "\\n");',
+      '  if (entry.kind === process.env.SYNTHETIC_PROVIDER_FAIL_KIND) throw new Error("synthetic-secret-canary\\n::error::DO_NOT_ECHO");',
+      '  return { status: 200, redirected: false, url, body: (async function* () { yield Buffer.from(JSON.stringify(entry.body)); })() };',
+      '};'
+    ].join("\n"));
+    for (const { job, step } of steps) {
+      const caseRoot = path.join(scenarioRoot, job); mkdirSync(caseRoot);
+      const trace = path.join(caseRoot, "synthetic-fetch.trace");
+      const environment = readinessFixtureEnvironment({ ...provider.input.environment, GITHUB_WORKSPACE: checkout, GITHUB_EVENT_PATH: eventPath,
+        RUNNER_TEMP: caseRoot, PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+        NODE_OPTIONS: `--import=${JSON.stringify(preload)}`,
+        SYNTHETIC_PROVIDER_REPLIES: replies, SYNTHETIC_FETCH_TRACE: trace });
+      lastEnvironment = environment;
+      const startedAt = new Date().toISOString();
+      const result = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+        cwd: step["working-directory"] ? path.resolve(checkout, step["working-directory"]) : checkout,
+        env: environment, encoding: "utf8", timeout: 60_000, maxBuffer: 128 * 1024
+      });
+      const requests = existsSync(trace) ? readFileSync(trace, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
+      retainSyntheticCiDemonstration(`${relationship}-${job}-proof-success`, { job, scenario: "proof-success", startedAt,
+        endedAt: new Date().toISOString(), status: result.status, signal: result.signal,
+        stdout: result.stdout, stderr: result.stderr, syntheticRequests: requests, command: step.run,
+        commandSha256: sha256(step.run), syntheticCandidate: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT },
+        sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(checkout, entry)))])) });
+      assert.equal(result.error, undefined); assert.equal(result.signal, null);
+      assert.equal(result.status, 0, `${job}: ${result.stderr}`);
+      assert.deepEqual(requests.map(({ url }) => url), provider.entries.map(({ url }) => url));
+      const resultRecord = JSON.parse(result.stdout.trim());
+      assert.equal(resultRecord.schemaVersion, "clover-ci-identity-proof-result-v2");
+      assert.equal(resultRecord.head, head); assert.equal(resultRecord.tree, tree);
+      assert.equal(resultRecord.releaseAuthority, false); assert.equal(resultRecord.externalAuthenticationEstablished, false);
+      for (const failKind of relationship === "equal" ? ["RUN_ATTEMPT"] : ["RUN_ATTEMPT", "EVENT_MERGE_COMMIT"]) {
+        const failureRoot = path.join(caseRoot, failKind); mkdirSync(failureRoot);
+        const failureTrace = path.join(failureRoot, "calls.jsonl");
+        const failed = spawnSync("/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+          cwd: checkout, env: { ...environment, RUNNER_TEMP: failureRoot, SYNTHETIC_FETCH_TRACE: failureTrace,
+            SYNTHETIC_PROVIDER_FAIL_KIND: failKind }, encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
+        });
+        retainSyntheticCiDemonstration(`${relationship}-${job}-${failKind}-acquisition-failure`, {
+          scenario: "actual-workflow-acquisition-failure", relationship, job, failKind, status: failed.status,
+          signal: failed.signal, stdout: failed.stdout, stderr: failed.stderr, workflowSha256: sha256(workflowBytes),
+          command: step.run, syntheticCandidate: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT }
+        });
+        assert.equal(failed.error, undefined); assert.equal(failed.signal, null); assert.notEqual(failed.status, 0);
+        assert.ok(failed.stderr.includes(`CLOVER_READINESS_CI_PROOF_REJECTED:${failKind}_ACQUISITION`));
+        assert.ok(failed.stderr.includes(eventFixture.event.pull_request.merge_commit_sha));
+        assert.ok(failed.stderr.includes(eventFixture.environment.GITHUB_SHA));
+        assert.doesNotMatch(`${failed.stdout}\n${failed.stderr}`, /synthetic-secret-canary|DO_NOT_ECHO/u);
+        assert.equal(readFileSync(failureTrace, "utf8").trim().split("\n").length, failKind === "RUN_ATTEMPT" ? 1 : 4);
+        assert.equal(existsSync(path.join(failureRoot, "clover-ci-provider-proof.json")), false);
+      }
+      const consumed = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
+        cwd: checkout, env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 256 * 1024
+      });
+      assert.equal(consumed.error, undefined); assert.equal(consumed.status, 0, consumed.stderr);
+      const proof = JSON.parse(consumed.stdout);
+      assert.equal(proof.schemaVersion, "clover-ci-preview-readiness-source-v3");
+      assert.equal(proof.ciExecution.mergeRelationship, relationship);
+      assert.equal(proof.ciExecution.eventMergeSha, eventFixture.event.pull_request.merge_commit_sha);
+      assert.equal(proof.ciExecution.runnerMergeSha, eventFixture.environment.GITHUB_SHA);
+      assert.equal(proof.ciExecution.externalAuthenticationEstablished, false);
+      const snapshot = result.stderr.split("\n").filter(Boolean).map((line) => JSON.parse(line)).find((entry) => entry.schemaVersion === "clover-ci-identity-observation-v2");
+      assert.equal(snapshot.fields.eventMergeSha.value, proof.ciExecution.eventMergeSha);
+      assert.equal(snapshot.fields.runnerMergeSha.value, proof.ciExecution.runnerMergeSha);
+      assert.deepEqual(snapshot, proof.ciExecution.originalSnapshot);
+      assert.deepEqual(proof.commitIds, [...CI_PREVIEW_SIXTH_PREFIX, head]);
+      assert.equal(proof.localCommitCount, 6); assert.equal(proof.parentTree, CI_PREVIEW_SIXTH_PARENT_TREE); assert.deepEqual(proof.sixthCommitPaths, [...CI_PREVIEW_SIXTH_PATHS]); assert.deepEqual(proof.fifthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]); assert.deepEqual(proof.fourthCommitPaths, [...CI_PREVIEW_FOURTH_PATHS]);
+      assert.equal(proof.parent, CI_PREVIEW_SIXTH_PARENT); assert.equal(proof.sourceProofSelfHash, resultRecord.sourceProofSelfHash);
+      assert.equal(proof.ciExecution.providerProof.records.length, expectedRequests);
+      assert.equal(proof.releaseAuthority, false); assert.equal(proof.providerAcceptance, false);
+      assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, expectedRequests, "cached source validation must not reacquire provider facts");
+      if (job === "validate") {
+        const syntheticBuild = buildWith({ commit: head, tree, parent: CI_PREVIEW_SIXTH_PARENT, runtimeDeploymentKey: `clover-${head.slice(0, 24)}`,
+          changedPathCount: proof.fullMainPathCount, pathListSha256: proof.fullMainPathListSha256,
+          sourceManifestSha256: proof.sourceManifestSha256 });
+        const outputRoot = path.join(caseRoot, "synthetic-sealed-output");
+        writeRawBuildOutput(outputRoot, caseRoot, { sourceProvenance: syntheticBuild });
+        const sealed = createDeploymentAttestation({ outputRoot, repositoryRoot: caseRoot,
+          evidenceDirectory: path.join(caseRoot, "synthetic-sealed-evidence"),
+          frozenOutputRoot: path.join(caseRoot, "synthetic-frozen-workspace"), sourceProvenance: syntheticBuild });
+        const verifiedEvidence = { sourceProvenance: syntheticBuild, payloadManifest: sealed.outputManifest,
+          attestation: sealed.attestation, deploymentInputManifest: sealed.deploymentInputManifest, archiveManifest: sealed.archiveManifest };
+        const downstream = await readinessPreviewFixture(verifiedEvidence, { sourceProof: localProof, ciSourceProof: proof });
+        let downstreamResult;
+        if (process.version === "v24.16.0") {
+          downstreamResult = validateCiPreviewExecutionContract(downstream);
+          assert.equal(downstreamResult.suppliedRecordsConsistent, true);
+          assert.equal(downstreamResult.externalAuthenticationEstablished, false);
+          assert.equal(downstreamResult.releaseAuthority, false);
+          assert.equal(downstreamResult.deploymentAllowanceGranted, false);
+        } else {
+          assert.throws(() => validateCiPreviewExecutionContract(downstream), /CI_EXECUTION/u);
+          downstreamResult = { expectedRejection: "Node22 proof does not substitute for the required Node24 sealed-input producer" };
+        }
+        retainSyntheticCiDemonstration(`${relationship}-actual-source-to-downstream`, {
+          scenario: "actual-cli-cache-proof-to-downstream-contract", sourceHashes: Object.fromEntries(CI_PREVIEW_FOURTH_PATHS.map((entry) => [entry, sha256(readFileSync(path.join(checkout, entry)))])),
+          sourceProofSelfHash: proof.sourceProofSelfHash, sourceIdentity: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT },
+          ciExecution: proof.ciExecution, independentReadbackFixture: downstream.contract.ci.identityReadback,
+          independentReadbackIsSynthetic: true, outcome: downstreamResult
+        });
+      }
+      const provenance = { commit: proof.head, tree: proof.tree, nodeVersion: process.version,
+        changedPathCount: proof.fullMainPathCount, pathListSha256: proof.fullMainPathListSha256,
+        sourceManifestSha256: proof.sourceManifestSha256 };
+      writeFileSync(path.join(caseRoot, "clover-tree-browser-source-provenance.json"), JSON.stringify(provenance));
+      const browserRoot = path.join(caseRoot, "browser-artifacts");
+      const browserProofRoot = path.join(browserRoot, "clover-ci-preview-readiness-source");
+      mkdirSync(browserProofRoot, { recursive: true, mode: 0o755 });
+      const documents = ["desktop-chromium", "mobile-chromium"].map((project) => ({ project, document: {
+        source: { readiness: { sourceProofSelfHash: proof.sourceProofSelfHash, ciExecution: proof.ciExecution } }
+      } }));
+      for (const { project } of documents) writeFileSync(path.join(browserProofRoot, `${project}.json`), consumed.stdout, { mode: 0o644 });
+      const executeWrapper = (wrapper, scenario) => {
+        const program = [
+          'const cp = require("node:child_process"), fs = require("node:fs"), path = require("node:path");',
+          'const { execFileSync } = cp;',
+          'if (globalThis[Symbol.for("clover.fixture.operational-preload")] !== process.version) throw new Error("SYNTHETIC_OPERATIONAL_PRELOAD_MISSING");',
+          `const repositoryRoot = ${JSON.stringify(checkout)}, p = ${JSON.stringify(provenance)};`,
+          'const requireCondition = (condition, message) => { if (!condition) throw new Error(message); };',
+          'const exactJson = (actual, expected, message) => requireCondition(JSON.stringify(actual) === JSON.stringify(expected), message);',
+          `const root = ${JSON.stringify(browserRoot)}, documents = ${JSON.stringify(documents)};`,
+          wrapper.projectCode,
+          wrapper.code,
+          `process.stdout.write(JSON.stringify({sourceProofSelfHash: ${wrapper.result}.sourceProofSelfHash, ciExecution: ${wrapper.result}.ciExecution}));`
+        ].join("\n");
+        const started = new Date().toISOString();
+        const observed = spawnSync(process.execPath, ["-e", program], {
+          cwd: checkout, env: environment, encoding: "utf8", timeout: 30_000, maxBuffer: 256 * 1024
+        });
+        retainSyntheticCiDemonstration(`${relationship}-${job}-${wrapper.id}-${scenario}`, {
+          job, scenario, wrapper: wrapper.name, startedAt: started, endedAt: new Date().toISOString(),
+          status: observed.status, signal: observed.signal, stdout: observed.stdout, stderr: observed.stderr,
+          exactWorkflowSnippet: wrapper.code, snippetSha256: sha256(wrapper.code),
+          workflowSha256: sha256(workflowBytes), syntheticCandidate: { head, tree, parent: CI_PREVIEW_SIXTH_PARENT }
+        });
+        assert.equal(observed.error, undefined); assert.equal(observed.signal, null);
+        assert.equal(readFileSync(trace, "utf8").trim().split("\n").length, expectedRequests, "embedded source wrappers must reuse the frozen provider cache");
+        return observed;
+      };
+      for (const wrapper of wrappers) {
+        const observed = executeWrapper(wrapper, "cached-source-success");
+        assert.equal(observed.status, 0, `${wrapper.name}: ${observed.stderr}`);
+        assert.deepEqual(JSON.parse(observed.stdout), { sourceProofSelfHash: proof.sourceProofSelfHash, ciExecution: proof.ciExecution });
+      }
+      const retainedPath = path.join(caseRoot, "clover-ci-preview-readiness-source.json");
+      assert.equal(readFileSync(retainedPath, "utf8"), consumed.stdout);
+      // Shape equality is independent of merge relationship and producing job.
+      // Exercise each retained-record consumer once; all four positive/event/cache paths remain below.
+      if (relationship === "equal" && job === "validate") for (const [label, change] of [
+        ["missing-sixth-field", (v) => { delete v.sixthCommitPaths; }],
+        ["extra-proof-field", (v) => { v.unreviewedTail = []; }],
+        ["mismatched-sixth-field", (v) => { v.sixthCommitPaths = [...CI_PREVIEW_FOURTH_PATHS]; }]
+      ]) {
+        const altered = JSON.parse(consumed.stdout); change(altered);
+        const { sourceProofSelfHash: oldHash, ...body } = altered; void oldHash;
+        altered.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
+        writeFileSync(retainedPath, `${canonicalJson(altered)}\n`);
+        for (const { project } of documents) writeFileSync(path.join(browserProofRoot, `${project}.json`), `${canonicalJson(altered)}\n`);
+        // The first wrapper produces this record from trusted source; the other three
+        // consume retained records and must reject missing/extra/substituted fields.
+        for (const wrapper of wrappers.filter((entry) => entry.result !== "readinessSource")) {
+          assert.notEqual(executeWrapper(wrapper, label).status, 0, wrapper.name);
+        }
+        writeFileSync(retainedPath, consumed.stdout);
+        for (const { project } of documents) writeFileSync(path.join(browserProofRoot, `${project}.json`), consumed.stdout);
+      }
+      const browserWrapper = wrappers.find((entry) => entry.projectCode);
+      const browserProofPath = path.join(browserProofRoot, "desktop-chromium.json");
+      writeFileSync(browserProofPath, `${consumed.stdout} `);
+      assert.notEqual(executeWrapper(browserWrapper, "browser-proof-bytes-rejected").status, 0);
+      writeFileSync(browserProofPath, consumed.stdout);
+      documents[0].document.source.readiness.ciExecution = { ...proof.ciExecution, eventMergeSha: hex40("e") };
+      assert.notEqual(executeWrapper(browserWrapper, "browser-document-identity-rejected").status, 0);
+      documents[0].document.source.readiness.ciExecution = proof.ciExecution;
+      const originalEventBytes = readFileSync(eventPath);
+      const changedEvent = structuredClone(provider.input.event); changedEvent.pull_request.merge_commit_sha = "e".repeat(40);
+      writeFileSync(eventPath, JSON.stringify(changedEvent));
+      for (const wrapper of wrappers) {
+        const observed = executeWrapper(wrapper, "changed-event-rejected");
+        assert.notEqual(observed.status, 0);
+        assert.match(observed.stderr, /CLOVER_READINESS_CI_(?:EVENT|PROOF)_REJECTED/u);
+      }
+      writeFileSync(eventPath, originalEventBytes);
+      const cachePath = path.join(caseRoot, "clover-ci-provider-proof.json"), cacheBytes = readFileSync(cachePath);
+      const alteredCache = JSON.parse(cacheBytes); alteredCache.records[2].projection.tree = "e".repeat(40);
+      writeFileSync(cachePath, JSON.stringify(alteredCache));
+      for (const wrapper of wrappers) {
+        const observed = executeWrapper(wrapper, "changed-provider-cache-rejected");
+        assert.notEqual(observed.status, 0); assert.match(observed.stderr, /CLOVER_READINESS_CI_PROOF_REJECTED/u);
+      }
+      writeFileSync(cachePath, cacheBytes);
+      const snapshotCache = JSON.parse(cacheBytes);
+      snapshotCache.originalInputs.originalSnapshot.fields.eventMergeSha.value = hex40("e");
+      writeFileSync(cachePath, JSON.stringify(snapshotCache));
+      assert.notEqual(executeWrapper(browserWrapper, "changed-cached-original-snapshot-rejected").status, 0);
+      writeFileSync(cachePath, cacheBytes);
+      assert.equal(readFileSync(retainedPath, "utf8"), consumed.stdout, "failed wrappers must preserve the completed retained proof");
+    }
+    }
+    assert.equal(run(["status", "--porcelain=v1", "--untracked-files=all"]), "");
+    const seventhPath = path.join(checkout, ATTESTATION_REPAIR_PATHS[1]);
+    writeFileSync(seventhPath, `${readFileSync(seventhPath, "utf8")}\n// Disposable seventh-tail rejection fixture.\n`);
+    run(["add", "--", ATTESTATION_REPAIR_PATHS[1]]);
+    run(["-c", "user.name=Synthetic sixth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Synthetic seventh-tail rejection fixture"]);
+    const seventhHead = run(["rev-parse", "HEAD"]);
+    const seventh = spawnSync(process.execPath, ["apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs", "readiness-source", "--repository-root", checkout], {
+      cwd: checkout, env: { ...lastEnvironment, CLOVER_TREE_HEAD: seventhHead, CLOVER_TREE_EXACT_PR_HEAD: seventhHead },
+      encoding: "utf8", timeout: 30_000, maxBuffer: 128 * 1024
+    });
+    retainSyntheticCiDemonstration("actual-seventh-tail-rejected", { scenario: "actual-seventh-tail-rejected",
+      syntheticCandidate: { head: seventhHead, parent: head }, status: seventh.status, signal: seventh.signal,
+      stdout: seventh.stdout, stderr: seventh.stderr });
+    assert.equal(seventh.error, undefined); assert.equal(seventh.signal, null); assert.notEqual(seventh.status, 0);
+    assert.match(seventh.stderr, /CLOVER_READINESS_DEPTH_REJECTED/u);
+    assert.equal(readFileSync(lastEnvironment.SYNTHETIC_FETCH_TRACE, "utf8").trim().split("\n").length, 8);
+    const commitFixture = (label) => {
+      run(["add", "-A"]); run(["-c", "user.name=Synthetic sixth readiness fixture", "-c", "user.email=synthetic@example.invalid",
+        "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", label]);
+    };
+    const populateTail = () => {
+      for (const entry of CI_PREVIEW_SIXTH_PATHS) writeFileSync(path.join(checkout, entry),
+      execFileSync("git", ["show", `${CI_PREVIEW_SUCCESSOR_ANCHOR}:${entry}`], { cwd: repositoryRoot, stdio: "pipe" }));
+    };
+    for (const [label, mutate, error] of [
+      ["changed-workflow", () => { const target = path.join(checkout, ATTESTATION_REPAIR_PATHS[0]); writeFileSync(target, `${readFileSync(target, "utf8")}\n# Synthetic prohibited tail.\n`); }, /DEPTH_REJECTED/u],
+      ["other-path", () => writeFileSync(path.join(checkout, "synthetic-unapproved-tail.txt"), "synthetic"), /PATH_REJECTED/u],
+      ["mode-change", () => chmodSync(path.join(checkout, CI_PREVIEW_SIXTH_PATHS[0]), 0o755), /BLOB_REJECTED/u],
+      ["missing-test-delta", () => writeFileSync(path.join(checkout, CI_PREVIEW_SIXTH_PATHS[1]), execFileSync("git", ["show", `${CI_PREVIEW_SIXTH_PARENT}:${CI_PREVIEW_SIXTH_PATHS[1]}`], { cwd: checkout })), /DEPTH_REJECTED/u],
+      ["deleted-test", () => unlinkSync(path.join(checkout, CI_PREVIEW_SIXTH_PATHS[1])), /PATH_REJECTED/u]
+    ]) {
+      run(["reset", "--hard", CI_PREVIEW_SIXTH_PARENT]); populateTail(); mutate(); commitFixture(`Synthetic prohibited ${label}`);
+      const changedHead = run(["rev-parse", "HEAD"]);
+      assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment }), error);
+      retainSyntheticCiDemonstration(`sixth-tail-${label}-rejected`, { scenario: label, actualDisposableHead: changedHead,
+        expectedParent: CI_PREVIEW_SIXTH_PARENT, rejected: true, sourceBranchChanged: false });
+    }
+    // A different fifth parent yields six commits but is not the approved fixed five-prefix.
+    run(["reset", "--hard", CI_PREVIEW_FIFTH_PARENT]); populateTail(); commitFixture("Synthetic substituted fifth parent");
+    const wrongParent = run(["rev-parse", "HEAD"]);
+    for (const entry of CI_PREVIEW_SIXTH_PATHS) { const target = path.join(checkout, entry); writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic substituted sixth tail.\n`); }
+    commitFixture("Synthetic sixth with wrong parent");
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: checkout, environment: localEnvironment }), /DEPTH_REJECTED/u);
+    retainSyntheticCiDemonstration("sixth-substituted-prefix-rejected", { actualDisposableHead: run(["rev-parse", "HEAD"]),
+      actualParent: wrongParent, requiredParent: CI_PREVIEW_SIXTH_PARENT, rejected: true });
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test("readiness source preserves frozen base, four-file scope, linear budget, locks and LOCAL separation", () => {
+  const repositoryRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+  const temporary = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-readiness-source-test-")));
+  const fixture = path.join(temporary, "repository");
+  const run = (args) => execFileSync("git", args, { cwd: fixture, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const environment = { GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT };
+  const proof = (changes = {}) => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: { ...environment, ...changes } });
+  try {
+    execFileSync("git", ["clone", "--quiet", "--no-hardlinks", "--no-checkout", repositoryRoot, fixture]);
+    run(["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, CI_PREVIEW_READINESS_BASE]);
+    run(["config", "user.name", "Synthetic readiness fixture"]); run(["config", "user.email", "synthetic@example.invalid"]);
+    run(["config", "commit.gpgsign", "false"]);
+    assert.throws(proof, /DEPTH_REJECTED/u);
+    const sourcePath = ATTESTATION_REPAIR_PATHS[1]; const target = path.join(fixture, sourcePath);
+    const addCommit = (message) => { run(["add", "-A"]); run(["commit", "--quiet", "-m", message]); };
+    writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic readiness fixture.\n`); addCommit("Synthetic readiness scope");
+    const clean = run(["rev-parse", "HEAD"]).trim();
+    const result = proof({ CLOVER_TREE_HEAD: clean });
+    assert.equal(result.taskId, CI_PREVIEW_READINESS_TASK); assert.equal(result.base, CI_PREVIEW_READINESS_BASE);
+    assert.equal(result.baseTree, CI_PREVIEW_READINESS_BASE_TREE); assert.deepEqual(result.paths, [sourcePath]);
+    assert.equal(result.localCommitCount, 1); assert.equal(result.changedPathCount, 1); assert.equal(result.ciExecution, null);
+    assert.equal(result.fullMainPathCount, 75);
+    assert.equal(result.sourceManifestSha256, deriveSourceProvenance({ repositoryRoot: fixture }).sourceManifestSha256);
+    assert.deepEqual(result.lockfiles.map(({ sha256: hash }) => hash), DEPENDENCY_SUCCESSOR_LOCKS.map(({ sha256: hash }) => hash));
+    for (const field of ["githubActions", "releaseAuthority", "exactPrHeadAcceptance", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted"]) assert.equal(result[field], false);
+    const { sourceProofSelfHash, ...body } = result; assert.equal(sourceProofSelfHash, sha256(`${canonicalJson(body)}\n`));
+    for (const changes of [
+      { GITHUB_ACTIONS: "true" }, { GITHUB_EVENT_NAME: "pull_request" }, { CLOVER_TREE_PR_NUMBER: "35" },
+      { CLOVER_TREE_EXACT_PR_HEAD: clean }, { GITHUB_RUN_ID: "123" }, { CLOVER_READINESS_RELEASE_AUTHORITY: "true" },
+      { CLOVER_TREE_PROTECTED_PREVIEW_HEAD: clean }, { CLOVER_TREE_BROWSER_EVIDENCE_MODE: "protected-preview" },
+      { CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: DEPENDENCY_SUCCESSOR_CONTEXT }
+    ]) assert.throws(() => proof(changes), /CONTEXT_REJECTED/u);
+    assert.throws(() => proof({ CLOVER_TREE_HEAD: "d".repeat(40) }), /IDENTITY_REJECTED/u);
+    assert.throws(() => proof({ GIT_INDEX_FILE: target }), /GIT_ENVIRONMENT_REJECTED/u);
+    assert.throws(() => proof({ GITHUB_WORKSPACE: temporary }), /GIT_ROOT_REJECTED/u);
+    const ci = readinessEventFixture(clean); const eventPath = path.join(temporary, "event.json"); writeFileSync(eventPath, JSON.stringify(ci.event));
+    const ciEnvironment = { ...ci.environment, GITHUB_EVENT_PATH: eventPath, GITHUB_WORKSPACE: fixture };
+    // Historical generic LOCAL histories do not inherit the newly authorized fourth-tail CI proof path.
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED/u);
+    ci.event.pull_request.base.sha = "d".repeat(40); writeFileSync(eventPath, JSON.stringify(ci.event));
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: fixture, environment: ciEnvironment }), /CLOVER_READINESS_CI_PROOF_REJECTED:SOURCE_SIXTH_LINEAGE/u);
+    for (const flag of ["assume-unchanged", "skip-worktree"]) {
+      run(["update-index", `--${flag}`, "--", sourcePath]); assert.throws(proof, /HIDDEN_INDEX_STATE_REJECTED/u);
+      run(["update-index", `--no-${flag}`, "--", sourcePath]);
+    }
+    writeFileSync(path.join(fixture, "untracked-synthetic"), "fixture"); assert.throws(proof, /DIRTY_SOURCE_REJECTED/u); unlinkSync(path.join(fixture, "untracked-synthetic"));
+    for (const mutation of [
+      () => writeFileSync(path.join(fixture, "unexpected-synthetic"), "fixture"),
+      () => chmodSync(target, 0o755), () => writeFileSync(target, Buffer.from([0, 1, 2])), () => unlinkSync(target),
+      () => renameSync(target, `${target}.renamed`),
+      ...DEPENDENCY_SUCCESSOR_LOCKS.map(({ path: lockPath }) => () => writeFileSync(path.join(fixture, lockPath), `${readFileSync(path.join(fixture, lockPath), "utf8")}\n`))
+    ]) {
+      mutation(); addCommit("Synthetic prohibited mutation"); assert.throws(proof, /PATH_REJECTED|BLOB_REJECTED/u);
+      // Reset only this disposable synthetic clone, never an owner checkout.
+      run(["reset", "--hard", clean]);
+    }
+    run(["commit", "--allow-empty", "--quiet", "-m", "Synthetic empty tail"]); assert.throws(proof, /PATH_REJECTED/u); run(["reset", "--hard", clean]);
+    for (let count = 2; count <= 5; count += 1) {
+      writeFileSync(target, `${readFileSync(target, "utf8")}\n// Synthetic tail ${count}.\n`); addCommit(`Synthetic tail ${count}`);
+      if (count < 4) assert.equal(proof().localCommitCount, count); else assert.throws(proof, /DEPTH_REJECTED/u);
+    }
+    run(["reset", "--hard", clean]);
+    const tree = run(["rev-parse", `${clean}^{tree}`]).trim();
+    const side = run(["commit-tree", tree, "-p", CI_PREVIEW_READINESS_BASE, "-m", "Synthetic side"]).trim();
+    const merge = run(["commit-tree", tree, "-p", clean, "-p", side, "-m", "Synthetic merge"]).trim();
+    run(["reset", "--hard", merge]); assert.throws(proof, /LINEARITY_REJECTED/u); run(["reset", "--hard", clean]);
+    run(["branch", "-m", "synthetic-wrong-branch"]); assert.throws(proof, /IDENTITY_REJECTED/u); run(["branch", "-m", CI_PREVIEW_READINESS_BRANCH]);
+    run(["reset", "--hard", DEPENDENCY_SUCCESSOR_BASE]); assert.throws(proof, /BASE_REJECTED/u);
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+});
+
+
+async function readinessPreviewFixture(verifiedEvidence, { sourceProof, ciSourceProof, relationship = "equal" } = {}) {
+  // Synthetic consistency inputs only: these hashes/IDs do not represent approvals, CI or provider operations.
+  const seal = (body) => ({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
+  const provenance = verifiedEvidence.sourceProvenance;
+  const eventFixture = readinessEventFixture(provenance.commit);
+  if (relationship !== "equal") {
+    eventFixture.event.action = "synchronize";
+    eventFixture.event.pull_request.merge_commit_sha = [hex40("f"), hex40("e"), hex40("d")]
+      .find((value) => value !== provenance.commit && value !== eventFixture.environment.GITHUB_SHA);
+  }
+  const providerFixture = syntheticCiProviderFixture({ fixture: eventFixture, tree: provenance.tree });
+  const proof = sourceProof ?? seal({ schemaVersion: "clover-ci-preview-readiness-source-v3", classification: "local-readiness-candidate",
+    taskId: CI_PREVIEW_READINESS_TASK, context: CI_PREVIEW_READINESS_CONTEXT, githubActions: false, pullRequestNumber: null,
+    branch: CI_PREVIEW_READINESS_BRANCH, head: provenance.commit, tree: provenance.tree, ciExecution: null,
+    fullMainPathCount: provenance.changedPathCount, fullMainPathListSha256: provenance.pathListSha256,
+    sourceManifestSha256: provenance.sourceManifestSha256, parent: provenance.parent, parentTree: CI_PREVIEW_SIXTH_PARENT_TREE,
+    base: CI_PREVIEW_READINESS_BASE, baseTree: CI_PREVIEW_READINESS_BASE_TREE,
+    commitIds: [...CI_PREVIEW_SIXTH_PREFIX, provenance.commit], localCommitCount: 6,
+    fourthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], fifthCommitPaths: [...CI_PREVIEW_FOURTH_PATHS], sixthCommitPaths: [...CI_PREVIEW_SIXTH_PATHS],
+    changedPathCount: 4, paths: [...ATTESTATION_REPAIR_PATHS], pathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`),
+    allowedPathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`), diffSha256: hex64("c"),
+    sourceFiles: ATTESTATION_REPAIR_PATHS.map((sourcePath) => ({ path: sourcePath, mode: "100644",
+      blob: sourcePath === ATTESTATION_REPAIR_PATHS[0] ? providerFixture.input.workflowBlob : hex40("b"),
+      bytes: sourcePath === ATTESTATION_REPAIR_PATHS[0] ? providerFixture.input.workflowBytes.length : 100,
+      sha256: sourcePath === ATTESTATION_REPAIR_PATHS[0] ? sha256(providerFixture.input.workflowBytes) : hex64("d") })),
+    lockfiles: DEPENDENCY_SUCCESSOR_LOCKS.map((entry) => ({ path: entry.path, mode: "100644", blob: hex40("e"), bytes: 100, sha256: entry.sha256, baseSha256: entry.sha256 })),
+    cleanWorktree: true, linearFirstParent: true, exactPrHeadAcceptance: false, releaseAuthority: false, providerAcceptance: false,
+    consequentialAuthorityGranted: false, deploymentAllowanceGranted: false });
+  let execution = ciSourceProof?.ciExecution;
+  if (!execution) {
+    const providerProof = await acquireCiPreviewProviderProof({ ...providerFixture.input, fetchImpl: providerFixture.fetchImpl,
+      now: () => new Date("2026-08-29T19:57:00.000Z") });
+    const accepted = deriveCiPreviewExecutionIdentity({ ...providerFixture.input, proof: providerProof, now: new Date("2026-08-29T19:57:00.000Z") });
+    // Explicit synthetic Node24 receipt input, also exercised when the test runner itself is Node22.
+    execution = { ...accepted, nodeVersion: "v24.16.0", providerProof: { ...providerProof,
+      originalInputs: { ...providerProof.originalInputs, nodeVersion: "v24.16.0" } } };
+  }
+  const { sourceProofSelfHash: _ignoredHash, ...ciBody } = proof;
+  void _ignoredHash;
+  const ciProof = ciSourceProof ?? seal({ ...ciBody, classification: "ci-readiness-candidate", context: CI_PREVIEW_READINESS_CI_CONTEXT,
+    githubActions: true, pullRequestNumber: execution.pullRequestNumber, ciExecution: execution });
+  const firstObservation = Date.parse(execution.providerProof.records[0].startedAt);
+  const lastObservation = Date.parse(execution.providerProof.records.at(-1).observedAt);
+  const now = ciSourceProof ? new Date(lastObservation + 124_000) : providerReceiptNow;
+  const date = (value) => new Date(value).toISOString();
+  const sealedInput = { deploymentInputRootSha256: verifiedEvidence.deploymentInputManifest.deploymentInputRootSha256,
+    deploymentInputManifestSelfHash: verifiedEvidence.deploymentInputManifest.manifestSelfHash,
+    payloadManifestRootSha256: verifiedEvidence.payloadManifest.rootSha256,
+    attestationRawSha256: verifiedEvidence.deploymentInputManifest.attestation.rawSha256,
+    archiveSha256: verifiedEvidence.archiveManifest.archiveSha256, archiveManifestSelfHash: verifiedEvidence.archiveManifest.manifestSelfHash };
+  const source = { repository: "chrisdortch/first", ref: `refs/heads/${proof.branch}`, head: proof.head, tree: proof.tree,
+    base: proof.base, baseTree: proof.baseTree, sourceProofSelfHash: proof.sourceProofSelfHash,
+    sourceManifestSha256: proof.sourceManifestSha256, fullMainPathCount: proof.fullMainPathCount };
+  const contract = { schemaVersion: "clover-ci-preview-execution-contract-v2", taskId: CI_PREVIEW_READINESS_TASK, source, sealedInput,
+    ci: { sourceProof: ciProof, run: { id: execution.runId, runAttempt: execution.runAttempt, event: "pull_request", repository: source.repository,
+      headSha: source.head, headBranch: proof.branch, workflowPath: execution.workflowPath, status: "completed", conclusion: "success",
+      createdAt: date(firstObservation - 2_000), completedAt: date(lastObservation + 60_000), observedAt: date(now.getTime() - 30_000) },
+      identityReadback: { schemaVersion: "clover-ci-independent-execution-observation-v1",
+        provenance: "external-github-attempt-jobs-log-readback", runId: execution.runId, runAttempt: execution.runAttempt,
+        jobId: 987654321, jobRunId: execution.runId, jobRunAttempt: execution.runAttempt, headSha: proof.head,
+        nodeVersion: execution.nodeVersion, jobConclusion: "success", jobStartedAt: date(firstObservation - 1_000),
+        jobCompletedAt: date(lastObservation + 1_000), workflowPath: execution.workflowPath, logSha256: hex64("b"),
+        originalInputs: structuredClone(execution.providerProof.originalInputs), observedAt: date(now.getTime() - 30_000) },
+      artifacts: ["validation-node-22", "validation-node-24", "sealed-input-node-24", "browser"].map((role, index) => ({
+        role, id: 123450 + index, name: `${execution.artifactPrefix}-${role}`, runId: execution.runId, runAttempt: execution.runAttempt,
+        headSha: proof.head, sizeInBytes: 100, providerDigest: `sha256:${hex64("d")}`, downloadSha256: hex64("d"), expired: false,
+        sourceManifestSha256: proof.sourceManifestSha256, archiveSha256: role === "sealed-input-node-24" ? sealedInput.archiveSha256 : null })),
+      artifactValidationReceiptSha256: hex64("e") },
+    ownerApproval: { taskId: CI_PREVIEW_READINESS_TASK, recordSha256: hex64("f"), approvedAt: date(now.getTime() - 10 * 60_000), expiresAt: date(now.getTime() + 20 * 60_000),
+      repository: source.repository, ref: source.ref, head: source.head, tree: source.tree, projectId: VERCEL_PROJECT_ID, teamId: VERCEL_TEAM_ID,
+      target: "preview", dataClass: "synthetic-only", ciPolicy: "successful-exact-source-stacked-pr-run-with-verified-artifacts",
+      maximumDeployments: 1, maximumBypassCreates: 1, maximumBypassRevocations: 1, publication: false, merge: false,
+      production: false, settingsChanges: false, privateData: false },
+    allowance: { taskId: CI_PREVIEW_READINESS_TASK, id: "synthetic-allowance-not-authority", ownerApprovalRecordSha256: hex64("f"), head: source.head, tree: source.tree,
+      projectId: VERCEL_PROJECT_ID, teamId: VERCEL_TEAM_ID, state: "unconsumed", executionsConsumed: 0,
+      observedAt: date(now.getTime() - 30_000), observationReceiptSha256: hex64("c") } };
+  return { contract, sourceProof: proof, verifiedEvidence, now };
+}
+
+test("readiness preview contract rejects source, CI, artifact and authority substitutions and preserves native receipt guards", async () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "clover-readiness-preview-")));
+  try {
+    const output = path.join(root, "output");
+    const successorBuild = { ...build, parent: CI_PREVIEW_SIXTH_PARENT, changedPathCount: 75 };
+    writeRawBuildOutput(output, root, { sourceProvenance: successorBuild });
+    const sealed = createDeploymentAttestation({ outputRoot: output, repositoryRoot: root, evidenceDirectory: path.join(root, "evidence"),
+      frozenOutputRoot: path.join(root, "frozen-workspace"), sourceProvenance: successorBuild });
+    const verifiedEvidence = { sourceProvenance: successorBuild, payloadManifest: sealed.outputManifest, attestation: sealed.attestation,
+      deploymentInputManifest: sealed.deploymentInputManifest, archiveManifest: sealed.archiveManifest };
+    const fixture = await readinessPreviewFixture(verifiedEvidence);
+    const validation = validateCiPreviewExecutionContract(fixture);
+    assert.equal(validation.suppliedRecordsConsistent, true); assert.equal(validation.releaseAuthority, false);
+    assert.equal(validation.deploymentAllowanceGranted, false);
+    assert.equal(validation.ownerApprovalAuthentication, "external-procedural-verification-required");
+    assert.equal(validation.externalAuthenticationEstablished, false);
+    assert.equal(validation.executionAuthentication, "external-exact-attempt-jobs-log-verification-required");
+    const mismatch = await readinessPreviewFixture(verifiedEvidence, { relationship: "synchronize-immediate-predecessor" });
+    assert.equal(validateCiPreviewExecutionContract(mismatch).suppliedRecordsConsistent, true);
+    assert.equal(mismatch.contract.ci.sourceProof.ciExecution.providerProof.records.length, 8);
+    for (const [index, change] of [
+      (c) => { delete c.ci.identityReadback; },
+      (c) => { c.ci.identityReadback.provenance = "self-generated-cache"; },
+      (c) => { c.ci.identityReadback.runId = "987654321"; },
+      (c) => { c.ci.identityReadback.runAttempt = "2"; },
+      (c) => { c.ci.identityReadback.jobId = 0; },
+      (c) => { c.ci.identityReadback.jobRunId = "987654321"; },
+      (c) => { c.ci.identityReadback.jobRunAttempt = "2"; },
+      (c) => { c.ci.identityReadback.headSha = hex40("e"); },
+      (c) => { c.ci.identityReadback.nodeVersion = "v22.23.2"; },
+      (c) => { c.ci.identityReadback.jobConclusion = "failure"; },
+      (c) => { c.ci.identityReadback.workflowPath = "unrelated-workflow"; },
+      (c) => { c.ci.identityReadback.logSha256 = "missing"; },
+      (c) => { const original = c.ci.identityReadback.originalInputs.eventMergeSha;
+        c.ci.identityReadback.originalInputs.eventMergeSha = original === hex40("e") ? hex40("d") : hex40("e"); },
+      (c) => { c.ci.identityReadback.originalInputs.originalSnapshot.fields.runnerMergeSha.value = hex40("e"); },
+      (c) => { c.ci.identityReadback.observedAt = c.ci.identityReadback.jobCompletedAt; },
+      (c) => { c.ci.identityReadback.observedAt = new Date(Date.parse(c.allowance.observedAt) + 1).toISOString(); },
+      (c) => { c.ci.identityReadback.jobStartedAt = "2026-08-29T19:57:00.001Z"; },
+      (c) => { c.ci.identityReadback.jobCompletedAt = "2026-08-29T19:56:59.999Z"; },
+      (c) => { c.ci.identityReadback.jobStartedAt = "2026-08-29T18:57:00.000Z"; c.ci.run.createdAt = "2026-08-29T18:56:59.000Z"; },
+      (c) => { c.ci.run.createdAt = "2026-08-29T19:58:00.000Z"; }
+    ].entries()) {
+      const contract = structuredClone(mismatch.contract), original = canonicalJson(contract); change(contract);
+      assert.notEqual(canonicalJson(contract), original, `readback mutation ${index} must change its input`);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...mismatch, contract }), /CLOVER_/u, `readback mutation ${index} must reject`);
+    }
+    const longWorkflow = structuredClone(mismatch.contract);
+    const longNow = new Date(mismatch.now.getTime() + 60 * 60_000);
+    longWorkflow.ci.run.completedAt = new Date(longNow.getTime() - 60_000).toISOString();
+    longWorkflow.ci.run.observedAt = new Date(longNow.getTime() - 30_000).toISOString();
+    longWorkflow.ci.identityReadback.observedAt = longWorkflow.ci.run.observedAt;
+    longWorkflow.allowance.observedAt = longWorkflow.ci.run.observedAt;
+    longWorkflow.ownerApproval.expiresAt = new Date(longNow.getTime() + 60_000).toISOString();
+    assert.equal(validateCiPreviewExecutionContract({ ...mismatch, contract: longWorkflow, now: longNow }).suppliedRecordsConsistent, true,
+      "later browser jobs may extend total workflow duration while the producing Node24 job remains bounded");
+    const afterStart = structuredClone(mismatch.contract);
+    const started = new Date(mismatch.now.getTime() - 30_001);
+    afterStart.ci.run.observedAt = new Date(started.getTime() - 1).toISOString();
+    afterStart.allowance.observedAt = afterStart.ci.run.observedAt;
+    assert.throws(() => validateCiPreviewExecutionContract({ ...mismatch, contract: afterStart,
+      executionStartedAt: started.toISOString(), executionCompletedAt: mismatch.now.toISOString() }), /CLOVER_/u);
+    const changes = [
+      (c) => { c.taskId = "historical-task"; }, (c) => { c.source.base = DEPENDENCY_SUCCESSOR_BASE; },
+      (c) => { c.source.tree = hex40("e"); }, (c) => { c.source.ref = `refs/heads/${DEPENDENCY_SUCCESSOR_BRANCH}`; },
+      (c) => { c.sealedInput.archiveSha256 = hex64("e"); }, (c) => { c.sealedInput.deploymentInputRootSha256 = hex64("e"); },
+      (c) => { c.ci.run.conclusion = "failure"; }, (c) => { c.ci.run.status = "in_progress"; },
+      (c) => { c.ci.run.headSha = hex40("e"); }, (c) => { c.ci.run.runAttempt = "2"; },
+      (c) => { c.ci.run.id = "987654321"; }, (c) => { c.ci.artifacts[0].runId = "987654321"; },
+      (c) => { c.ci.run.observedAt = "2026-08-29T18:00:00.000Z"; },
+      (c) => { c.ci.run.observedAt = "2026-08-29T21:00:00.000Z"; },
+      (c) => { c.ci.artifacts.pop(); }, (c) => { c.ci.artifacts[1] = c.ci.artifacts[0]; },
+      (c) => { c.ci.artifacts[0].name = "old-run-artifact"; }, (c) => { c.ci.artifacts[0].expired = true; },
+      (c) => { c.ci.artifacts[0].runAttempt = "2"; }, (c) => { c.ci.artifacts[0].downloadSha256 = hex64("e"); },
+      (c) => { c.ci.artifacts[2].archiveSha256 = hex64("e"); }, (c) => { c.ci.artifacts[0].sourceManifestSha256 = hex64("e"); },
+      (c) => { delete c.ownerApproval; }, (c) => { c.ownerApproval.head = hex40("e"); },
+      (c) => { c.ownerApproval.projectId = "other-project"; }, (c) => { c.ownerApproval.teamId = "other-team"; },
+      (c) => { c.ownerApproval.expiresAt = "2026-08-29T19:00:00.000Z"; },
+      (c) => { c.ownerApproval.maximumBypassCreates = 0; }, (c) => { c.ownerApproval.production = true; },
+      (c) => { c.ownerApproval.privateData = true; }, (c) => { c.ownerApproval.maximumDeployments = 2; },
+      (c) => { delete c.allowance; }, (c) => { c.allowance.state = "consumed"; },
+      (c) => { c.allowance.executionsConsumed = 1; }, (c) => { c.allowance.ownerApprovalRecordSha256 = hex64("a"); },
+      (c) => { c.allowance.observedAt = "2026-08-29T18:00:00.000Z"; }
+    ];
+    for (const change of changes) { const contract = structuredClone(fixture.contract); change(contract);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, contract }), /CLOVER_/u); }
+    for (const change of [
+      (p) => { p.base = DEPENDENCY_SUCCESSOR_BASE; }, (p) => { p.baseTree = hex40("e"); },
+      (p) => { p.releaseAuthority = true; }, (p) => { p.paths[0] = "outside-allowlist"; },
+      (p) => { p.localCommitCount = 7; }, (p) => { p.lockfiles[0].sha256 = hex64("a"); },
+      (p) => { p.parent = CI_PREVIEW_READINESS_BASE; }, (p) => { p.fourthCommitPaths = null; },
+      (p) => { p.parentTree = hex40("e"); }, (p) => { p.fifthCommitPaths = null; },
+      (p) => { delete p.sixthCommitPaths; }, (p) => { p.sixthCommitPaths = [...CI_PREVIEW_FOURTH_PATHS]; },
+      (p) => { p.schemaVersion = "clover-ci-preview-readiness-source-v2"; },
+      (p) => { p.providerAcceptance = true; }, (p) => { p.consequentialAuthorityGranted = true; },
+      (p) => { p.unreviewedAuthority = true; }
+    ]) {
+      const proof = structuredClone(fixture.sourceProof); change(proof); const { sourceProofSelfHash: _hash, ...body } = proof; void _hash;
+      proof.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, sourceProof: proof }), /CLOVER_/u);
+    }
+    for (const change of [
+      (e) => { e.eventName = "push"; }, (e) => { e.pullRequestNumber = 35; }, (e) => { e.baseRef = "main"; },
+      (e) => { e.baseSha = hex40("d"); }, (e) => { e.headRef = DEPENDENCY_SUCCESSOR_BRANCH; },
+      (e) => { e.nodeVersion = "v22.23.2"; }, (e) => { e.workflowSha = hex40("e"); },
+      (e) => { e.workflowRef = "unrelated-workflow"; }, (e) => { e.artifactPrefix = "old-run"; },
+      (e) => { e.runnerMergeSha = e.headSha; e.workflowSha = e.headSha; },
+      (e) => { e.eventMergeSha = hex40("e"); }, (e) => { e.mergeRelationship = "arbitrary-mismatch"; },
+      (e) => { e.originalSnapshot.fields.eventMergeSha.value = hex40("e"); }
+    ]) {
+      const contract = structuredClone(fixture.contract); const proof = contract.ci.sourceProof; change(proof.ciExecution);
+      const { sourceProofSelfHash: _hash, ...body } = proof; void _hash; proof.sourceProofSelfHash = sha256(`${canonicalJson(body)}\n`);
+      assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, contract }), /CLOVER_/u);
+    }
+    const provider = providerDeploymentFixture(output, verifiedEvidence);
+    provider.deployment.response.meta.gitCommitRef = CI_PREVIEW_READINESS_BRANCH;
+    provider.deployment.request = providerRequest("GET", provider.deployment.request.url, provider.deployment.response, provider.deployment.request.responseObservedAt);
+    for (const key of ["argv", "executedArgv"]) provider.deploymentInvocation[key] = provider.deploymentInvocation[key].map((arg) => arg.startsWith("gitCommitRef=") ? `gitCommitRef=${CI_PREVIEW_READINESS_BRANCH}` : arg);
+    const nativeSrc = provider.fileTree.response[0]; nativeSrc.children = nativeSrc.children.filter(({ name }) => name !== "out");
+    provider.fileTree.response = [nativeSrc, nativeTreeFixture()[1]];
+    provider.fileTree.request = providerRequest("GET", provider.fileTree.request.url, provider.fileTree.response);
+    for (const content of provider.contents) { content.request = providerRequest("GET", content.request.url.replace(/\?path=[^&]*&/u, "?"), content.response); content.request.responseCharset = "utf8"; }
+    const args = { providerDeployment: provider, verifiedEvidence, now: providerReceiptNow, fileTreeProfile: NATIVE_FILE_TREE_PROFILE,
+      receiptProfile: CI_PREVIEW_RECEIPT_PROFILE, previewContract: fixture.contract, previewSourceProof: fixture.sourceProof,
+      nativeFileTreeBytes: Buffer.from(JSON.stringify(provider.fileTree.response)),
+      nativeContentBodies: provider.contents.map(({ path: entryPath, response }) => ({ path: entryPath, rawBytes: Buffer.from(JSON.stringify(response)) })) };
+    const receipt = createProviderDeploymentReceipt(args);
+    assert.equal(receipt.schemaVersion, "1.0.0"); assert.equal(receipt.sourceBranch, CI_PREVIEW_READINESS_BRANCH);
+    assert.equal(receipt.runtimeEntriesUsedAsSource, false); assert.equal(receipt.automationBypassLifecycle, "0->1->0");
+    assert.equal(receipt.previewExecution.deploymentAllowanceGranted, false); assert.equal(receipt.consequentialAuthorityGranted, false);
+    for (const changes of [{ receiptProfile: "historical-tree-campaign" }, { receiptProfile: "unknown" },
+      { previewContract: undefined }, { previewSourceProof: undefined }, { fileTreeProfile: "vercel-legacy-nested-out-v1" }]) {
+      assert.throws(() => createProviderDeploymentReceipt({ ...args, ...changes }), /CLOVER_/u);
+    }
+    for (const change of [
+      (p) => { p.deployment.response.meta.gitCommitRef = STACK_B_BRANCH; },
+      (p) => { p.deployment.response.meta.gitCommitSha = hex40("e"); },
+      (p) => { p.deploymentInvocation.executionCount = 2; },
+      (p) => { p.deploymentInvocation.executedArgv.push("--prod"); },
+      (p) => { p.protection.revoke.afterReadback.response.bypassCount = 1; }
+    ]) { const candidate = structuredClone(provider); change(candidate);
+      assert.throws(() => createProviderDeploymentReceipt({ ...args, providerDeployment: candidate }), /CLOVER_/u); }
+    assert.throws(() => createProviderDeploymentReceipt({ ...args, nativeContentBodies: [] }), /CLOVER_/u);
+    assert.throws(() => createProviderDeploymentReceipt({ ...args, nativeFileTreeBytes: Buffer.from("[]") }), /CLOVER_/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("provider receipt binds the exact immutable deployment, bytes and protection lifecycle", () => {
   const root = mkdtempSync(path.join(tmpdir(), "clover-provider-receipt-"));
   try {
@@ -6108,4 +7746,522 @@ test("immutable Tree Program 0.1 records remain byte-identical to the source com
     const committed = execFileSync("git", ["show", `HEAD:${sourcePath}`], { cwd: repositoryRoot });
     assert.deepEqual(readFileSync(path.join(repositoryRoot, sourcePath)), committed);
   }
+});
+
+// Bounded successor gates share only immutable, hash-bound synthetic Git objects.
+// A supplied task-local directory preserves every command/negative result across recovery.
+let migrationTemporaryRoot;
+function migrationRoot() {
+  const configured = process.env.CLOVER_MIGRATION_FIXTURE_ROOT;
+  if (configured !== undefined) { assert.ok(path.isAbsolute(configured)); return configured; }
+  migrationTemporaryRoot ??= realpathSync(mkdtempSync(path.join(tmpdir(), "clover-migration-fixtures-")));
+  return migrationTemporaryRoot;
+}
+function migrationSave(label, value) {
+  const directory = path.join(migrationRoot(), process.version); mkdirSync(directory, { recursive: true });
+  writeFileSync(path.join(directory, label + ".json"), JSON.stringify({ syntheticOnly: true, runtime: process.version, ...value }, null, 2) + "\n", { flag: "wx" });
+}
+function migrationGit(checkout, args) {
+  return execFileSync("git", args, { cwd: checkout, encoding: "utf8", stdio: "pipe", timeout: 60_000, maxBuffer: 32 * 1024 * 1024 }).trim();
+}
+function migrationCommit(checkout, message) {
+  migrationGit(checkout, ["add", "-A"]);
+  migrationGit(checkout, ["-c", "user.name=Synthetic migration fixture", "-c", "user.email=synthetic@example.invalid",
+    "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", message]);
+}
+function migrationClone(from, checkout, revision) {
+  assert.notEqual(realpathSync(from), path.resolve(checkout));
+  execFileSync("git", ["clone", "--shared", "--no-checkout", "--quiet", from, checkout], { stdio: "pipe", timeout: 60_000 });
+  migrationGit(checkout, ["switch", "--quiet", "-C", CI_PREVIEW_READINESS_BRANCH, revision]);
+}
+const migrationLocalEnvironment = () => ({ GITHUB_ACTIONS: "false", CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT: CI_PREVIEW_READINESS_CONTEXT });
+function migrationSeal(proof) {
+  const { sourceProofSelfHash, ...body } = proof; void sourceProofSelfHash;
+  return { ...body, sourceProofSelfHash: sha256(canonicalJson(body) + "\n") };
+}
+function migrationState() {
+  const state = JSON.parse(readFileSync(path.join(migrationRoot(), "fixture-manifest.json"), "utf8"));
+  assert.equal(state.anchor, CI_PREVIEW_SUCCESSOR_ANCHOR); assert.equal(state.anchorTree, CI_PREVIEW_SUCCESSOR_ANCHOR_TREE);
+  for (const [entry, hash] of Object.entries(state.sourceHashes)) {
+    assert.equal(sha256(readFileSync(path.join(state.owner, entry))), hash, "source changed after fixture binding");
+    assert.equal(sha256(readFileSync(path.join(state.checkout, entry))), hash, "fixture changed after binding");
+  }
+  assert.equal(migrationGit(state.checkout, ["rev-parse", "HEAD"]), state.head);
+  assert.equal(migrationGit(state.checkout, ["status", "--porcelain=v1", "--untracked-files=all"]), "");
+  return state;
+}
+
+test("migration fixture preparation and exact five-file Git derivation", () => {
+  const root = migrationRoot(); mkdirSync(root, { recursive: true });
+  const manifest = path.join(root, "fixture-manifest.json");
+  if (!existsSync(manifest)) {
+    const owner = migrationGit(process.cwd(), ["rev-parse", "--show-toplevel"]), checkout = path.join(root, "successor");
+    migrationClone(owner, checkout, CI_PREVIEW_SUCCESSOR_ANCHOR);
+    const sourceHashes = {};
+    for (const entry of CI_PREVIEW_SUCCESSOR_PATHS) {
+      const bytes = readFileSync(path.join(owner, entry)); sourceHashes[entry] = sha256(bytes);
+      writeFileSync(path.join(checkout, entry), bytes);
+    }
+    migrationCommit(checkout, "Synthetic exact34 successor proof fixture, no release authority");
+    const state = { syntheticOnly: true, owner, checkout, anchor: CI_PREVIEW_SUCCESSOR_ANCHOR, anchorTree: CI_PREVIEW_SUCCESSOR_ANCHOR_TREE,
+      head: migrationGit(checkout, ["rev-parse", "HEAD"]), tree: migrationGit(checkout, ["rev-parse", "HEAD^{tree}"]), sourceHashes };
+    writeFileSync(manifest, JSON.stringify(state, null, 2) + "\n", { flag: "wx" });
+  }
+  const state = migrationState();
+  const proof = deriveCiPreviewReadinessSource({ repositoryRoot: state.checkout, environment: migrationLocalEnvironment() });
+  assert.equal(proof.schemaVersion, "clover-ci-preview-readiness-source-v4");
+  assert.equal(proof.parent, CI_PREVIEW_SUCCESSOR_ANCHOR); assert.equal(proof.parentTree, CI_PREVIEW_SUCCESSOR_ANCHOR_TREE);
+  assert.deepEqual(proof.commitIds, [...CI_PREVIEW_SUCCESSOR_PREFIX, state.head]);
+  assert.equal(proof.fullMainPathCount, 77); assert.equal(proof.localCommitCount, 7);
+  assert.deepEqual(proof.successorCommitPaths, [...CI_PREVIEW_SUCCESSOR_PATHS]);
+  assert.equal(proof.successorDelta.filter((entry) => entry.status === "A").length, 2);
+  assert.deepEqual(validateCiPreviewSuccessorSourceProof(proof), proof);
+  assert.equal(isAllowedCiPreviewReadinessLineage(proof), false);
+  assert.equal(proof.releaseAuthority, false); assert.equal(proof.deploymentAllowanceGranted, false);
+  migrationSave("local-source", { proof, fixtureManifestSha256: sha256(readFileSync(manifest)) });
+});
+
+for (const [version, revision] of [["v2", CI_PREVIEW_SIXTH_PARENT], ["v3", CI_PREVIEW_SUCCESSOR_ANCHOR]]) {
+  test(`migration historical ${version} immutable proof compatibility`, async () => {
+    const state = migrationState(), checkout = path.join(migrationRoot(), "historical-" + version);
+    if (!existsSync(checkout)) migrationClone(state.owner, checkout, revision);
+    const retainedPath = path.join(migrationRoot(), `historical-${version}.mjs`);
+    const original = execFileSync("git", ["show", `${revision}:${ATTESTATION_REPAIR_PATHS[1]}`], { cwd: state.owner, stdio: "pipe", timeout: 60_000 });
+    if (!existsSync(retainedPath)) writeFileSync(retainedPath, original, { flag: "wx" });
+    assert.equal(sha256(readFileSync(retainedPath)), sha256(original));
+    const retained = await import(pathToFileURL(retainedPath).href);
+    const options = { repositoryRoot: checkout, environment: migrationLocalEnvironment() };
+    const historical = retained.deriveCiPreviewReadinessSource(options), current = deriveCiPreviewReadinessSource(options);
+    assert.equal(current.schemaVersion, `clover-ci-preview-readiness-source-${version}`);
+    assert.equal(canonicalJson(current) + "\n", canonicalJson(historical) + "\n");
+    assert.equal(current.sourceProofSelfHash, historical.sourceProofSelfHash);
+    assert.equal(isAllowedCiPreviewSuccessorLineage(current), false);
+    assert.throws(() => validateCiPreviewSuccessorSourceProof(migrationSeal({ ...current, schemaVersion: "clover-ci-preview-readiness-source-v4" })));
+    migrationSave("historical-" + version, { revision, retainedScriptSha256: sha256(original), retainedWorkflowSha256: sha256(readFileSync(path.join(checkout, ATTESTATION_REPAIR_PATHS[0]))),
+      proof: current, canonicalProofSha256: sha256(canonicalJson(current) + "\n"), byteIdentical: true });
+  });
+}
+
+test("migration schema lineage and exact path rejection matrix", () => {
+  const state = migrationState();
+  const proof = JSON.parse(readFileSync(path.join(migrationRoot(), process.version, "local-source.json"))).proof;
+  assert.equal(proof.head, state.head);
+  const cases = [
+    ["wrong-anchor-head", (p) => { p.successorAnchor.head = hex40("1"); }],
+    ["wrong-anchor-tree", (p) => { p.successorAnchor.tree = hex40("1"); }],
+    ["extra-anchor-field", (p) => { p.successorAnchor.unreviewed = true; }],
+    ["wrong-parent", (p) => { p.parent = hex40("1"); }], ["wrong-parent-tree", (p) => { p.parentTree = hex40("1"); }],
+    ["prefix", (p) => { p.commitIds[0] = hex40("1"); }], ["order", (p) => { p.commitIds.reverse(); }],
+    ["eighth", (p) => { p.commitIds.push(hex40("1")); p.head = hex40("1"); p.localCommitCount++; }],
+    ["duplicate-commit", (p) => { p.commitIds[1] = p.commitIds[0]; }], ["wrong-head", (p) => { p.head = hex40("1"); }],
+    ["base", (p) => { p.base = hex40("1"); }], ["base-tree", (p) => { p.baseTree = hex40("1"); }],
+    ["branch", (p) => { p.branch = "unreviewed-branch"; }], ["missing-sixth", (p) => { delete p.sixthCommitPaths; }],
+    ["fourth-path", (p) => { p.fourthCommitPaths.pop(); }], ["fifth-path", (p) => { p.fifthCommitPaths.pop(); }],
+    ["sixth-path", (p) => { p.sixthCommitPaths.reverse(); }], ["omitted-added-path", (p) => { p.successorCommitPaths.pop(); }],
+    ["extra-path", (p) => { p.successorCommitPaths.push("unreviewed.txt"); }], ["duplicate-path", (p) => { p.paths[1] = p.paths[0]; }],
+    ["path-order", (p) => { p.paths.reverse(); }], ["wrong-count", (p) => { p.fullMainPathCount = 75; }],
+    ["missing-delta", (p) => { p.successorDelta.pop(); }], ["status", (p) => { p.successorDelta[0].status = "A"; }],
+    ["added-prior", (p) => { const d = p.successorDelta.find((x) => x.status === "A"); d.before = d.after; }],
+    ["missing-prior", (p) => { p.successorDelta.find((x) => x.status === "M").before = null; }],
+    ["mode", (p) => { p.successorDelta[0].after.mode = "100755"; }], ["blob", (p) => { p.successorDelta[0].after.blob = hex40("1"); }],
+    ["bytes", (p) => { p.successorDelta[0].after.bytes++; }], ["sha256", (p) => { p.successorDelta[0].after.sha256 = hex64("1"); }],
+    ["extra-object-key", (p) => { p.sourceFiles[0].unreviewed = true; }], ["empty-file", (p) => { p.sourceFiles[0].bytes = 0; }],
+    ["path-traversal", (p) => { p.successorDelta[0].path = "../outside"; }], ["changed-lock", (p) => { p.lockfiles[0].sha256 = hex64("1"); }],
+    ["profile-wire-field", (p) => { p.lineageProfile = "exact-34f98ea-successor"; }],
+    ["v4-as-v3", (p) => { p.schemaVersion = "clover-ci-preview-readiness-source-v3"; }],
+    ["v4-as-v2", (p) => { p.schemaVersion = "clover-ci-preview-readiness-source-v2"; }],
+    ...["releaseAuthority", "exactPrHeadAcceptance", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted"].map((key) => [key, (p) => { p[key] = true; }]),
+    ["dirty-claim", (p) => { p.cleanWorktree = false; }], ["linearity", (p) => { p.linearFirstParent = false; }],
+    ["local-ci-mix", (p) => { p.githubActions = true; }], ["extra-key", (p) => { p.unreviewed = true; }]
+  ];
+  for (const [label, change] of cases) { const bad = structuredClone(proof); change(bad); assert.throws(() => validateCiPreviewSuccessorSourceProof(migrationSeal(bad)), undefined, label); }
+  assert.throws(() => validateCiPreviewSuccessorSourceProof({ ...proof, sourceProofSelfHash: hex64("1") }));
+  assert.equal(isAllowedCiPreviewReadinessLineage(proof), false);
+  migrationSave("schema-negative-matrix", { expectationsPassed: cases.map(([label]) => label), forgedSelfHashRejected: true });
+});
+
+const migrationGitNegatives = [
+  ["omitted-workflow", (dir) => migrationGit(dir, ["restore", "--source", CI_PREVIEW_SUCCESSOR_ANCHOR, "--", CI_PREVIEW_FOURTH_PATHS[0]])],
+  ["extra-path", (dir) => writeFileSync(path.join(dir, "unreviewed.txt"), "synthetic\n")],
+  ["removed-addition", (dir) => unlinkSync(path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]))],
+  ["renamed-addition", (dir) => renameSync(path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]), path.join(dir, "renamed.txt"))],
+  ["executable-mode", (dir) => chmodSync(path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]), 0o755)],
+  ["symlink", (dir) => { const p = path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]); unlinkSync(p); symlinkSync("clover-deployment-attestation.mjs", p); }],
+  ["NUL", (dir) => writeFileSync(path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]), Buffer.from([97, 0, 98]))],
+  ["invalid-UTF8", (dir) => writeFileSync(path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]), Buffer.from([255, 254]))],
+  ["empty-addition", (dir) => writeFileSync(path.join(dir, CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]), "")],
+  ["deleted-existing", (dir) => unlinkSync(path.join(dir, CI_PREVIEW_FOURTH_PATHS[2]))],
+  ["lock-change", (dir) => writeFileSync(path.join(dir, DEPENDENCY_SUCCESSOR_LOCKS[0].path), "{}\n")]
+];
+for (let group = 0; group < 3; group++) test(`migration actual Git path rejection group ${group}`, () => {
+  const state = migrationState(), results = [];
+  for (const [label, change] of migrationGitNegatives.slice(group * 4, group * 4 + 4)) {
+    const dir = path.join(migrationRoot(), process.version, "negative-" + label);
+    migrationClone(state.checkout, dir, CI_PREVIEW_SUCCESSOR_ANCHOR);
+    for (const entry of CI_PREVIEW_SUCCESSOR_PATHS) writeFileSync(path.join(dir, entry), readFileSync(path.join(state.checkout, entry)));
+    change(dir); migrationCommit(dir, "Synthetic negative successor " + label);
+    const head = migrationGit(dir, ["rev-parse", "HEAD"]);
+    assert.equal(migrationGit(dir, ["show", "-s", "--format=%P", "HEAD"]), CI_PREVIEW_SUCCESSOR_ANCHOR);
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: dir, environment: migrationLocalEnvironment() }), /CLOVER_(?:READINESS|SOURCE)_/, label);
+    results.push({ label, head, tree: migrationGit(dir, ["rev-parse", "HEAD^{tree}"]), expectedRejectionPassed: true });
+  }
+  migrationSave("git-negative-group-" + group, { results });
+});
+
+test("migration actual Git identity and hidden-state rejection", () => {
+  const state = migrationState(), results = [];
+  const cases = [
+    ["dirty", (dir) => writeFileSync(path.join(dir, CI_PREVIEW_SUCCESSOR_PATHS[0]), "synthetic dirty\n")],
+    ["untracked", (dir) => writeFileSync(path.join(dir, "untracked.txt"), "synthetic\n")],
+    ["skip-worktree", (dir) => migrationGit(dir, ["update-index", "--skip-worktree", CI_PREVIEW_SUCCESSOR_PATHS[0]])],
+    ["assume-unchanged", (dir) => migrationGit(dir, ["update-index", "--assume-unchanged", CI_PREVIEW_SUCCESSOR_PATHS[0]])],
+    ["branch", (dir) => migrationGit(dir, ["branch", "-m", "synthetic-wrong-branch"])],
+    ["eighth", (dir) => { writeFileSync(path.join(dir, CI_PREVIEW_SUCCESSOR_PATHS[0]), "# Synthetic eighth\n"); migrationCommit(dir, "Synthetic eighth rejected"); }],
+    ["merge", (dir) => { const merge = migrationGit(dir, ["-c", "user.name=Synthetic", "-c", "user.email=synthetic@example.invalid", "commit-tree", state.tree, "-p", state.head, "-p", CI_PREVIEW_SUCCESSOR_ANCHOR, "-m", "Synthetic merge"]); migrationGit(dir, ["reset", "--hard", merge]); }],
+    ["replace", (dir) => migrationGit(dir, ["replace", state.head, CI_PREVIEW_SUCCESSOR_ANCHOR])],
+    ["grafts", (dir) => writeFileSync(path.join(dir, ".git/info/grafts"), `${state.head}\n`)],
+    ["shallow", (dir) => writeFileSync(path.join(dir, ".git/shallow"), `${CI_PREVIEW_SUCCESSOR_ANCHOR}\n`)]
+  ];
+  for (const [label, change] of cases) {
+    const dir = path.join(migrationRoot(), process.version, "identity-" + label);
+    migrationClone(state.checkout, dir, state.head); change(dir);
+    assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: dir, environment: migrationLocalEnvironment() }), /CLOVER_(?:READINESS|SOURCE)_/, label);
+    results.push(label);
+  }
+  assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: state.checkout, environment: { ...migrationLocalEnvironment(), GIT_DIR: "synthetic-untrusted" } }), /GIT_ENVIRONMENT/);
+  assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: state.checkout, environment: { ...migrationLocalEnvironment(), CLOVER_READINESS_RELEASE_AUTHORITY: "true" } }), /CONTEXT/);
+  migrationSave("identity-negative-matrix", { expectationsPassed: results, forbiddenGitEnvironmentRejected: true, authorityRejected: true });
+});
+
+test("migration provider profile and projection rejection matrix", async () => {
+  const state = migrationState(), sourceBinding = JSON.parse(readFileSync(path.join(migrationRoot(), process.version, "local-source.json"))).proof;
+  const workflowBytes = readFileSync(path.join(state.checkout, ATTESTATION_REPAIR_PATHS[0]));
+  const results = [];
+  for (const relationship of ["equal", "synchronize-immediate-predecessor"]) {
+    const event = readinessEventFixture(state.head);
+    if (relationship !== "equal") { event.event.action = "synchronize"; event.event.pull_request.merge_commit_sha = hex40("f"); }
+    const provider = syntheticCiProviderFixture({ fixture: event, tree: state.tree, sourceBinding, workflowBytes });
+    const proof = await acquireCiPreviewProviderProof({ ...provider.input, fetchImpl: provider.fetchImpl, now: provider.now });
+    const execution = deriveCiPreviewExecutionIdentity({ ...provider.input, proof, now: provider.now() });
+    assert.equal(execution.mergeRelationship, relationship); assert.equal(execution.releaseAuthority, false);
+    assert.equal(proof.schemaVersion, "clover-ci-provider-proof-v2"); assert.equal(execution.schemaVersion, "clover-ci-execution-identity-v2");
+    assert.equal(Object.hasOwn(proof, "lineageProfile"), false); assert.equal(Object.hasOwn(proof.originalInputs, "lineageProfile"), false);
+    for (const [label, change] of [
+      ["head-tree", (p) => { p.records.find((r) => r.kind === "HEAD_COMMIT").projection.tree = hex40("1"); }],
+      ["head-parent", (p) => { p.records.find((r) => r.kind === "HEAD_COMMIT").projection.parents = [CI_PREVIEW_SIXTH_PARENT]; }],
+      ["runner-parent", (p) => { p.records.find((r) => r.kind === "MERGE_COMMIT").projection.parents.reverse(); }],
+      ["workflow", (p) => { p.records.find((r) => r.kind === "HEAD_WORKFLOW").projection.sha256 = hex64("1"); }],
+      ["run", (p) => { p.records[0].projection.id = "999"; }], ["attempt", (p) => { p.records[0].projection.attempt = "2"; }],
+      ["ref", (p) => { p.records.at(-1).projection.sha = hex40("1"); }],
+      ["schema-field", (p) => { p.lineageProfile = "unreviewed"; }],
+      ...(relationship === "equal" ? [] : [["event-parent", (p) => { p.records.find((r) => r.kind === "EVENT_MERGE_COMMIT").projection.parents[1] = CI_PREVIEW_SIXTH_PARENT; }],
+        ["event-tree", (p) => { p.records.find((r) => r.kind === "EVENT_MERGE_COMMIT").projection.tree = CI_PREVIEW_SIXTH_PARENT_TREE; }]])
+    ]) { const bad = structuredClone(proof); change(bad); assert.throws(() => deriveCiPreviewExecutionIdentity({ ...provider.input, proof: bad, now: provider.now() }), undefined, label); results.push(relationship + ":" + label); }
+    const rawBinding = { head: sourceBinding.head, tree: sourceBinding.tree, parent: sourceBinding.parent, parentTree: sourceBinding.parentTree,
+      commitIds: sourceBinding.commitIds, fourthCommitPaths: sourceBinding.fourthCommitPaths, fifthCommitPaths: sourceBinding.fifthCommitPaths,
+      sixthCommitPaths: sourceBinding.sixthCommitPaths, successorAnchor: sourceBinding.successorAnchor, successorCommitPaths: sourceBinding.successorCommitPaths };
+    assert.throws(() => deriveCiPreviewExecutionIdentity({ ...provider.input, sourceBinding: JSON.parse(JSON.stringify(rawBinding)), proof, now: provider.now() }), /SOURCE_LINEAGE/);
+    assert.throws(() => deriveCiPreviewExecutionIdentity({ ...provider.input, sourceBinding: migrationSeal({ ...sourceBinding, schemaVersion: "clover-ci-preview-readiness-source-v3" }), proof, now: provider.now() }), /SOURCE_LINEAGE/);
+  }
+  migrationSave("provider-negative-matrix", { expectationsPassed: results, serializedProvisionalSuccessorRejected: true, wireSchemasUnchanged: true });
+});
+
+function migrationWorkflow(state) { return loadYaml(readFileSync(path.join(state.checkout, ATTESTATION_REPAIR_PATHS[0]), "utf8")); }
+function migrationCase(state, job, relationship) {
+  const caseRoot = path.join(migrationRoot(), process.version, job + "-" + relationship);
+  const fixture = readinessEventFixture(state.head);
+  if (relationship === "synchronize") { fixture.event.action = "synchronize"; fixture.event.pull_request.merge_commit_sha = hex40("f"); }
+  const sourceBinding = JSON.parse(readFileSync(path.join(migrationRoot(), process.version, "local-source.json"))).proof;
+  const provider = syntheticCiProviderFixture({ fixture, tree: state.tree, sourceBinding,
+    workflowBytes: readFileSync(path.join(state.checkout, ATTESTATION_REPAIR_PATHS[0])) });
+  const eventPath = path.join(caseRoot, "event.json"), replies = path.join(caseRoot, "replies.json"), trace = path.join(caseRoot, "fetch-trace.jsonl");
+  const environment = readinessFixtureEnvironment({ ...provider.input.environment, GITHUB_WORKSPACE: state.checkout, GITHUB_EVENT_PATH: eventPath,
+    RUNNER_TEMP: caseRoot, PATH: `${path.join(caseRoot, "bin")}${path.delimiter}${process.env.PATH ?? ""}`,
+    NODE_OPTIONS: `--import=${JSON.stringify(path.join(caseRoot, "provider-double.mjs"))}`,
+    SYNTHETIC_PROVIDER_REPLIES: replies, SYNTHETIC_FETCH_TRACE: trace });
+  return { caseRoot, provider, eventPath, replies, trace, environment };
+}
+function migrationObserve(label, executable, args, options = {}) {
+  const startedAt = new Date().toISOString();
+  const result = spawnSync(executable, args, { ...options, encoding: "utf8", timeout: 60_000, maxBuffer: 1024 * 1024 });
+  migrationSave(label, { executable, args, cwd: options.cwd, startedAt, endedAt: new Date().toISOString(),
+    status: result.status, signal: result.signal, spawnError: result.error ? { code: result.error.code ?? null } : null,
+    stdout: result.stdout, stderr: result.stderr, timeoutMs: 60_000 });
+  assert.equal(result.error, undefined, label); assert.equal(result.signal, null, label);
+  return result;
+}
+for (const job of ["validate", "browser"]) for (const relationship of ["equal", "synchronize"]) {
+  test(`migration actual ${job} CLI ${relationship}`, () => {
+    const state = migrationState(), c = migrationCase(state, job, relationship);
+    mkdirSync(c.caseRoot); mkdirSync(path.join(c.caseRoot, "bin")); symlinkSync(process.execPath, path.join(c.caseRoot, "bin/node"));
+    writeFileSync(c.eventPath, JSON.stringify(c.provider.input.event)); writeFileSync(c.replies, JSON.stringify(c.provider.entries));
+    writeFileSync(path.join(c.caseRoot, "provider-double.mjs"), [
+      'import fs from "node:fs";',
+      'const entries = JSON.parse(fs.readFileSync(process.env.SYNTHETIC_PROVIDER_REPLIES, "utf8"));',
+      'globalThis.fetch = async (url, options) => {',
+      'const entry = entries.find((e) => e.url === url);',
+      'if (!entry || options.method !== "GET" || options.redirect !== "error" || options.credentials !== "omit" || !(options.signal instanceof AbortSignal) || JSON.stringify(options.headers) !== JSON.stringify({Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10"})) throw new Error("SYNTHETIC_UNEXPECTED_REQUEST");',
+      'fs.appendFileSync(process.env.SYNTHETIC_FETCH_TRACE, JSON.stringify({url, method:options.method, redirect:options.redirect, credentials:options.credentials}) + "\\n");',
+      'return {status:200, redirected:false, url, body:(async function*(){yield Buffer.from(JSON.stringify(entry.body));})()};',
+      '};'
+    ].join("\n"));
+    const step = migrationWorkflow(state).jobs[job].steps.find((entry) => entry.id === "readiness-ci-identity-proof"); assert.ok(step);
+    const result = migrationObserve(`${job}-${relationship}-actual-cli`, "/bin/bash", ["-e", "-o", "pipefail", "-c", step.run], {
+      cwd: step["working-directory"] ? path.resolve(state.checkout, step["working-directory"]) : state.checkout, env: c.environment });
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(result.stdout);
+    assert.equal(record.schemaVersion, "clover-ci-identity-proof-result-v2"); assert.equal(record.head, state.head);
+    assert.equal(record.releaseAuthority, false); assert.equal(record.externalAuthenticationEstablished, false);
+    const consumed = migrationObserve(`${job}-${relationship}-cached-source`, process.execPath,
+      [ATTESTATION_REPAIR_PATHS[1], "readiness-source", "--repository-root", state.checkout], { cwd: state.checkout, env: c.environment });
+    assert.equal(consumed.status, 0, consumed.stderr);
+    const proof = JSON.parse(consumed.stdout); validateCiPreviewSuccessorSourceProof(proof);
+    assert.equal(proof.sourceProofSelfHash, record.sourceProofSelfHash);
+    assert.equal(proof.ciExecution.mergeRelationship, relationship === "equal" ? "equal" : "synchronize-immediate-predecessor");
+    assert.equal(proof.ciExecution.nodeVersion, process.version);
+    const requests = readFileSync(c.trace, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(requests.map((r) => r.url), c.provider.entries.map((r) => r.url));
+    writeFileSync(path.join(c.caseRoot, "actual-source-proof.json"), consumed.stdout, { flag: "wx" });
+    migrationSave(`${job}-${relationship}-fixture-binding`, { commandSha256: sha256(step.run), workflowSha256: sha256(c.provider.input.workflowBytes),
+      sourceProofSelfHash: proof.sourceProofSelfHash, fixture: { head: state.head, tree: state.tree },
+      eventSha256: sha256(readFileSync(c.eventPath)), providerRepliesSha256: sha256(readFileSync(c.replies)),
+      providerCacheSha256: sha256(readFileSync(path.join(c.caseRoot, "clover-ci-provider-proof.json"))), syntheticRequests: requests });
+  });
+}
+
+function migrationWrappers(state) {
+  const contextStart = "const readinessContext = ['local-ci-preview-readiness', 'ci-preview-readiness'].includes(process.env.CLOVER_TREE_LOCAL_SOURCE_CLOSURE_CONTEXT);";
+  const retainedEnd = "} else if (fs.existsSync(readinessProofPath)) throw new Error('readiness source proof outside explicit successor context');";
+  const wrappers = Object.entries(migrationWorkflow(state).jobs).flatMap(([job, value]) => value.steps
+    .filter((step) => typeof step.run === "string" && step.run.includes("'readiness-source'"))
+    .map((step, index) => {
+      const start = step.run.indexOf(contextStart); assert.notEqual(start, -1);
+      let end, result;
+      if (step.run.includes("let readinessSource = null;")) { end = step.run.indexOf("const expectedMainPathCount =", start); result = "readinessSource"; }
+      else if (step.run.includes("let readinessBinding = null;")) { end = step.run.indexOf(retainedEnd, start) + retainedEnd.length; result = "readinessBinding"; }
+      else { end = step.run.indexOf("const dependencySuccessorContext =", start); result = "readinessSourceBindings[0]"; }
+      assert.ok(end > start);
+      const projectsStart = step.run.indexOf("const exactProjects =");
+      return { id: `${job}-${index}`, name: step.name, code: step.run.slice(start, end), result,
+        projectCode: projectsStart < 0 ? "" : step.run.slice(projectsStart, step.run.indexOf("const exactViews =", projectsStart)) };
+    }));
+  assert.equal(wrappers.length, 4); return wrappers;
+}
+function migrationWrapperFixture(state, suffix) {
+  const original = migrationCase(state, "validate", "equal"), caseRoot = path.join(migrationRoot(), process.version, suffix);
+  mkdirSync(caseRoot);
+  const proofBytes = readFileSync(path.join(original.caseRoot, "actual-source-proof.json")), proof = JSON.parse(proofBytes);
+  for (const name of ["clover-ci-provider-proof.json", "event.json"]) writeFileSync(path.join(caseRoot, name), readFileSync(path.join(original.caseRoot, name)));
+  const retainedPath = path.join(caseRoot, "clover-ci-preview-readiness-source.json"); writeFileSync(retainedPath, proofBytes);
+  const root = path.join(caseRoot, "browser-artifacts"), proofRoot = path.join(root, "clover-ci-preview-readiness-source"); mkdirSync(proofRoot, { recursive: true });
+  const documents = ["desktop-chromium", "mobile-chromium"].map((project) => ({ project, document: { source: { readiness: {
+    sourceProofSelfHash: proof.sourceProofSelfHash, ciExecution: proof.ciExecution } } } }));
+  for (const { project } of documents) writeFileSync(path.join(proofRoot, project + ".json"), proofBytes);
+  const provenance = { commit: proof.head, tree: proof.tree, nodeVersion: process.version, changedPathCount: proof.fullMainPathCount,
+    pathListSha256: proof.fullMainPathListSha256, sourceManifestSha256: proof.sourceManifestSha256 };
+  writeFileSync(path.join(caseRoot, "clover-tree-browser-source-provenance.json"), JSON.stringify(provenance));
+  return { caseRoot, proofBytes, proof, retainedPath, root, proofRoot, documents, provenance,
+    environment: { ...original.environment, RUNNER_TEMP: caseRoot, GITHUB_EVENT_PATH: path.join(caseRoot, "event.json") } };
+}
+function migrationRunWrapper(state, wrapper, c, label) {
+  const program = [
+    'const cp = require("node:child_process"), fs = require("node:fs"), path = require("node:path"); const {execFileSync} = cp;',
+    `const repositoryRoot = ${JSON.stringify(state.checkout)}, p = ${JSON.stringify(c.provenance)};`,
+    'const requireCondition = (ok, message) => {if (!ok) throw new Error(message);};',
+    'const exactJson = (actual, expected, message) => requireCondition(JSON.stringify(actual) === JSON.stringify(expected), message);',
+    `const root = ${JSON.stringify(c.root)}, documents = ${JSON.stringify(c.documents)};`, wrapper.projectCode, wrapper.code,
+    `process.stdout.write(JSON.stringify({sourceProofSelfHash:${wrapper.result}.sourceProofSelfHash,ciExecution:${wrapper.result}.ciExecution}));`
+  ].join("\n");
+  return migrationObserve(label, process.execPath, ["-e", program], { cwd: state.checkout, env: c.environment });
+}
+for (let index = 0; index < 4; index++) test(`migration actual workflow consumer ${index}`, () => {
+  const state = migrationState(), wrapper = migrationWrappers(state)[index], c = migrationWrapperFixture(state, "wrapper-" + index);
+  if (index === 0) unlinkSync(c.retainedPath);
+  const good = migrationRunWrapper(state, wrapper, c, `wrapper-${index}-positive`);
+  assert.equal(good.status, 0, good.stderr);
+  assert.deepEqual(JSON.parse(good.stdout), { sourceProofSelfHash: c.proof.sourceProofSelfHash, ciExecution: c.proof.ciExecution });
+  if (index !== 0) {
+    for (const [label, change] of [["downgrade", (p) => { p.schemaVersion = "clover-ci-preview-readiness-source-v3"; }],
+      ["missing-added", (p) => { p.successorDelta.pop(); }], ["extra-field", (p) => { p.unreviewed = true; }]]) {
+      const bad = structuredClone(c.proof); change(bad); const bytes = canonicalJson(migrationSeal(bad)) + "\n";
+      writeFileSync(c.retainedPath, bytes); for (const { project } of c.documents) writeFileSync(path.join(c.proofRoot, project + ".json"), bytes);
+      assert.notEqual(migrationRunWrapper(state, wrapper, c, `wrapper-${index}-${label}`).status, 0, label);
+    }
+    writeFileSync(c.retainedPath, c.proofBytes); for (const { project } of c.documents) writeFileSync(path.join(c.proofRoot, project + ".json"), c.proofBytes);
+  }
+  const cachePath = path.join(c.caseRoot, "clover-ci-provider-proof.json");
+  const cache = JSON.parse(readFileSync(cachePath)); cache.records[2].projection.tree = hex40("1"); writeFileSync(cachePath, JSON.stringify(cache));
+  const rejectedCache = migrationRunWrapper(state, wrapper, c, `wrapper-${index}-cache-mismatch`);
+  assert.notEqual(rejectedCache.status, 0); assert.match(rejectedCache.stderr, /CLOVER_READINESS_CI_PROOF_REJECTED/);
+  migrationSave(`wrapper-${index}-coverage`, { workflowSnippetSha256: sha256(wrapper.code), wrapper: wrapper.name,
+    exactProducerConsumerExecuted: true, retainedRecordNegativeCount: index === 0 ? 0 : 3, cacheSubstitutionRejected: true });
+});
+
+test("migration actual browser source producer", () => {
+  const state = migrationState(), c = migrationWrapperFixture(state, "browser-producer");
+  const spec = readFileSync(path.join(state.checkout, "apps/clover-launch-studio/test/tree-command-center.e2e.spec.ts"), "utf8");
+  const marker = 'test.beforeAll(async () => {\n';
+  const start = spec.indexOf(marker) + marker.length;
+  assert.ok(start >= marker.length);
+  const end = spec.indexOf('\n  if (protectedPreviewEvidence) {', start); assert.ok(end > start);
+  const block = spec.slice(start, end);
+  const predicates = spec.slice(spec.indexOf('const isRepairContext ='), spec.indexOf('\nlet readinessSourceBinding')).replaceAll(': string', '');
+  assert.ok(predicates.includes('isNonCampaignSourceContext'));
+  const producerCheckout = path.join(c.caseRoot, "producer-repository");
+  migrationClone(state.checkout, producerCheckout, state.head);
+  const appRoot = path.join(producerCheckout, "apps/clover-launch-studio");
+  const run = (project, label, protectedPreviewEvidence = false) => migrationObserve(label, process.execPath, ["-e", [
+    'const {execFileSync} = require("node:child_process"); const {mkdirSync,existsSync,readFileSync,writeFileSync} = require("node:fs"); const path = require("node:path");',
+    predicates, `let readinessSourceBinding = null; const protectedPreviewEvidence = ${protectedPreviewEvidence};`,
+    `const test = {info: () => ({project: {name: ${JSON.stringify(project)}}})};`, block,
+    'process.stdout.write(JSON.stringify(readinessSourceBinding));'
+  ].join("\n")], { cwd: appRoot, env: { ...c.environment, GITHUB_WORKSPACE: producerCheckout } });
+  for (const project of ["desktop-chromium", "mobile-chromium"]) {
+    const result = run(project, "browser-producer-" + project); assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { sourceProofSelfHash: c.proof.sourceProofSelfHash, ciExecution: c.proof.ciExecution });
+    assert.deepEqual(readFileSync(path.join(appRoot, "test-results/clover-ci-preview-readiness-source", project + ".json")), c.proofBytes);
+  }
+  assert.notEqual(run("unreviewed-project", "browser-producer-project-rejection").status, 0);
+  assert.notEqual(run("desktop-chromium", "browser-producer-authority-rejection", true).status, 0);
+  const desktop = path.join(appRoot, "test-results/clover-ci-preview-readiness-source/desktop-chromium.json");
+  writeFileSync(desktop, "{}\n");
+  assert.notEqual(run("desktop-chromium", "browser-producer-changed-bytes-rejection").status, 0);
+  // Preserve failed input without contaminating the canonical shared fixture's ignored output.
+  renameSync(desktop, path.join(c.caseRoot, "rejected-desktop.json"));
+  migrationSave("browser-producer-coverage", { exactSnippet: block, snippetSha256: sha256(block), browserSpecSha256: sha256(spec),
+    actualSourceProducerExecuted: true, projectAndAuthorityAndChangedBytesRejected: true, serverBranchExecuted: false });
+});
+
+test("migration browser artifact projections and count rejection", () => {
+  const state = migrationState(), c = migrationWrapperFixture(state, "browser-projections");
+  const run = Object.values(migrationWorkflow(state).jobs).flatMap((job) => job.steps).find((step) => step.run?.includes("const manifestSources = ["))?.run;
+  assert.ok(run);
+  const lines = run.split("\n");
+  const summaryLine = lines.find((line) => line.includes("...(readinessContext ? { ciPreviewReadinessSource: readinessSourceBindings.map"));
+  const manifestLine = lines.find((line) => line.includes("...readinessSourceBindings.map("));
+  const countLine = lines.find((line) => line.includes("'browser manifest readiness source proof count mismatch'"));
+  assert.ok(summaryLine && manifestLine && countLine);
+  const bindings = c.documents.map(({ project }) => ({ project, target: path.join(c.proofRoot, project + ".json"),
+    sourceProofSelfHash: c.proof.sourceProofSelfHash, classification: c.proof.classification, head: c.proof.head, tree: c.proof.tree,
+    base: c.proof.base, lockfiles: c.proof.lockfiles, ciExecution: c.proof.ciExecution }));
+  const summary = new Function("readinessContext", "readinessSourceBindings", `return ({${summaryLine}});`)(true, bindings);
+  const manifest = new Function("readinessSourceBindings", "safeRelative", `return [${manifestLine}];`)(bindings, (target) => path.relative(c.root, target));
+  const count = new Function("readinessContext", "manifestEntries", "requireCondition", countLine);
+  const requireCondition = (ok, message) => { if (!ok) throw new Error(message); };
+  count(true, manifest, requireCondition);
+  assert.throws(() => count(true, manifest.slice(1), requireCondition), /count mismatch/);
+  assert.throws(() => count(true, [...manifest, manifest[0]], requireCondition), /count mismatch/);
+  assert.throws(() => count(false, manifest, requireCondition), /count mismatch/);
+  assert.equal(summary.ciPreviewReadinessSource.length, 2);
+  for (const [index, item] of summary.ciPreviewReadinessSource.entries()) {
+    assert.equal(item.sourceProofSelfHash, c.proof.sourceProofSelfHash); assert.deepEqual(item.ciExecution, c.proof.ciExecution);
+    assert.equal(item.releaseAuthority, false); assert.equal(item.providerAcceptance, false);
+    assert.equal(manifest[index].binding.releaseAuthority, false); assert.equal(manifest[index].binding.providerAcceptance, false);
+  }
+  migrationSave("browser-projection-coverage", { snippets: { summaryLine, manifestLine, countLine }, summary, manifest,
+    missingExtraAndNonreadinessArtifactCountsRejected: true });
+});
+
+test("migration runtime provenance and actual route projection", async () => {
+  const state = migrationState(), c = migrationWrapperFixture(state, "runtime-provenance");
+  const provenance = buildWith({ commit: state.head, tree: state.tree, parent: CI_PREVIEW_SUCCESSOR_ANCHOR,
+    runtimeDeploymentKey: `clover-${state.head.slice(0, 24)}`, changedPathCount: 77,
+    pathListSha256: c.proof.fullMainPathListSha256, sourceManifestSha256: c.proof.sourceManifestSha256 });
+  assert.equal(provenance.changedPathCount, 77); assert.equal(provenance.consequentialAuthorityGranted, false);
+  const { readBuildProvenance } = await import("../src/lib/provenance.ts");
+  assert.deepEqual(readBuildProvenance(JSON.stringify(provenance)), provenance);
+  for (const change of [(p) => { p.changedPathCount = 75; }, (p) => { p.pathListSha256 = hex64("1"); },
+    (p) => { p.sourceManifestSha256 = hex64("1"); }, (p) => { p.consequentialAuthorityGranted = true; }]) {
+    const bad = structuredClone(provenance); change(bad); assert.throws(() => readBuildProvenance(JSON.stringify(bad)), /CLOVER_/);
+  }
+  const route = readFileSync(path.join(state.checkout, "apps/clover-launch-studio/src/app/api/provenance/route.ts"), "utf8");
+  const body = route.slice(route.indexOf("export function GET() {")).replace("export function", "function");
+  assert.ok(body.startsWith("function GET() {"));
+  const { NextResponse } = createRequire(import.meta.url)("next/server");
+  const { READ_ONLY_AUTHORITY } = await import("../src/lib/live-truth.ts");
+  const GET = new Function("NextResponse", "READ_ONLY_AUTHORITY", "readBuildProvenance", `${body}; return GET;`)(NextResponse, READ_ONLY_AUTHORITY,
+    () => readBuildProvenance(JSON.stringify(provenance)));
+  const response = GET(); assert.equal(response.headers.get("Cache-Control"), "no-store");
+  const readback = await response.json(); assert.deepEqual(readback.provenance, provenance); assert.deepEqual(readback.authority, READ_ONLY_AUTHORITY);
+  migrationSave("runtime-provenance-coverage", { actualParserAndReadbackUsed: true, routeBodySha256: sha256(body), routeSha256: sha256(route),
+    provenance, readback, serverStarted: false });
+});
+
+test("migration actual sealed contract and authority rejection", async () => {
+  const state = migrationState(), c = migrationWrapperFixture(state, "contract");
+  const localProof = JSON.parse(readFileSync(path.join(migrationRoot(), process.version, "local-source.json"))).proof;
+  const sourceProvenance = buildWith({ commit: state.head, tree: state.tree, parent: CI_PREVIEW_SUCCESSOR_ANCHOR,
+    runtimeDeploymentKey: `clover-${state.head.slice(0, 24)}`, changedPathCount: 77,
+    pathListSha256: localProof.fullMainPathListSha256, sourceManifestSha256: localProof.sourceManifestSha256 });
+  const outputRoot = path.join(c.caseRoot, "sealed-output"); writeRawBuildOutput(outputRoot, c.caseRoot, { sourceProvenance });
+  const sealed = createDeploymentAttestation({ outputRoot, repositoryRoot: c.caseRoot, evidenceDirectory: path.join(c.caseRoot, "evidence"),
+    frozenOutputRoot: path.join(c.caseRoot, "frozen"), sourceProvenance });
+  const verifiedEvidence = { sourceProvenance, payloadManifest: sealed.outputManifest, attestation: sealed.attestation,
+    deploymentInputManifest: sealed.deploymentInputManifest, archiveManifest: sealed.archiveManifest };
+  const actual = await readinessPreviewFixture(verifiedEvidence, { sourceProof: localProof, ciSourceProof: c.proof });
+  let ciProof = c.proof;
+  if (process.version === "v22.23.2") {
+    assert.throws(() => validateCiPreviewExecutionContract(actual), /CI_EXECUTION/);
+    const synthetic = structuredClone(ciProof); synthetic.ciExecution.nodeVersion = "v24.16.0";
+    synthetic.ciExecution.providerProof.originalInputs.nodeVersion = "v24.16.0"; ciProof = migrationSeal(synthetic);
+  }
+  const fixture = await readinessPreviewFixture(verifiedEvidence, { sourceProof: localProof, ciSourceProof: ciProof });
+  const accepted = validateCiPreviewExecutionContract(fixture);
+  assert.equal(accepted.suppliedRecordsConsistent, true); assert.equal(accepted.externalAuthenticationEstablished, false);
+  assert.equal(accepted.releaseAuthority, false); assert.equal(accepted.deploymentAllowanceGranted, false);
+  const cases = [
+    ["missing-browser-artifact", (c) => { c.ci.artifacts.pop(); }], ["wrong-artifact-head", (c) => { c.ci.artifacts[0].headSha = hex40("1"); }],
+    ["digest", (c) => { c.ci.artifacts[0].downloadSha256 = hex64("1"); }], ["mixed-source", (c) => { c.ci.sourceProof.schemaVersion = "clover-ci-preview-readiness-source-v3"; }],
+    ["sealed-input", (c) => { c.sealedInput.archiveSha256 = hex64("1"); }], ["failed-CI", (c) => { c.ci.run.conclusion = "failure"; }],
+    ["run-attempt", (c) => { c.ci.run.runAttempt = "2"; }], ["missing-independent-readback", (c) => { delete c.ci.identityReadback; }],
+    ["stale-approval", (c) => { c.ownerApproval.expiresAt = "2000-01-01T00:00:00.000Z"; }], ["consumed-allowance", (c) => { c.allowance.executionsConsumed = 1; }],
+    ["release-permission", (c) => { c.ownerApproval.production = true; }], ["private-data", (c) => { c.ownerApproval.privateData = true; }],
+    ["extra-wire-field", (c) => { c.lineageProfile = "unreviewed"; }]
+  ];
+  for (const [label, change] of cases) { const bad = structuredClone(fixture.contract); change(bad); assert.throws(() => validateCiPreviewExecutionContract({ ...fixture, contract: bad }), undefined, label); }
+  migrationSave("contract-negative-matrix", { acceptance: accepted, expectationsPassed: cases.map(([label]) => label),
+    actualNode22ProofRejected: process.version === "v22.23.2", explicitSyntheticNode24IdentityForNode22ContractMatrix: process.version === "v22.23.2",
+    actualLocalSealingOnSyntheticFiles: true, externalEvidenceOrAuthorityEstablished: false });
+});
+
+
+test("migration actual full source-manifest verifier", () => {
+  const state = migrationState(), c = migrationWrapperFixture(state, "source-manifest");
+  const provenance = deriveSourceProvenance({ repositoryRoot: state.checkout });
+  const manifest = deriveSourceManifestDocument({ repositoryRoot: state.checkout });
+  assert.equal(manifest.pathCount, 77); assert.equal(provenance.changedPathCount, 77);
+  assert.equal(manifest.sourceManifestSha256, c.proof.sourceManifestSha256);
+  for (const entry of CI_PREVIEW_SUCCESSOR_ADDED_PATHS) assert.ok(manifest.entries.some((item) => item.path === entry));
+  writeFileSync(path.join(c.caseRoot, "clover-tree-source-provenance.json"), JSON.stringify(provenance));
+  const manifestPath = path.join(c.caseRoot, "clover-tree-source-manifest.json"); writeFileSync(manifestPath, JSON.stringify(manifest));
+  const step = migrationWorkflow(state).jobs.validate.steps.find((entry) => entry.name === "Record clean exact-source build provenance");
+  const startMarker = "node <<'NODE'\n", start = step.run.indexOf(startMarker) + startMarker.length;
+  const end = step.run.lastIndexOf("\nNODE"); assert.ok(start >= startMarker.length && end > start);
+  const program = step.run.slice(start, end);
+  unlinkSync(c.retainedPath);
+  const positive = migrationObserve("full-source-manifest-positive", process.execPath, ["-e", program], { cwd: state.checkout, env: c.environment });
+  assert.equal(positive.status, 0, positive.stderr);
+  const cases = [["omitted-apt", (m) => { m.entries = m.entries.filter((e) => e.path !== CI_PREVIEW_SUCCESSOR_ADDED_PATHS[0]); }],
+    ["wrong-workflow", (m) => { m.entries.find((e) => e.path === CI_PREVIEW_FOURTH_PATHS[0]).blob = hex40("1"); }],
+    ["wrong-mode", (m) => { m.entries[0].mode = "120000"; }], ["wrong-manifest-self-hash", (m) => { m.manifestSelfHash = hex64("1"); }]];
+  for (const [label, change] of cases) {
+    const bad = structuredClone(manifest); change(bad); writeFileSync(manifestPath, JSON.stringify(bad));
+    if (existsSync(c.retainedPath)) unlinkSync(c.retainedPath);
+    const rejected = migrationObserve("full-source-manifest-" + label, process.execPath, ["-e", program], { cwd: state.checkout, env: c.environment });
+    assert.notEqual(rejected.status, 0, label); assert.match(rejected.stderr, /source manifest/);
+  }
+  migrationSave("full-source-manifest-coverage", { exactSnippetSha256: sha256(program), provenance, manifest,
+    actualGitObjectBindingsChecked: 77, expectedRejectionsPassed: cases.map(([label]) => label) });
+});
+
+test("migration changed source observation rejects before receipt", () => {
+  const state = migrationState(), original = childProcess.execFileSync; let statuses = 0;
+  childProcess.execFileSync = function (executable, args, options) {
+    if (executable === "git" && args[0] === "status" && options.cwd === state.checkout && ++statuses === 2) return " M synthetic-changed-source\n";
+    return original(executable, args, options);
+  };
+  syncBuiltinESMExports();
+  try { assert.throws(() => deriveCiPreviewReadinessSource({ repositoryRoot: state.checkout, environment: migrationLocalEnvironment() }), /CLOVER_READINESS_SOURCE_CHANGED_DURING_PROOF/); }
+  finally { childProcess.execFileSync = original; syncBuiltinESMExports(); }
+  migrationSave("changed-source-observation", { processDoubleOnly: true, statuses, expectedRejectionPassed: true, sourceEditedByTest: false });
 });
