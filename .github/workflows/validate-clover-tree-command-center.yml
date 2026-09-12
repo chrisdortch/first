@@ -647,9 +647,13 @@ jobs:
         working-directory: apps/clover-launch-studio
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Install Chromium system dependencies over validated HTTPS
+        working-directory: apps/clover-launch-studio
+        run: node scripts/clover-ci-https-apt.mjs "$RUNNER_TEMP"
+
       - name: Install Chromium browser runtime
         working-directory: apps/clover-launch-studio
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Verify clean source provenance before browser build
         working-directory: apps/clover-launch-studio

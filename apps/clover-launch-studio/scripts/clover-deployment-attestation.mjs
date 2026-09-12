@@ -286,6 +286,20 @@ export const CI_PREVIEW_SIXTH_PATHS = Object.freeze([
   "apps/clover-launch-studio/scripts/clover-deployment-attestation.mjs",
   "apps/clover-launch-studio/test/live-truth-attestation.test.mjs"
 ]);
+export const CI_PREVIEW_SUCCESSOR_ANCHOR = "34f98ea75c2c5ac5828623f9a5cfb214d1a69f58";
+export const CI_PREVIEW_SUCCESSOR_ANCHOR_TREE = "6bcded46c1fe824ef8b381446326d015316fa36f";
+export const CI_PREVIEW_SUCCESSOR_PREFIX = Object.freeze([...CI_PREVIEW_SIXTH_PREFIX, CI_PREVIEW_SUCCESSOR_ANCHOR]);
+export const CI_PREVIEW_SUCCESSOR_ADDED_PATHS = Object.freeze([
+  "apps/clover-launch-studio/scripts/clover-ci-https-apt.mjs",
+  "apps/clover-launch-studio/test/clover-ci-https-apt.test.mjs"
+]);
+export const CI_PREVIEW_SUCCESSOR_PATHS = Object.freeze([...CI_PREVIEW_FOURTH_PATHS, ...CI_PREVIEW_SUCCESSOR_ADDED_PATHS].sort(compareUtf8));
+const CI_PREVIEW_SUCCESSOR_CUMULATIVE_PATHS = Object.freeze([...ATTESTATION_REPAIR_PATHS, ...CI_PREVIEW_SUCCESSOR_ADDED_PATHS].sort(compareUtf8));
+// This tag is never serialized. A copied or deserialized provisional binding must be
+// derived again from Git, or supplied as an independently checked, complete v4 receipt.
+const ciProvisionalProfiles = new WeakMap();
+const CI_SUCCESSOR_PROFILE = "exact-34f98ea-successor";
+const CI_SUCCESSOR_FIELDS = ["successorAnchor", "successorCommitPaths", "successorDelta", "successorDiffSha256"];
 const CI_PREVIEW_FOURTH_PARENT_TREE = "80f3c0014424f69aa6536ed30f941478c72ae179";
 const CI_PROVIDER_ORIGIN = "https://api.github.com";
 const CI_PROVIDER_REPOSITORY = "chrisdortch/first";
@@ -323,13 +337,101 @@ export function isAllowedCiPreviewReadinessLineage({ commitIds, head, parent, pa
     && Array.isArray(sixthCommitPaths) && canonicalJson(sixthCommitPaths) === canonicalJson(CI_PREVIEW_SIXTH_PATHS);
 }
 
+export function isAllowedCiPreviewSuccessorLineage(binding) {
+  const { commitIds, head, parent, parentTree, fourthCommitPaths, fifthCommitPaths, sixthCommitPaths,
+    successorAnchor, successorCommitPaths } = binding ?? {};
+  return Array.isArray(commitIds) && commitIds.length === 7 && commitIds.every(ciSha)
+    && new Set(commitIds).size === 7 && commitIds.at(-1) === head
+    && CI_PREVIEW_SUCCESSOR_PREFIX.every((commit, index) => commitIds[index] === commit)
+    && parent === CI_PREVIEW_SUCCESSOR_ANCHOR && parentTree === CI_PREVIEW_SUCCESSOR_ANCHOR_TREE
+    && canonicalJson(successorAnchor) === canonicalJson({ head: CI_PREVIEW_SUCCESSOR_ANCHOR, tree: CI_PREVIEW_SUCCESSOR_ANCHOR_TREE })
+    && canonicalJson(fourthCommitPaths) === canonicalJson(CI_PREVIEW_FOURTH_PATHS)
+    && canonicalJson(fifthCommitPaths) === canonicalJson(CI_PREVIEW_FOURTH_PATHS)
+    && canonicalJson(sixthCommitPaths) === canonicalJson(CI_PREVIEW_SIXTH_PATHS)
+    && canonicalJson(successorCommitPaths) === canonicalJson(CI_PREVIEW_SUCCESSOR_PATHS);
+}
+
+const ciReadinessProofKeys = ["schemaVersion", "classification", "taskId", "context", "githubActions", "pullRequestNumber", "branch", "head", "tree", "ciExecution",
+  "fullMainPathCount", "fullMainPathListSha256", "sourceManifestSha256", "parent", "parentTree", "base", "baseTree", "commitIds", "localCommitCount", "fourthCommitPaths", "fifthCommitPaths",
+  "changedPathCount", "paths", "pathListSha256", "allowedPathListSha256", "diffSha256", "sourceFiles", "lockfiles", "cleanWorktree", "linearFirstParent",
+  "exactPrHeadAcceptance", "releaseAuthority", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted", "sourceProofSelfHash"];
+
+export function validateCiPreviewSuccessorSourceProof(proof) {
+  const reject = (condition) => { if (!condition) throw new Error("CLOVER_READINESS_SUCCESSOR_PROOF_REJECTED"); };
+  reject(proof && typeof proof === "object" && !Array.isArray(proof));
+  exactKeys(proof, [...ciReadinessProofKeys, "sixthCommitPaths", ...CI_SUCCESSOR_FIELDS], "CLOVER_READINESS_SUCCESSOR_PROOF");
+  const { sourceProofSelfHash, ...body } = proof;
+  const digest = (value) => typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
+  reject(proof.schemaVersion === "clover-ci-preview-readiness-source-v4"
+    && digest(sourceProofSelfHash) && sha256(canonicalJson(body) + "\n") === sourceProofSelfHash
+    && isAllowedCiPreviewSuccessorLineage(proof) && ciSha(proof.tree)
+    && proof.taskId === CI_PREVIEW_READINESS_TASK && proof.branch === CI_PREVIEW_READINESS_BRANCH
+    && proof.base === CI_PREVIEW_READINESS_BASE && proof.baseTree === CI_PREVIEW_READINESS_BASE_TREE
+    && proof.localCommitCount === 7 && proof.fullMainPathCount === 77
+    && proof.changedPathCount === CI_PREVIEW_SUCCESSOR_CUMULATIVE_PATHS.length
+    && canonicalJson(proof.paths) === canonicalJson(CI_PREVIEW_SUCCESSOR_CUMULATIVE_PATHS)
+    && proof.pathListSha256 === sha256(proof.paths.join("\n") + "\n")
+    && proof.allowedPathListSha256 === proof.pathListSha256
+    && [proof.fullMainPathListSha256, proof.sourceManifestSha256, proof.diffSha256, proof.successorDiffSha256].every(digest)
+    && proof.cleanWorktree === true && proof.linearFirstParent === true
+    && ["exactPrHeadAcceptance", "releaseAuthority", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted"].every((key) => proof[key] === false));
+  const ci = proof.context === CI_PREVIEW_READINESS_CI_CONTEXT;
+  reject([CI_PREVIEW_READINESS_CONTEXT, CI_PREVIEW_READINESS_CI_CONTEXT].includes(proof.context)
+    && proof.githubActions === ci && proof.classification === (ci ? "ci-readiness-candidate" : "local-readiness-candidate")
+    && (ci ? proof.pullRequestNumber === 36 && proof.ciExecution?.schemaVersion === "clover-ci-execution-identity-v2"
+      : proof.pullRequestNumber === null && proof.ciExecution === null));
+  const object = (entry, sourcePath) => {
+    exactKeys(entry, ["path", "mode", "blob", "bytes", "sha256"], "CLOVER_READINESS_SUCCESSOR_OBJECT");
+    reject(entry.path === sourcePath && entry.mode === "100644" && ciSha(entry.blob)
+      && Number.isSafeInteger(entry.bytes) && entry.bytes > 0 && digest(entry.sha256));
+  };
+  reject(Array.isArray(proof.sourceFiles) && proof.sourceFiles.length === proof.paths.length);
+  proof.sourceFiles.forEach((entry, index) => object(entry, proof.paths[index]));
+  reject(Array.isArray(proof.successorDelta) && proof.successorDelta.length === CI_PREVIEW_SUCCESSOR_PATHS.length);
+  proof.successorDelta.forEach((entry, index) => {
+    exactKeys(entry, ["path", "status", "before", "after"], "CLOVER_READINESS_SUCCESSOR_DELTA");
+    const sourcePath = CI_PREVIEW_SUCCESSOR_PATHS[index], added = CI_PREVIEW_SUCCESSOR_ADDED_PATHS.includes(sourcePath);
+    reject(entry.path === sourcePath && entry.status === (added ? "A" : "M"));
+    object(entry.after, sourcePath);
+    reject(canonicalJson(entry.after) === canonicalJson(proof.sourceFiles.find((file) => file.path === sourcePath)));
+    if (added) reject(entry.before === null);
+    else { object(entry.before, sourcePath); reject(entry.before.blob !== entry.after.blob && entry.before.sha256 !== entry.after.sha256); }
+  });
+  reject(Array.isArray(proof.lockfiles) && proof.lockfiles.length === DEPENDENCY_SUCCESSOR_LOCKS.length);
+  proof.lockfiles.forEach((entry, index) => {
+    const expected = DEPENDENCY_SUCCESSOR_LOCKS[index];
+    exactKeys(entry, ["path", "mode", "blob", "bytes", "sha256", "baseSha256"], "CLOVER_READINESS_SUCCESSOR_LOCK");
+    const { baseSha256, ...identity } = entry; object(identity, expected.path);
+    reject(baseSha256 === expected.sha256 && entry.sha256 === expected.sha256);
+  });
+  return proof;
+}
+
+function ciSourceProfile(binding) {
+  if (binding?.schemaVersion === "clover-ci-preview-readiness-source-v4") {
+    validateCiPreviewSuccessorSourceProof(binding);
+    return CI_SUCCESSOR_PROFILE;
+  }
+  if (ciProvisionalProfiles.get(binding) === CI_SUCCESSOR_PROFILE) {
+    ciProofRequire(binding.schemaVersion === undefined && isAllowedCiPreviewSuccessorLineage(binding), "SOURCE_PROFILE");
+    return CI_SUCCESSOR_PROFILE;
+  }
+  ciProofRequire(binding && !CI_SUCCESSOR_FIELDS.some((key) => Object.hasOwn(binding, key))
+    && [undefined, "clover-ci-preview-readiness-source-v2", "clover-ci-preview-readiness-source-v3"].includes(binding.schemaVersion)
+    && isAllowedCiPreviewReadinessLineage(binding)
+    && (binding.schemaVersion === undefined || binding.schemaVersion === "clover-ci-preview-readiness-source-v3"
+      ? binding.schemaVersion === undefined || binding.commitIds.length === 6 : binding.commitIds.length <= 5), "SOURCE_LINEAGE");
+  return "historical";
+}
+
 // Source expectations precede provider responses. The four-commit case only describes the exact
 // retained f059 source for explicit historical replay. Earlier fifth proof consistency remains intact;
 // actual new CI source derivation requires the explicitly anchored sixth tail.
 function verifyCiProviderSourceBinding(binding, head, tree) {
-  ciProofRequire(binding && isAllowedCiPreviewReadinessLineage(binding)
+  const successor = ciSourceProfile(binding) === CI_SUCCESSOR_PROFILE;
+  ciProofRequire(binding && (successor ? isAllowedCiPreviewSuccessorLineage(binding) : isAllowedCiPreviewReadinessLineage(binding))
     && binding.head === head && binding.tree === tree && ciSha(tree), "SOURCE_LINEAGE");
-  ciProofRequire(binding.commitIds.length === 6 && binding.parent === CI_PREVIEW_SIXTH_PARENT
+  ciProofRequire(successor || binding.commitIds.length === 6 && binding.parent === CI_PREVIEW_SIXTH_PARENT
     && binding.parentTree === CI_PREVIEW_SIXTH_PARENT_TREE
     || binding.commitIds.length === 5 && binding.parent === CI_PREVIEW_FIFTH_PARENT
     && binding.parentTree === CI_PREVIEW_FIFTH_PARENT_TREE
@@ -588,7 +690,7 @@ async function runCiPreviewProviderProof(repositoryRoot, environment = process.e
   // Inspect the complete clean Git source before starting any provider request. This is not accepted CI identity.
   parseCiPreviewExecutionInputs({ environment, event, head, workflowBlob });
   const sourceBinding = deriveCiPreviewReadinessGitSource({ repositoryRoot, environment }, true);
-  ciProofRequire(sourceBinding.commitIds.length === 6, "SOURCE_SIXTH_LINEAGE");
+  ciProofRequire(ciSourceProfile(sourceBinding) === CI_SUCCESSOR_PROFILE || sourceBinding.commitIds.length === 6, "SOURCE_SIXTH_LINEAGE");
   const proof = await acquireCiPreviewProviderProof({ environment, event, head, tree, workflowBlob, workflowBytes, sourceBinding });
   const target = ciProviderCachePath(repositoryRoot, environment);
   ciProofRequire(!existsSync(target), "CACHE_ALREADY_EXISTS");
@@ -748,7 +850,8 @@ function deriveCiPreviewReadinessGitSource({ repositoryRoot, environment = proce
   try { git(root, ["merge-base", "--is-ancestor", CI_PREVIEW_READINESS_BASE, head]); }
   catch { throw new Error("CLOVER_READINESS_BASE_REJECTED"); }
   const commits = git(root, ["rev-list", "--reverse", `${CI_PREVIEW_READINESS_BASE}..${head}`]).trim().split("\n");
-  if (commits.length < 1 || commits.length > 6 || commits[0] === "") throw new Error("CLOVER_READINESS_DEPTH_REJECTED");
+  if (commits.length < 1 || commits.length > 7 || commits[0] === "") throw new Error("CLOVER_READINESS_DEPTH_REJECTED");
+  const successor = commits.length === 7;
   const inspectDelta = (before, after) => {
     const changes = parseSourceChanges(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "--no-renames", "-z", before, after], { encoding: null }));
     if (changes.length === 0 || changes.some((entry) => entry.status !== "M" || !ATTESTATION_REPAIR_PATHS.includes(entry.path))) throw new Error("CLOVER_READINESS_PATH_REJECTED");
@@ -761,20 +864,48 @@ function deriveCiPreviewReadinessGitSource({ repositoryRoot, environment = proce
     }
     return changes.map(({ path: changedPath }) => changedPath).sort(compareUtf8);
   };
+  const inspectSuccessorDelta = (before, after, cumulative = false) => {
+    const changes = parseSourceChanges(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "--no-renames", "-z", before, after], { encoding: null }));
+    const expected = cumulative ? CI_PREVIEW_SUCCESSOR_CUMULATIVE_PATHS : CI_PREVIEW_SUCCESSOR_PATHS;
+    const ordered = [...changes].sort((left, right) => compareUtf8(left.path, right.path));
+    if (canonicalJson(ordered.map((entry) => entry.path)) !== canonicalJson(expected)) throw new Error("CLOVER_READINESS_PATH_REJECTED");
+    return ordered.map((entry) => {
+      const added = CI_PREVIEW_SUCCESSOR_ADDED_PATHS.includes(entry.path);
+      if (entry.status !== (added ? "A" : "M")) throw new Error("CLOVER_READINESS_PATH_REJECTED");
+      const current = readSourceObject(root, after, entry.path);
+      const prior = added ? null : readSourceObject(root, before, entry.path);
+      if (added && git(root, ["ls-tree", "-z", "--full-tree", before, "--", entry.path]) !== "") throw new Error("CLOVER_READINESS_PATH_REJECTED");
+      for (const object of [prior, current].filter(Boolean)) {
+        decodeUtf8Fatal(object.bytes, "CLOVER_READINESS_TEXT");
+        if (object.identity.mode !== "100644" || object.bytes.length === 0 || object.bytes.includes(0)) throw new Error("CLOVER_READINESS_BLOB_REJECTED");
+      }
+      if (prior && prior.identity.blob === current.identity.blob) throw new Error("CLOVER_READINESS_BLOB_REJECTED");
+      return { path: entry.path, status: entry.status, before: prior?.identity ?? null, after: current.identity };
+    });
+  };
   let parent = CI_PREVIEW_READINESS_BASE;
   for (const commit of commits) {
     if (git(root, ["show", "-s", "--format=%P", commit]).trim() !== parent) throw new Error("CLOVER_READINESS_LINEARITY_REJECTED");
-    inspectDelta(parent, commit); parent = commit;
+    if (successor && commit === head) inspectSuccessorDelta(parent, commit);
+    else inspectDelta(parent, commit);
+    parent = commit;
   }
   const fourthCommitPaths = commits.length >= 4 ? inspectDelta(CI_PREVIEW_FOURTH_PARENT, commits[3]) : null;
   const fifthCommitPaths = commits.length >= 5 ? inspectDelta(CI_PREVIEW_FIFTH_PARENT, commits[4]) : null;
-  const sixthTail = commits.length === 6 ? { sixthCommitPaths: inspectDelta(CI_PREVIEW_SIXTH_PARENT, head) } : {};
+  const sixthTail = commits.length >= 6 ? { sixthCommitPaths: inspectDelta(CI_PREVIEW_SIXTH_PARENT, commits[5]) } : {};
   const candidateParent = git(root, ["show", "-s", "--format=%P", head]).trim();
   const parentTree = git(root, ["rev-parse", candidateParent + "^{tree}"]).trim();
-  if (!isAllowedCiPreviewReadinessLineage({ commitIds: commits, head,
-    parent: candidateParent, parentTree, fourthCommitPaths, fifthCommitPaths, ...sixthTail }))
+  const successorTail = successor ? {
+    successorAnchor: { head: CI_PREVIEW_SUCCESSOR_ANCHOR, tree: CI_PREVIEW_SUCCESSOR_ANCHOR_TREE },
+    successorCommitPaths: [...CI_PREVIEW_SUCCESSOR_PATHS],
+    successorDelta: inspectSuccessorDelta(CI_PREVIEW_SUCCESSOR_ANCHOR, head),
+    successorDiffSha256: sha256(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--binary", "--full-index", "--no-renames", CI_PREVIEW_SUCCESSOR_ANCHOR, head], { encoding: null }))
+  } : {};
+  const lineage = { commitIds: commits, head, parent: candidateParent, parentTree, fourthCommitPaths, fifthCommitPaths, ...sixthTail, ...successorTail };
+  if (!(successor ? isAllowedCiPreviewSuccessorLineage(lineage) : isAllowedCiPreviewReadinessLineage(lineage)))
     throw new Error("CLOVER_READINESS_DEPTH_REJECTED");
-  const paths = inspectDelta(CI_PREVIEW_READINESS_BASE, head);
+  const paths = successor ? inspectSuccessorDelta(CI_PREVIEW_READINESS_BASE, head, true).map((entry) => entry.path)
+    : inspectDelta(CI_PREVIEW_READINESS_BASE, head);
   const lockfiles = DEPENDENCY_SUCCESSOR_LOCKS.map((expected) => {
     const base = sourceObject(root, CI_PREVIEW_READINESS_BASE, expected.path);
     const current = sourceObject(root, head, expected.path);
@@ -783,30 +914,31 @@ function deriveCiPreviewReadinessGitSource({ repositoryRoot, environment = proce
     return { ...current, baseSha256: base.sha256 };
   });
   const fullMainEntries = deriveSourceManifestEntries({ repositoryRoot: root, candidateCommit: head });
-  const sourceBinding = { head, tree, parent: candidateParent, parentTree, commitIds: commits, fourthCommitPaths, fifthCommitPaths, ...sixthTail };
+  const sourceBinding = { ...lineage, tree };
+  if (successor) ciProvisionalProfiles.set(sourceBinding, CI_SUCCESSOR_PROFILE);
   if (provisionalOnly) {
-    ciProofRequire(ci && commits.length === 6 && candidateParent === CI_PREVIEW_SIXTH_PARENT, "SOURCE_SIXTH_LINEAGE");
+    ciProofRequire(ci && (successor || commits.length === 6 && candidateParent === CI_PREVIEW_SIXTH_PARENT), "SOURCE_SIXTH_LINEAGE");
     verifyCiProviderSourceBinding(sourceBinding, head, tree);
     ciProofRequire(git(root, ["rev-parse", "HEAD^{commit}"]).trim() === head
       && git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) === "", "SOURCE_CHANGED_DURING_PROOF");
     requireVisibleTrackedSource();
     return Object.freeze(sourceBinding); // No accepted execution identity or source receipt is produced here.
   }
-  if (ci) ciProofRequire(commits.length === 6 && candidateParent === CI_PREVIEW_SIXTH_PARENT, "SOURCE_SIXTH_LINEAGE");
+  if (ci) ciProofRequire(successor || commits.length === 6 && candidateParent === CI_PREVIEW_SIXTH_PARENT, "SOURCE_SIXTH_LINEAGE");
   const ciExecution = ci ? deriveCiPreviewExecutionIdentity({ environment, head, sourceBinding, tree,
     workflowBlob: sourceObject(root, head, ATTESTATION_REPAIR_PATHS[0]).blob,
     workflowBytes: sourceBytes(root, head, ATTESTATION_REPAIR_PATHS[0]), proof: readCiProviderProof(root, environment),
     event: parseJsonWithoutDuplicateKeys(decodeUtf8Fatal(readBoundedNativeBody(environment.GITHUB_EVENT_PATH), "CLOVER_READINESS_EVENT"), "CLOVER_READINESS_EVENT") }) : null;
   const body = {
-    schemaVersion: commits.length === 6 ? "clover-ci-preview-readiness-source-v3" : "clover-ci-preview-readiness-source-v2", classification: ci ? "ci-readiness-candidate" : "local-readiness-candidate",
+    schemaVersion: successor ? "clover-ci-preview-readiness-source-v4" : commits.length === 6 ? "clover-ci-preview-readiness-source-v3" : "clover-ci-preview-readiness-source-v2", classification: ci ? "ci-readiness-candidate" : "local-readiness-candidate",
     taskId: CI_PREVIEW_READINESS_TASK, context, githubActions: ci, pullRequestNumber: ciExecution?.pullRequestNumber ?? null, branch, head, tree, ciExecution,
     fullMainPathCount: fullMainEntries.length,
     fullMainPathListSha256: sha256(`${fullMainEntries.map((entry) => entry.path).join("\n")}\n`),
     sourceManifestSha256: sha256(`${canonicalJson(fullMainEntries)}\n`),
     parent: candidateParent, parentTree,
     base: CI_PREVIEW_READINESS_BASE, baseTree: CI_PREVIEW_READINESS_BASE_TREE,
-    commitIds: commits, localCommitCount: commits.length, fourthCommitPaths, fifthCommitPaths, ...sixthTail, changedPathCount: paths.length, paths,
-    pathListSha256: sha256(`${paths.join("\n")}\n`), allowedPathListSha256: sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`),
+    commitIds: commits, localCommitCount: commits.length, fourthCommitPaths, fifthCommitPaths, ...sixthTail, ...successorTail, changedPathCount: paths.length, paths,
+    pathListSha256: sha256(`${paths.join("\n")}\n`), allowedPathListSha256: sha256(`${(successor ? CI_PREVIEW_SUCCESSOR_CUMULATIVE_PATHS : ATTESTATION_REPAIR_PATHS).join("\n")}\n`),
     diffSha256: sha256(git(root, ["diff", "--no-ext-diff", "--no-textconv", "--binary", "--full-index", "--no-renames", CI_PREVIEW_READINESS_BASE, head], { encoding: null })),
     sourceFiles: paths.map((sourcePath) => sourceObject(root, head, sourcePath)), lockfiles,
     cleanWorktree: true, linearFirstParent: true, exactPrHeadAcceptance: false, releaseAuthority: false,
@@ -815,7 +947,9 @@ function deriveCiPreviewReadinessGitSource({ repositoryRoot, environment = proce
   if (git(root, ["rev-parse", "HEAD^{commit}"]).trim() !== head
     || git(root, ["status", "--porcelain=v1", "--untracked-files=all"]) !== "") throw new Error("CLOVER_READINESS_SOURCE_CHANGED_DURING_PROOF");
   requireVisibleTrackedSource();
-  return Object.freeze({ ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) });
+  const proof = { ...body, sourceProofSelfHash: sha256(`${canonicalJson(body)}\n`) };
+  if (successor) validateCiPreviewSuccessorSourceProof(proof);
+  return Object.freeze(proof);
 }
 
 export const CI_PREVIEW_RECEIPT_PROFILE = "ci-preview-readiness-protected-synthetic-v2";
@@ -847,10 +981,11 @@ export function validateCiPreviewExecutionContract({
   const authorityReferenceTime = startedTime ?? nowTime;
   const proofHash = (proof, label) => {
     reject(proof && typeof proof === "object" && !Array.isArray(proof), label);
-    const proofKeys = ["schemaVersion", "classification", "taskId", "context", "githubActions", "pullRequestNumber", "branch", "head", "tree", "ciExecution",
-      "fullMainPathCount", "fullMainPathListSha256", "sourceManifestSha256", "parent", "parentTree", "base", "baseTree", "commitIds", "localCommitCount", "fourthCommitPaths", "fifthCommitPaths",
-      "changedPathCount", "paths", "pathListSha256", "allowedPathListSha256", "diffSha256", "sourceFiles", "lockfiles", "cleanWorktree", "linearFirstParent",
-      "exactPrHeadAcceptance", "releaseAuthority", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted", "sourceProofSelfHash"];
+    if (proof.schemaVersion === "clover-ci-preview-readiness-source-v4") {
+      validateCiPreviewSuccessorSourceProof(proof);
+      return;
+    }
+    const proofKeys = [...ciReadinessProofKeys];
     // The sixth record has an explicit schema; older receipts retain their original exact shape and hash.
     const sixth = proof.schemaVersion === "clover-ci-preview-readiness-source-v3";
     reject(sixth ? proof.localCommitCount === 6 && proof.commitIds?.length === 6
@@ -861,7 +996,9 @@ export function validateCiPreviewExecutionContract({
     reject(hex64(sourceProofSelfHash) && hash(body) === sourceProofSelfHash, label);
   };
   proofHash(sourceProof, "SOURCE_PROOF");
-  reject(["clover-ci-preview-readiness-source-v2", "clover-ci-preview-readiness-source-v3"].includes(sourceProof.schemaVersion)
+  const successorSource = sourceProof.schemaVersion === "clover-ci-preview-readiness-source-v4";
+  const sourcePaths = successorSource ? CI_PREVIEW_SUCCESSOR_CUMULATIVE_PATHS : ATTESTATION_REPAIR_PATHS;
+  reject(["clover-ci-preview-readiness-source-v2", "clover-ci-preview-readiness-source-v3", "clover-ci-preview-readiness-source-v4"].includes(sourceProof.schemaVersion)
     && sourceProof.taskId === "CLOVER-CI-PREVIEW-READINESS-20260909-A"
     && sourceProof.base === "356274f97c6a9cd02a30fb941688b2e24a00ab8e"
     && sourceProof.baseTree === "b975d7683f4a6e4bc510bf2bb66b789273fd79d5"
@@ -871,16 +1008,16 @@ export function validateCiPreviewExecutionContract({
     && (sourceProof.githubActions || sourceProof.ciExecution === null && sourceProof.pullRequestNumber === null)
     && sourceProof.cleanWorktree === true && sourceProof.linearFirstParent === true
     && Number.isInteger(sourceProof.localCommitCount) && sourceProof.localCommitCount === sourceProof.commitIds?.length
-    && isAllowedCiPreviewReadinessLineage(sourceProof)
+    && (successorSource ? isAllowedCiPreviewSuccessorLineage(sourceProof) : isAllowedCiPreviewReadinessLineage(sourceProof))
     && ["releaseAuthority", "exactPrHeadAcceptance", "providerAcceptance", "consequentialAuthorityGranted", "deploymentAllowanceGranted"]
       .every((key) => sourceProof[key] === false), "SOURCE_BOUNDARY");
   const paths = sourceProof.paths;
-  reject(Array.isArray(paths) && paths.length >= 1 && paths.length <= ATTESTATION_REPAIR_PATHS.length
+  reject(Array.isArray(paths) && paths.length >= 1 && paths.length <= sourcePaths.length
     && sourceProof.changedPathCount === paths.length && new Set(paths).size === paths.length
     && canonicalJson(paths) === canonicalJson([...paths].sort(compareUtf8))
-    && paths.every((entry) => ATTESTATION_REPAIR_PATHS.includes(entry))
+    && paths.every((entry) => sourcePaths.includes(entry))
     && sourceProof.pathListSha256 === sha256(`${paths.join("\n")}\n`)
-    && sourceProof.allowedPathListSha256 === sha256(`${ATTESTATION_REPAIR_PATHS.join("\n")}\n`)
+    && sourceProof.allowedPathListSha256 === sha256(`${sourcePaths.join("\n")}\n`)
     && hex64(sourceProof.diffSha256) && hex64(sourceProof.sourceManifestSha256)
     && Number.isSafeInteger(sourceProof.fullMainPathCount) && sourceProof.fullMainPathCount >= paths.length
     && Array.isArray(sourceProof.commitIds) && sourceProof.commitIds.length === sourceProof.localCommitCount
@@ -927,7 +1064,8 @@ export function validateCiPreviewExecutionContract({
   // CI and local proof hashes differ intentionally: run/runtime context is not source identity.
   const sourceKeys = ["schemaVersion", "taskId", "base", "baseTree", "branch", "head", "tree", "parent", "parentTree", "commitIds", "localCommitCount", "fourthCommitPaths", "fifthCommitPaths",
     "changedPathCount", "paths", "pathListSha256", "allowedPathListSha256", "diffSha256", "sourceFiles", "lockfiles", "sourceManifestSha256", "fullMainPathCount", "fullMainPathListSha256"];
-  if (sourceProof.schemaVersion === "clover-ci-preview-readiness-source-v3") sourceKeys.push("sixthCommitPaths");
+  if (successorSource || sourceProof.schemaVersion === "clover-ci-preview-readiness-source-v3") sourceKeys.push("sixthCommitPaths");
+  if (successorSource) sourceKeys.push(...CI_SUCCESSOR_FIELDS);
   reject(sourceKeys.every((key) => Object.hasOwn(sourceProof, key) && canonicalJson(ciProof[key]) === canonicalJson(sourceProof[key]))
     && ciProof.context === "ci-preview-readiness" && ciProof.githubActions === true
     && ciProof.cleanWorktree === true && ciProof.linearFirstParent === true
@@ -941,7 +1079,7 @@ export function validateCiPreviewExecutionContract({
     && execution.baseSha === source.base && execution.baseRef === DEPENDENCY_SUCCESSOR_BRANCH
     && execution.workflowBlob === sourceProof.sourceFiles.find((entry) => entry.path === execution.workflowPath)?.blob
     && execution.nodeVersion === "v24.16.0", "CI_EXECUTION");
-  reject(sourceProof.localCommitCount === 6 && sourceProof.parent === CI_PREVIEW_SIXTH_PARENT
+  reject(successorSource || sourceProof.localCommitCount === 6 && sourceProof.parent === CI_PREVIEW_SIXTH_PARENT
     || sourceProof.localCommitCount === 5 && sourceProof.parent === CI_PREVIEW_FIFTH_PARENT, "CI_ANCHORED_LINEAGE");
   verifyCiPreviewProviderProof({ proof: execution.providerProof, execution, sourceBinding: sourceProof, tree: sourceProof.tree,
     workflowSha256: sourceProof.sourceFiles.find((entry) => entry.path === execution.workflowPath)?.sha256,
@@ -1184,8 +1322,71 @@ function git(repositoryRoot, args, options = {}) {
   return execFileSync("git", args, {
     cwd: repositoryRoot,
     encoding: Object.hasOwn(options, "encoding") ? options.encoding : "utf8",
-    maxBuffer: 32 * 1024 * 1024
+    maxBuffer: 32 * 1024 * 1024,
+    ...(options.stdio === "pipe" ? { stdio: "pipe" } : {})
   });
+}
+
+// Error output is public. Copy no raw Error, environment, path, stdout or
+// arbitrary stderr text into the replacement error (including its cause).
+function ancestryCommandDiagnostic(error, stackABase, commit) {
+  const ownValue = (name) => error !== null && typeof error === "object"
+    ? Object.getOwnPropertyDescriptor(error, name)?.value : undefined;
+  const rawStderr = ownValue("stderr");
+  const stderrBytes = Buffer.isBuffer(rawStderr) ? rawStderr.length
+    : typeof rawStderr === "string" ? Buffer.byteLength(rawStderr) : null;
+  const boundedStderr = Buffer.isBuffer(rawStderr) ? rawStderr.subarray(0, 4096).toString("utf8")
+    : typeof rawStderr === "string" ? rawStderr.slice(0, 4096) : "";
+  const lines = boundedStderr.split(/\r?\n/u).filter(Boolean);
+  // An allowlist of diagnostic templates, not a best-effort secret detector.
+  // Only the two already public commit arguments may survive substitutions.
+  const sanitizeLine = (line) => {
+    if (line === "fatal: not a git repository (or any of the parent directories): .git") return line;
+    for (const sha of [stackABase, commit]) {
+      for (const template of [
+        `fatal: Not a valid commit name ${sha}`,
+        `fatal: Not a valid object name ${sha}`,
+        `fatal: bad object ${sha}`,
+        `fatal: bad revision '${sha}'`
+      ]) if (line === template) return template;
+    }
+    if (/^fatal: detected dubious ownership in repository at /u.test(line)) {
+      return "fatal: detected dubious ownership in repository [path redacted]";
+    }
+    return "[unrecognized stderr redacted]";
+  };
+  const status = ownValue("status");
+  const signal = ownValue("signal");
+  const code = ownValue("code");
+  return Object.freeze({
+    schemaVersion: "clover-ancestry-command-diagnostic-v1",
+    executable: "git",
+    arguments: Object.freeze(["merge-base", "--is-ancestor", stackABase, commit]),
+    workingDirectory: "repository-root",
+    status: Number.isInteger(status) && status >= 0 && status <= 255 ? status : null,
+    signal: ["SIGABRT", "SIGALRM", "SIGBUS", "SIGFPE", "SIGHUP", "SIGILL", "SIGINT", "SIGKILL", "SIGPIPE", "SIGQUIT", "SIGSEGV", "SIGTERM", "SIGTRAP", "SIGXCPU", "SIGXFSZ"].includes(signal) ? signal : null,
+    spawnCode: ["E2BIG", "EACCES", "EAGAIN", "EIO", "EMFILE", "ENFILE", "ENOENT", "ENOEXEC", "ENOMEM", "ENOTDIR", "EPERM", "ETXTBSY", "ENOBUFS", "ETIMEDOUT", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"].includes(code) ? code : null,
+    stderr: lines.slice(0, 4).map(sanitizeLine).join("\n"),
+    stderrBytes,
+    stderrTruncated: stderrBytes !== null && stderrBytes > 4096 || lines.length > 4,
+    stderrPolicy: "only-fixed-templates-and-public-commit-arguments"
+  });
+}
+
+export function requireStackAAncestry(repositoryRoot, stackABase, commit) {
+  assertHex(stackABase, 40, "Stack A base");
+  assertHex(commit, 40, "commit");
+  try {
+    // Explicit pipes preserve the command's stdio transport but prevent Node's
+    // execFileSync failure handler from echoing raw stderr before our catch.
+    git(repositoryRoot, ["merge-base", "--is-ancestor", stackABase, commit], { stdio: "pipe" });
+  } catch (error) {
+    // Next's existing error printer retains cause. This freshly constructed
+    // data object preserves useful failure identity without retaining error.
+    throw new Error("CLOVER_STACK_A_ANCESTRY_REJECTED", {
+      cause: ancestryCommandDiagnostic(error, stackABase, commit)
+    });
+  }
 }
 
 function assertHex(value, length, label) {
@@ -1302,11 +1503,7 @@ export function deriveSourceProvenance({ repositoryRoot, stackABase = STACK_A_BA
 
   const commit = git(root, ["rev-parse", "HEAD"]).trim();
   assertHex(commit, 40, "commit");
-  try {
-    git(root, ["merge-base", "--is-ancestor", stackABase, commit]);
-  } catch {
-    throw new Error("CLOVER_STACK_A_ANCESTRY_REJECTED");
-  }
+  requireStackAAncestry(root, stackABase, commit);
 
   const tree = git(root, ["rev-parse", `${commit}^{tree}`]).trim();
   const parent = git(root, ["rev-parse", `${commit}^`]).trim();
