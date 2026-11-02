@@ -189,6 +189,56 @@ const NONAFFIRMATIVE_SAFE_PREFIXES = Object.freeze([
   "could we",
 ]);
 
+// An explicit portfolio scope must not be narrowed by words that happen to
+// resemble one registry entry or by a branch mentioned as part of the work.
+const WHOLE_PORTFOLIO_CUES = Object.freeze([
+  "whole clover tree",
+  "entire clover tree",
+  "whole portfolio",
+  "entire portfolio",
+  "all my projects",
+  "all clover projects",
+]);
+
+const PORTFOLIO_WORK = /\b(?:repair|fix|complete|finish|improve|coordinate|manage|build)\b/u;
+const NEGATED_PORTFOLIO_WORK = /\b(?:do not|don t|dont|never)\b(?: \w+){0,5} (?:repair|fix|complete|finish|improve|coordinate|manage|build)\b/u;
+
+function wholePortfolioScope(request) {
+  // Quoted examples and code are context, not a new whole-portfolio target.
+  const unquoted = String(request).replace(/```[\s\S]*?```|`[^`\n]*`|"[^"\n]*"|“[^”\n]*”|(?:^|\W)'[^'\n]+'(?=\W|$)|‘[^’\n]*’/gu, " ");
+  const clauses = unquoted.split(/[.!?;\n]+/u).map(normalize).filter(Boolean);
+  const hasBranchWork = clauses.some((clause) => !includesAnyCue(clause, WHOLE_PORTFOLIO_CUES)
+    && PORTFOLIO_WORK.test(clause) && !NEGATED_PORTFOLIO_WORK.test(clause));
+  return clauses.filter((clause) => {
+    if (!includesAnyCue(clause, WHOLE_PORTFOLIO_CUES)) return true;
+    const wholeCues = WHOLE_PORTFOLIO_CUES.filter((cue) => includesCue(clause, cue));
+    const activeScope = wholeCues.some((cue) => {
+      const prefix = clause.slice(0, clause.indexOf(cue)).trim();
+      // "Fix RollinD, not the whole Tree" and benefits/context references keep
+      // their named branch target instead of broadening its scope.
+      return !/(?:\bnot|\bexcept|\bexcluding|\brather than|\binstead of|\bto benefit|\baffects|\brelated to|\bcontext of|\bmentions)(?: the| my| our)?$/u.test(prefix);
+    });
+    if (!activeScope) return false;
+    const withoutCourtesy = clause.replace(/^please /u, "");
+    const advisory = NONAFFIRMATIVE_SAFE_PREFIXES.some((cue) => startsWithCue(withoutCourtesy, cue));
+    // An excluded/advisory whole-Tree clause must not swallow a separate,
+    // affirmative branch instruction in the same request.
+    return !hasBranchWork || (!NEGATED_PORTFOLIO_WORK.test(clause) && !advisory
+      && (PORTFOLIO_WORK.test(clause) || detectPortfolioMode(clause)));
+  }).join(" ");
+}
+
+function wholePortfolioMode(normalized) {
+  const withoutCourtesy = normalized.replace(/^please /u, "");
+  const advisory = NONAFFIRMATIVE_SAFE_PREFIXES.some((cue) => startsWithCue(withoutCourtesy, cue))
+    || /^(?:describe|discuss|summarize|explain|evaluate)\b/u.test(withoutCourtesy)
+    || /\b(?:(?:do not|don t|dont|never) execute|without changing anything|(?:prepare|recommend|plan) only)\b/u.test(normalized);
+  return (PORTFOLIO_WORK.test(normalized) || affirmativeSafeImperative(normalized))
+    && !NEGATED_PORTFOLIO_WORK.test(normalized) && !advisory
+    ? "execute_safe_parts"
+    : "recommend_next";
+}
+
 const PROJECT_ALIASES = {
   "clover apps": "cloverapps-ai",
   cloverapps: "cloverapps-ai",
@@ -338,9 +388,17 @@ function detectPortfolioMode(request) {
   return null;
 }
 
-function detectRouting(request) {
+function detectRouting(request, wholeScope) {
   const normalized = normalize(request);
   const portfolioMode = detectPortfolioMode(normalized);
+  if (includesAnyCue(wholeScope, WHOLE_PORTFOLIO_CUES)) {
+    const wholeMode = wholePortfolioMode(wholeScope);
+    return {
+      intent: INTENTS.find((intent) => intent.id === PORTFOLIO_INTENT_ID),
+      portfolioMode: portfolioMode === "execute_safe_parts" && wholeMode !== "execute_safe_parts"
+        ? wholeMode : portfolioMode || wholeMode,
+    };
+  }
   if (portfolioMode) {
     return {
       intent: INTENTS.find((intent) => intent.id === PORTFOLIO_INTENT_ID),
@@ -541,8 +599,11 @@ export function prepareCommand({ request, projects, status, pointer, source = nu
   const originalRequest = String(request || "").trim();
   if (!originalRequest) throw new Error("A command request is required.");
   const requestBody = instructionBody(originalRequest);
-  const { intent, portfolioMode } = detectRouting(requestBody);
-  const resolution = resolveProject(requestBody, projects || []);
+  const wholeScope = wholePortfolioScope(requestBody);
+  const { intent, portfolioMode } = detectRouting(requestBody, wholeScope);
+  const resolution = includesAnyCue(wholeScope, WHOLE_PORTFOLIO_CUES)
+    ? { project: null, confidence: "portfolio-scope", candidates: [] }
+    : resolveProject(requestBody, projects || []);
   const project = resolution.project;
   const isPortfolio = intent.id === PORTFOLIO_INTENT_ID;
   const requiresProjectResolution = intent.requiresProject && !project;
