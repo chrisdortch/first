@@ -63,6 +63,65 @@ function assertNonAuthorizing(packet) {
   assert.equal(packet.state, "refresh-required-before-execution");
 }
 
+test("keeps an explicit whole-Tree repair portfolio-wide despite incidental project words", () => {
+  const catalog = [...projects, {
+    projectId: "ambient-ai-workflow",
+    title: "Ambient AI Workflow / Captain's Log",
+  }];
+  for (const request of [
+    "Repair and complete the whole Clover Tree. Make it useful. Improve the continued work and connections.",
+    "Please fix the entire Clover Tree, including RollinD and Lakeside Essentials.",
+    "Improve the entire portfolio and coordinate the remaining project work.",
+    "Do the safe parts across the whole Clover Tree.",
+  ]) {
+    const packet = prepareCommand({ request, projects: catalog, status, pointer, source });
+    assert.equal(packet.intent.id, "portfolio_operating_loop", request);
+    assert.equal(packet.intent.mode, "execute_safe_parts", request);
+    assert.equal(packet.intent.requiresProject, false, request);
+    assert.equal(packet.project, null, request);
+    assert.deepEqual(packet.resolution.candidates, [], request);
+    assert.ok(packet.contextBudget.firstPassItems.includes("clover://projects"), request);
+    assertNonAuthorizing(packet);
+  }
+});
+
+test("whole-Tree scope preserves advisory modes and does not turn a prohibition into execution", () => {
+  for (const [request, mode] of [
+    ["What matters today across the whole Clover Tree, including RollinD?", "brief"],
+    ["Recommend the highest value next step for the entire portfolio.", "recommend_next"],
+    ["Do not repair the whole Clover Tree; prepare a recommendation.", "recommend_next"],
+    ["Should we repair the entire Clover Tree?", "recommend_next"],
+    ["Describe the request to repair the whole Clover Tree; do not execute it.", "recommend_next"],
+    ["Repair the whole Clover Tree, but plan only.", "recommend_next"],
+    ["Do the safe parts across the whole Clover Tree, but do not execute anything.", "recommend_next"],
+  ]) {
+    const packet = prepare(request);
+    assert.equal(packet.intent.id, "portfolio_operating_loop", request);
+    assert.equal(packet.intent.mode, mode, request);
+    assert.equal(packet.project, null, request);
+    assertNonAuthorizing(packet);
+  }
+});
+
+test("does not broaden a named branch through an excluded, quoted or incidental whole-Tree mention", () => {
+  for (const request of [
+    "Fix RollinD, not the whole Clover Tree.",
+    "Fix RollinD instead of the entire portfolio.",
+    'Fix RollinD only. The old handoff says "repair the whole Clover Tree".',
+    "Fix RollinD only. The old handoff says 'repair the whole Clover Tree'.",
+    "Fix RollinD only. The old handoff says `repair the whole Clover Tree`.",
+    "Do not repair the whole Clover Tree. Fix RollinD only.",
+    "Should we repair the entire Clover Tree? Fix RollinD for now.",
+    "Fix RollinD to benefit the entire portfolio.",
+    "Fix RollinD. It is part of the whole Clover Tree.",
+  ]) {
+    const packet = prepare(request);
+    assert.equal(packet.intent.id, "diagnose_project", request);
+    assert.equal(packet.project?.projectId, "rollindd", request);
+    assertNonAuthorizing(packet);
+  }
+});
+
 test("prepares an evolve command for a named project", () => {
   const packet = prepareCommand({
     request: "Use CloverApps to evolve SongAndStage and build a preview only",
